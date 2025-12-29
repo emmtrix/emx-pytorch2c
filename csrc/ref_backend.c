@@ -1,0 +1,28 @@
+#include "ref_backend.h"
+
+#include <stdio.h>
+#include <string.h>
+
+static void write_error(char *err_msg, size_t err_cap, const char *msg) {
+    if (err_msg == NULL || err_cap == 0) {
+        return;
+    }
+    strncpy(err_msg, msg, err_cap - 1);
+    err_msg[err_cap - 1] = '\0';
+}
+
+int ref_run_add(const RefOpCall *call, char *err_msg, size_t err_cap);
+
+int ref_run_op(int32_t op_kind, const RefOpCall *call, char *err_msg, size_t err_cap) {
+    if (call == NULL) {
+        write_error(err_msg, err_cap, "RefOpCall is NULL");
+        return 1;
+    }
+    switch (op_kind) {
+        case REF_OP_ADD:
+            return ref_run_add(call, err_msg, err_cap);
+        default:
+            write_error(err_msg, err_cap, "Unsupported op kind");
+            return 2;
+    }
+}
