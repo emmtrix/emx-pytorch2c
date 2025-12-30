@@ -48,6 +48,12 @@ static int check_same_shape(const RefTensorView *a, const RefTensorView *b) {
     return 1;
 }
 
+static void add_f32(const float *a_data, const float *b_data, float *out_data, int64_t total) {
+    for (int64_t i = 0; i < total; ++i) {
+        out_data[i] = a_data[i] + b_data[i];
+    }
+}
+
 int ref_run_add(const RefOpCall *call, char *err_msg, size_t err_cap) {
     if (call->n_inputs != 2 || call->n_outputs != 1) {
         write_error(err_msg, err_cap, "add expects exactly 2 inputs and 1 output");
@@ -76,8 +82,6 @@ int ref_run_add(const RefOpCall *call, char *err_msg, size_t err_cap) {
     float *a_data = (float *)a->data;
     float *b_data = (float *)b->data;
     float *out_data = (float *)out->data;
-    for (int64_t i = 0; i < total; ++i) {
-        out_data[i] = a_data[i] + b_data[i];
-    }
+    add_f32(a_data, b_data, out_data, total);
     return 0;
 }
