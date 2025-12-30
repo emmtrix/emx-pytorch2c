@@ -3,6 +3,7 @@ from typing import Callable, Dict, List
 
 import torch
 import torch.fx
+from torch.fx.immutable_collections import immutable_list
 
 from .cffi_bindings import RefBackendError, run_add
 
@@ -28,6 +29,14 @@ def ref_backend_backend(
         for node, value in zip(placeholders, args):
             env[node.name] = value
 
+        def resolve_output(value: object) -> object:
+            if isinstance(value, torch.fx.Node):
+                return env[value.name]
+            if isinstance(value, (list, tuple, immutable_list)):
+                resolved = [resolve_output(item) for item in value]
+                return type(value)(resolved)
+            raise RefBackendError("Unsupported output format")
+
         for node in gm.graph.nodes:
             if node.op == "placeholder":
                 continue
@@ -46,13 +55,7 @@ def ref_backend_backend(
                 continue
             if node.op == "output":
                 output_val = node.args[0]
-                if isinstance(output_val, torch.fx.Node):
-                    return env[output_val.name]
-                if isinstance(output_val, (list, tuple)):
-                    if len(output_val) != 1 or not isinstance(output_val[0], torch.fx.Node):
-                        raise RefBackendError("Only single-tensor outputs are supported")
-                    return env[output_val[0].name]
-                raise RefBackendError("Unsupported output format")
+                return resolve_output(output_val)
             raise RefBackendError(f"Unsupported node op: {node.op}")
         raise RefBackendError("Graph has no output node")
 
