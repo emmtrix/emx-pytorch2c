@@ -5,7 +5,7 @@ import torch
 import torch.fx
 from torch.fx.immutable_collections import immutable_list
 
-from .cffi_bindings import RefBackendError, run_add
+from .cffi_bindings import RefBackendError, run_add, run_matmul
 
 
 def _run_add(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
@@ -14,10 +14,26 @@ def _run_add(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     return out
 
 
+def _run_matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty(
+        (a.shape[0], b.shape[1]),
+        dtype=a.dtype,
+        device=a.device,
+        memory_format=torch.contiguous_format,
+    )
+    run_matmul(a, b, out)
+    return out
+
+
 def ref_backend_backend(
     gm: torch.fx.GraphModule, example_inputs: List[torch.Tensor]
 ) -> Callable[..., torch.Tensor]:
-    supported_targets = {operator.add, torch.add}
+    supported_targets = {
+        operator.add: ("add", _run_add),
+        torch.add: ("add", _run_add),
+        operator.matmul: ("matmul", _run_matmul),
+        torch.matmul: ("matmul", _run_matmul),
+    }
 
     def compiled(*args: torch.Tensor) -> torch.Tensor:
         env: Dict[str, torch.Tensor] = {}
@@ -43,14 +59,15 @@ def ref_backend_backend(
             if node.op == "call_function":
                 if node.target not in supported_targets:
                     raise RefBackendError(f"Unsupported call_function: {node.target}")
+                op_name, op_fn = supported_targets[node.target]
                 args_values = []
                 for arg in node.args:
                     if not isinstance(arg, torch.fx.Node):
-                        raise RefBackendError("add expects tensor inputs only")
+                        raise RefBackendError(f"{op_name} expects tensor inputs only")
                     args_values.append(env[arg.name])
                 if len(args_values) != 2:
-                    raise RefBackendError("add expects exactly two inputs")
-                result = _run_add(*args_values)
+                    raise RefBackendError(f"{op_name} expects exactly two inputs")
+                result = op_fn(*args_values)
                 env[node.name] = result
                 continue
             if node.op == "output":

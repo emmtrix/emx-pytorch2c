@@ -16,6 +16,7 @@ class RefDType:
 
 class RefOpKind:
     REF_OP_ADD = 0
+    REF_OP_MATMUL = 1
 
 
 class RefTensorView(ctypes.Structure):
@@ -118,3 +119,33 @@ def run_add(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
 
     _ = (a_buf, b_buf, out_buf)
     _get_library().run_op(RefOpKind.REF_OP_ADD, call)
+
+
+def run_matmul(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    if a.dtype is not torch.float32 or b.dtype is not torch.float32 or out.dtype is not torch.float32:
+        raise RefBackendError("matmul supports only torch.float32 tensors")
+    if a.ndim != 2 or b.ndim != 2 or out.ndim != 2:
+        raise RefBackendError("matmul requires 2D inputs and output")
+    if a.shape[1] != b.shape[0]:
+        raise RefBackendError("matmul requires inner dimensions to match")
+    if out.shape != (a.shape[0], b.shape[1]):
+        raise RefBackendError("matmul requires output shape (m, n)")
+    if not a.is_contiguous() or not b.is_contiguous() or not out.is_contiguous():
+        raise RefBackendError("matmul requires contiguous tensors")
+
+    a_view, a_buf = _tensor_to_view(a)
+    b_view, b_buf = _tensor_to_view(b)
+    out_view, out_buf = _tensor_to_view(out)
+
+    inputs = (RefTensorView * 2)(a_view, b_view)
+    outputs = (RefTensorView * 1)(out_view)
+    call = RefOpCall(
+        inputs=inputs,
+        n_inputs=ctypes.c_int32(2),
+        outputs=outputs,
+        n_outputs=ctypes.c_int32(1),
+        params=None,
+    )
+
+    _ = (a_buf, b_buf, out_buf)
+    _get_library().run_op(RefOpKind.REF_OP_MATMUL, call)
