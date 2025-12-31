@@ -5,7 +5,7 @@ import torch
 import torch.fx
 from torch.fx.immutable_collections import immutable_list
 
-from .cffi_bindings import RefBackendError, run_add, run_matmul
+from .cffi_bindings import RefBackendError, run_add, run_broadcast_in_dim, run_matmul
 
 
 def _run_add(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
@@ -25,6 +25,19 @@ def _run_matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     return out
 
 
+def _run_broadcast_in_dim(
+    a: torch.Tensor, shape: List[int], broadcast_dimensions: List[int]
+) -> torch.Tensor:
+    out = torch.empty(
+        tuple(int(dim) for dim in shape),
+        dtype=a.dtype,
+        device=a.device,
+        memory_format=torch.contiguous_format,
+    )
+    run_broadcast_in_dim(a, out, tuple(broadcast_dimensions))
+    return out
+
+
 def ref_backend_backend(
     gm: torch.fx.GraphModule, example_inputs: List[torch.Tensor]
 ) -> Callable[..., torch.Tensor]:
@@ -33,6 +46,11 @@ def ref_backend_backend(
         torch.add: ("add", _run_add),
         operator.matmul: ("matmul", _run_matmul),
         torch.matmul: ("matmul", _run_matmul),
+        torch.ops.prims.broadcast_in_dim: ("broadcast_in_dim", _run_broadcast_in_dim),
+        torch.ops.prims.broadcast_in_dim.default: (
+            "broadcast_in_dim",
+            _run_broadcast_in_dim,
+        ),
     }
 
     def compiled(*args: torch.Tensor) -> torch.Tensor:
@@ -60,14 +78,36 @@ def ref_backend_backend(
                 if node.target not in supported_targets:
                     raise RefBackendError(f"Unsupported call_function: {node.target}")
                 op_name, op_fn = supported_targets[node.target]
-                args_values = []
-                for arg in node.args:
-                    if not isinstance(arg, torch.fx.Node):
-                        raise RefBackendError(f"{op_name} expects tensor inputs only")
-                    args_values.append(env[arg.name])
-                if len(args_values) != 2:
-                    raise RefBackendError(f"{op_name} expects exactly two inputs")
-                result = op_fn(*args_values)
+                if op_name == "broadcast_in_dim":
+                    if node.kwargs:
+                        raise RefBackendError(
+                            "broadcast_in_dim expects positional arguments only"
+                        )
+                    if len(node.args) != 3:
+                        raise RefBackendError(
+                            "broadcast_in_dim expects tensor, shape, and dimensions"
+                        )
+                    input_arg, shape, broadcast_dimensions = node.args
+                    if not isinstance(input_arg, torch.fx.Node):
+                        raise RefBackendError(
+                            "broadcast_in_dim expects tensor input only"
+                        )
+                    if isinstance(shape, torch.fx.Node) or isinstance(
+                        broadcast_dimensions, torch.fx.Node
+                    ):
+                        raise RefBackendError(
+                            "broadcast_in_dim expects constant shape and dimensions"
+                        )
+                    result = op_fn(env[input_arg.name], list(shape), list(broadcast_dimensions))
+                else:
+                    args_values = []
+                    for arg in node.args:
+                        if not isinstance(arg, torch.fx.Node):
+                            raise RefBackendError(f"{op_name} expects tensor inputs only")
+                        args_values.append(env[arg.name])
+                    if len(args_values) != 2:
+                        raise RefBackendError(f"{op_name} expects exactly two inputs")
+                    result = op_fn(*args_values)
                 env[node.name] = result
                 continue
             if node.op == "output":

@@ -17,6 +17,7 @@ class RefDType:
 class RefOpKind:
     REF_OP_ADD = 0
     REF_OP_MATMUL = 1
+    REF_OP_BROADCAST_IN_DIM = 2
 
 
 class RefTensorView(ctypes.Structure):
@@ -36,6 +37,13 @@ class RefOpCall(ctypes.Structure):
         ("outputs", ctypes.POINTER(RefTensorView)),
         ("n_outputs", ctypes.c_int32),
         ("params", ctypes.c_void_p),
+    ]
+
+
+class RefBroadcastInDimParams(ctypes.Structure):
+    _fields_ = [
+        ("n_dims", ctypes.c_int32),
+        ("broadcast_dimensions", ctypes.POINTER(ctypes.c_int32)),
     ]
 
 
@@ -149,3 +157,40 @@ def run_matmul(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
 
     _ = (a_buf, b_buf, out_buf)
     _get_library().run_op(RefOpKind.REF_OP_MATMUL, call)
+
+
+def run_broadcast_in_dim(
+    a: torch.Tensor, out: torch.Tensor, broadcast_dimensions: Tuple[int, ...]
+) -> None:
+    if a.dtype is not torch.float32 or out.dtype is not torch.float32:
+        raise RefBackendError("broadcast_in_dim supports only torch.float32 tensors")
+    if not a.is_contiguous() or not out.is_contiguous():
+        raise RefBackendError("broadcast_in_dim requires contiguous tensors")
+    if len(broadcast_dimensions) != a.ndim:
+        raise RefBackendError(
+            "broadcast_in_dim expects broadcast_dimensions to match input rank"
+        )
+    if out.ndim < a.ndim:
+        raise RefBackendError("broadcast_in_dim requires output rank >= input rank")
+
+    dims = (ctypes.c_int32 * len(broadcast_dimensions))(*broadcast_dimensions)
+    params = RefBroadcastInDimParams(
+        n_dims=ctypes.c_int32(len(broadcast_dimensions)),
+        broadcast_dimensions=dims,
+    )
+
+    a_view, a_buf = _tensor_to_view(a)
+    out_view, out_buf = _tensor_to_view(out)
+
+    inputs = (RefTensorView * 1)(a_view)
+    outputs = (RefTensorView * 1)(out_view)
+    call = RefOpCall(
+        inputs=inputs,
+        n_inputs=ctypes.c_int32(1),
+        outputs=outputs,
+        n_outputs=ctypes.c_int32(1),
+        params=ctypes.cast(ctypes.pointer(params), ctypes.c_void_p),
+    )
+
+    _ = (a_buf, out_buf, dims, params)
+    _get_library().run_op(RefOpKind.REF_OP_BROADCAST_IN_DIM, call)

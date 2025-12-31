@@ -44,5 +44,5 @@ print(compiled(a, b))
 * CPU only
 * `float32` only
 * contiguous tensors only
-* out-of-place `add(a, b) -> out`
-* identical shapes only
+* out-of-place `add(a, b) -> out` (identical shapes only)
+* `broadcast_in_dim(a, shape, broadcast_dimensions) -> out`
