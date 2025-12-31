@@ -7,7 +7,7 @@ from torch.fx.immutable_collections import immutable_list
 from torch._decomp import get_decompositions
 from torch._functorch.aot_autograd import aot_module_simplified
 
-from .cffi_bindings import RefBackendError, run_add, run_broadcast_in_dim, run_matmul
+from .cffi_bindings import RefBackendError, run_add, run_bmm, run_broadcast_in_dim, run_matmul
 
 
 def _run_add(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
@@ -17,6 +17,16 @@ def _run_add(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 
 
 def _run_matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    if a.ndim == 3 and b.ndim == 3:
+        out = torch.empty(
+            (a.shape[0], a.shape[1], b.shape[2]),
+            dtype=a.dtype,
+            device=a.device,
+            memory_format=torch.contiguous_format,
+        )
+        run_bmm(a, b, out)
+        return out
+
     out = torch.empty(
         (a.shape[0], b.shape[1]),
         dtype=a.dtype,
@@ -70,6 +80,9 @@ def _compile_graph(
         torch.matmul: ("matmul", _run_matmul),
         torch.ops.aten.mm.default: ("matmul", _run_matmul),
         torch.ops.aten.mm: ("matmul", _run_matmul),
+        torch.bmm: ("matmul", _run_matmul),
+        torch.ops.aten.bmm.default: ("matmul", _run_matmul),
+        torch.ops.aten.bmm: ("matmul", _run_matmul),
         torch.ops.aten.expand.default: ("expand", _run_expand),
         torch.ops.prims.broadcast_in_dim: ("broadcast_in_dim", _run_broadcast_in_dim),
         torch.ops.prims.broadcast_in_dim.default: (

@@ -17,7 +17,8 @@ class RefDType:
 class RefOpKind:
     REF_OP_ADD = 0
     REF_OP_MATMUL = 1
-    REF_OP_BROADCAST_IN_DIM = 2
+    REF_OP_BMM = 2
+    REF_OP_BROADCAST_IN_DIM = 3
 
 
 class RefTensorView(ctypes.Structure):
@@ -157,6 +158,38 @@ def run_matmul(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
 
     _ = (a_buf, b_buf, out_buf)
     _get_library().run_op(RefOpKind.REF_OP_MATMUL, call)
+
+
+def run_bmm(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    if a.dtype is not torch.float32 or b.dtype is not torch.float32 or out.dtype is not torch.float32:
+        raise RefBackendError("bmm supports only torch.float32 tensors")
+    if a.ndim != 3 or b.ndim != 3 or out.ndim != 3:
+        raise RefBackendError("bmm requires 3D inputs and output")
+    if a.shape[0] != b.shape[0]:
+        raise RefBackendError("bmm requires batch dimensions to match")
+    if a.shape[2] != b.shape[1]:
+        raise RefBackendError("bmm requires inner dimensions to match")
+    if out.shape != (a.shape[0], a.shape[1], b.shape[2]):
+        raise RefBackendError("bmm requires output shape (batch, m, n)")
+    if not a.is_contiguous() or not b.is_contiguous() or not out.is_contiguous():
+        raise RefBackendError("bmm requires contiguous tensors")
+
+    a_view, a_buf = _tensor_to_view(a)
+    b_view, b_buf = _tensor_to_view(b)
+    out_view, out_buf = _tensor_to_view(out)
+
+    inputs = (RefTensorView * 2)(a_view, b_view)
+    outputs = (RefTensorView * 1)(out_view)
+    call = RefOpCall(
+        inputs=inputs,
+        n_inputs=ctypes.c_int32(2),
+        outputs=outputs,
+        n_outputs=ctypes.c_int32(1),
+        params=None,
+    )
+
+    _ = (a_buf, b_buf, out_buf)
+    _get_library().run_op(RefOpKind.REF_OP_BMM, call)
 
 
 def run_broadcast_in_dim(
