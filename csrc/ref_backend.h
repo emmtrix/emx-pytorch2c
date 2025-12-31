@@ -30,8 +30,14 @@ typedef struct RefOpCall {
 
 typedef enum RefOpKind {
     REF_OP_ADD = 0,
-    REF_OP_MATMUL = 1
+    REF_OP_MATMUL = 1,
+    REF_OP_BROADCAST_IN_DIM = 2
 } RefOpKind;
+
+typedef struct RefBroadcastInDimParams {
+    int32_t n_dims;
+    int32_t *broadcast_dimensions;
+} RefBroadcastInDimParams;
 
 int ref_run_op(int32_t op_kind, const RefOpCall *call, char *err_msg, size_t err_cap);
 
