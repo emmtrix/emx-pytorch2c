@@ -21,6 +21,14 @@ def test_torch_compile_add_matches_eager():
     torch.testing.assert_close(result, f(a, b))
 
 
+def test_torch_compile_add_broadcast_matches_eager():
+    compiled = torch.compile(f, backend=ref_backend_backend)
+    a = torch.randn(2, 3, dtype=torch.float32)
+    b = torch.randn(3, dtype=torch.float32)
+    result = compiled(a, b)
+    torch.testing.assert_close(result, f(a, b))
+
+
 def test_torch_compile_rejects_non_contiguous():
     compiled = torch.compile(f, backend=ref_backend_backend)
     a = torch.randn(4, 4, dtype=torch.float32).t()

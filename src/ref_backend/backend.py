@@ -4,6 +4,8 @@ from typing import Callable, Dict, List
 import torch
 import torch.fx
 from torch.fx.immutable_collections import immutable_list
+from torch._decomp import get_decompositions
+from torch._functorch.aot_autograd import aot_module_simplified
 
 from .cffi_bindings import RefBackendError, run_add, run_broadcast_in_dim, run_matmul
 
@@ -38,14 +40,37 @@ def _run_broadcast_in_dim(
     return out
 
 
-def ref_backend_backend(
+def _run_expand(a: torch.Tensor, shape: List[int]) -> torch.Tensor:
+    out_rank = len(shape)
+    in_rank = a.ndim
+    if out_rank < in_rank:
+        raise RefBackendError("expand requires output rank >= input rank")
+    broadcast_dimensions = list(range(out_rank - in_rank, out_rank))
+    resolved_shape = []
+    leading = out_rank - in_rank
+    for idx, dim in enumerate(shape):
+        if dim == -1:
+            if idx < leading:
+                raise RefBackendError("expand cannot infer leading broadcast dimension")
+            dim = a.shape[idx - leading]
+        resolved_shape.append(int(dim))
+    return _run_broadcast_in_dim(a, resolved_shape, broadcast_dimensions)
+
+
+def _compile_graph(
     gm: torch.fx.GraphModule, example_inputs: List[torch.Tensor]
 ) -> Callable[..., torch.Tensor]:
     supported_targets = {
         operator.add: ("add", _run_add),
         torch.add: ("add", _run_add),
+        torch.ops.prims.add: ("add", _run_add),
+        torch.ops.prims.add.default: ("add", _run_add),
+        torch.ops.aten.add.Tensor: ("add", _run_add),
         operator.matmul: ("matmul", _run_matmul),
         torch.matmul: ("matmul", _run_matmul),
+        torch.ops.aten.mm.default: ("matmul", _run_matmul),
+        torch.ops.aten.mm: ("matmul", _run_matmul),
+        torch.ops.aten.expand.default: ("expand", _run_expand),
         torch.ops.prims.broadcast_in_dim: ("broadcast_in_dim", _run_broadcast_in_dim),
         torch.ops.prims.broadcast_in_dim.default: (
             "broadcast_in_dim",
@@ -98,7 +123,20 @@ def ref_backend_backend(
                         raise RefBackendError(
                             "broadcast_in_dim expects constant shape and dimensions"
                         )
-                    result = op_fn(env[input_arg.name], list(shape), list(broadcast_dimensions))
+                    result = op_fn(
+                        env[input_arg.name], list(shape), list(broadcast_dimensions)
+                    )
+                elif op_name == "expand":
+                    if node.kwargs:
+                        raise RefBackendError("expand expects positional arguments only")
+                    if len(node.args) != 2:
+                        raise RefBackendError("expand expects tensor and shape")
+                    input_arg, shape = node.args
+                    if not isinstance(input_arg, torch.fx.Node):
+                        raise RefBackendError("expand expects tensor input only")
+                    if isinstance(shape, torch.fx.Node):
+                        raise RefBackendError("expand expects constant shape")
+                    result = op_fn(env[input_arg.name], list(shape))
                 else:
                     args_values = []
                     for arg in node.args:
@@ -117,3 +155,32 @@ def ref_backend_backend(
         raise RefBackendError("Graph has no output node")
 
     return compiled
+
+
+def ref_backend_backend(
+    gm: torch.fx.GraphModule, example_inputs: List[torch.Tensor]
+) -> Callable[..., torch.Tensor]:
+    if any(
+        node.op == "call_function"
+        and node.target
+        in (
+            torch.ops.prims.broadcast_in_dim,
+            torch.ops.prims.broadcast_in_dim.default,
+        )
+        for node in gm.graph.nodes
+    ):
+        return _compile_graph(gm, example_inputs)
+
+    decompositions = get_decompositions([torch.ops.aten.add.Tensor])
+
+    def fw_compiler(
+        fx_gm: torch.fx.GraphModule, fx_example_inputs: List[torch.Tensor]
+    ) -> Callable[..., torch.Tensor]:
+        return _compile_graph(fx_gm, fx_example_inputs)
+
+    return aot_module_simplified(
+        gm,
+        example_inputs,
+        fw_compiler=fw_compiler,
+        decompositions=decompositions,
+    )
