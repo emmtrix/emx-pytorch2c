@@ -7,12 +7,25 @@ from torch.fx.immutable_collections import immutable_list
 from torch._decomp import get_decompositions
 from torch._functorch.aot_autograd import aot_module_simplified
 
-from .cffi_bindings import RefBackendError, run_add, run_bmm, run_broadcast_in_dim, run_matmul
+from .cffi_bindings import (
+    RefBackendError,
+    run_add,
+    run_bmm,
+    run_broadcast_in_dim,
+    run_matmul,
+    run_sub,
+)
 
 
 def _run_add(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     out = torch.empty_like(a, memory_format=torch.contiguous_format)
     run_add(a, b, out)
+    return out
+
+
+def _run_sub(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_sub(a, b, out)
     return out
 
 
@@ -76,6 +89,11 @@ def _compile_graph(
         torch.ops.prims.add: ("add", _run_add),
         torch.ops.prims.add.default: ("add", _run_add),
         torch.ops.aten.add.Tensor: ("add", _run_add),
+        operator.sub: ("sub", _run_sub),
+        torch.sub: ("sub", _run_sub),
+        torch.ops.prims.sub: ("sub", _run_sub),
+        torch.ops.prims.sub.default: ("sub", _run_sub),
+        torch.ops.aten.sub.Tensor: ("sub", _run_sub),
         operator.matmul: ("matmul", _run_matmul),
         torch.matmul: ("matmul", _run_matmul),
         torch.ops.aten.mm.default: ("matmul", _run_matmul),
@@ -184,7 +202,7 @@ def ref_backend_backend(
     ):
         return _compile_graph(gm, example_inputs)
 
-    decompositions = get_decompositions([torch.ops.aten.add.Tensor])
+    decompositions = get_decompositions([torch.ops.aten.add.Tensor, torch.ops.aten.sub.Tensor])
 
     def fw_compiler(
         fx_gm: torch.fx.GraphModule, fx_example_inputs: List[torch.Tensor]

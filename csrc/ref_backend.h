@@ -30,9 +30,10 @@ typedef struct RefOpCall {
 
 typedef enum RefOpKind {
     REF_OP_ADD = 0,
-    REF_OP_MATMUL = 1,
-    REF_OP_BMM = 2,
-    REF_OP_BROADCAST_IN_DIM = 3
+    REF_OP_SUB = 1,
+    REF_OP_MATMUL = 2,
+    REF_OP_BMM = 3,
+    REF_OP_BROADCAST_IN_DIM = 4
 } RefOpKind;
 
 typedef struct RefBroadcastInDimParams {

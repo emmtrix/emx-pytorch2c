@@ -12,6 +12,7 @@ static void write_error(char *err_msg, size_t err_cap, const char *msg) {
 }
 
 int ref_run_add(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_sub(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_matmul(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_bmm(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_broadcast_in_dim(const RefOpCall *call, char *err_msg, size_t err_cap);
@@ -24,6 +25,8 @@ int ref_run_op(int32_t op_kind, const RefOpCall *call, char *err_msg, size_t err
     switch (op_kind) {
         case REF_OP_ADD:
             return ref_run_add(call, err_msg, err_cap);
+        case REF_OP_SUB:
+            return ref_run_sub(call, err_msg, err_cap);
         case REF_OP_MATMUL:
             return ref_run_matmul(call, err_msg, err_cap);
         case REF_OP_BMM:
