@@ -109,9 +109,6 @@ def run_add(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
         raise RefBackendError("add supports only torch.float32 tensors")
     if a.shape != b.shape or a.shape != out.shape:
         raise RefBackendError("add requires inputs and output to have identical shapes")
-    if not a.is_contiguous() or not b.is_contiguous() or not out.is_contiguous():
-        raise RefBackendError("add requires contiguous tensors")
-
     a_view, a_buf = _tensor_to_view(a)
     b_view, b_buf = _tensor_to_view(b)
     out_view, out_buf = _tensor_to_view(out)

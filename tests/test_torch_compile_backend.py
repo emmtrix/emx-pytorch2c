@@ -33,12 +33,12 @@ def test_torch_compile_add_broadcast_matches_eager():
     torch.testing.assert_close(result, f(a, b))
 
 
-def test_torch_compile_rejects_non_contiguous():
+def test_torch_compile_add_handles_non_contiguous():
     compiled = torch.compile(f, backend=ref_backend_backend)
     a = torch.randn(4, 4, dtype=torch.float32).t()
     b = torch.randn(4, 4, dtype=torch.float32).t()
-    with pytest.raises(RefBackendError, match="contiguous"):
-        compiled(a, b)
+    result = compiled(a, b)
+    torch.testing.assert_close(result, f(a, b))
 
 
 def test_torch_compile_matmul_matches_eager():

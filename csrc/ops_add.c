@@ -54,6 +54,43 @@ static void add_f32(const float *a_data, const float *b_data, float *out_data, i
     }
 }
 
+static void add_f32_strided(const float *a_data, const float *b_data, float *out_data,
+                            int32_t ndim, const int64_t *sizes, const int64_t *a_strides,
+                            const int64_t *b_strides, const int64_t *out_strides) {
+    if (ndim <= 0) {
+        out_data[0] = a_data[0] + b_data[0];
+        return;
+    }
+
+    int64_t total = 1;
+    for (int32_t d = 0; d < ndim; ++d) {
+        total *= sizes[d];
+    }
+    int64_t indices[ndim];
+    for (int32_t d = 0; d < ndim; ++d) {
+        indices[d] = 0;
+    }
+
+    for (int64_t i = 0; i < total; ++i) {
+        int64_t a_offset = 0;
+        int64_t b_offset = 0;
+        int64_t out_offset = 0;
+        for (int32_t d = 0; d < ndim; ++d) {
+            a_offset += indices[d] * a_strides[d];
+            b_offset += indices[d] * b_strides[d];
+            out_offset += indices[d] * out_strides[d];
+        }
+        out_data[out_offset] = a_data[a_offset] + b_data[b_offset];
+        for (int32_t d = ndim - 1; d >= 0; --d) {
+            indices[d] += 1;
+            if (indices[d] < sizes[d]) {
+                break;
+            }
+            indices[d] = 0;
+        }
+    }
+}
+
 int ref_run_add(const RefOpCall *call, char *err_msg, size_t err_cap) {
     if (call->n_inputs != 2 || call->n_outputs != 1) {
         write_error(err_msg, err_cap, "add expects exactly 2 inputs and 1 output");
@@ -73,15 +110,23 @@ int ref_run_add(const RefOpCall *call, char *err_msg, size_t err_cap) {
         return 3;
     }
 
-    if (!is_contiguous(a) || !is_contiguous(b) || !is_contiguous(out)) {
-        write_error(err_msg, err_cap, "add requires contiguous tensors");
-        return 4;
-    }
-
     int64_t total = numel(a);
     float *a_data = (float *)a->data;
     float *b_data = (float *)b->data;
     float *out_data = (float *)out->data;
-    add_f32(a_data, b_data, out_data, total);
+    if (is_contiguous(a) && is_contiguous(b) && is_contiguous(out)) {
+        add_f32(a_data, b_data, out_data, total);
+        return 0;
+    }
+    add_f32_strided(
+        a_data,
+        b_data,
+        out_data,
+        a->ndim,
+        a->sizes,
+        a->strides,
+        b->strides,
+        out->strides
+    );
     return 0;
 }
