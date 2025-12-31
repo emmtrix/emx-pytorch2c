@@ -54,14 +54,15 @@ static void add_f32(const float *a_data, const float *b_data, float *out_data, i
     }
 }
 
-static void add_f32_strided(const float *a_data, const float *b_data, float *out_data,
-                            int32_t ndim, const int64_t *sizes, const int64_t *a_strides,
-                            const int64_t *b_strides, const int64_t *out_strides) {
-    if (ndim <= 0) {
-        out_data[0] = a_data[0] + b_data[0];
-        return;
-    }
-
+static void add_f32_strided(
+    const float *a_data,
+    const float *b_data,
+    float *out_data,
+    const int64_t sizes[8],
+    const int64_t a_strides[8],
+    const int64_t b_strides[8],
+    const int64_t out_strides[8]
+) {
     for (int64_t i0 = 0; i0 < sizes[0]; ++i0) {
         for (int64_t i1 = 0; i1 < sizes[1]; ++i1) {
             for (int64_t i2 = 0; i2 < sizes[2]; ++i2) {
@@ -152,7 +153,6 @@ int ref_run_add(const RefOpCall *call, char *err_msg, size_t err_cap) {
         a_data,
         b_data,
         out_data,
-        a->ndim,
         sizes_8,
         a_strides_8,
         b_strides_8,
