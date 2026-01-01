@@ -4,10 +4,10 @@ from torch.testing._internal.common_device_type import instantiate_device_type_t
 from torch.testing._internal.common_methods_invocations import SampleInput, op_db
 from torch.testing._internal.common_utils import TestCase, run_tests
 
-from ref_backend.cffi_bindings import run_add, run_sub
+from ref_backend.cffi_bindings import run_add, run_mul, run_sub
 
 
-ADD_SUB_OPS = [op for op in op_db if op.name in ("add", "sub")]
+ADD_SUB_OPS = [op for op in op_db if op.name in ("add", "sub", "mul")]
 
 
 def _run_ref_op(op_name: str, a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
@@ -16,6 +16,9 @@ def _run_ref_op(op_name: str, a: torch.Tensor, b: torch.Tensor, out: torch.Tenso
         return
     if op_name == "sub":
         run_sub(a, b, out)
+        return
+    if op_name == "mul":
+        run_mul(a, b, out)
         return
     raise ValueError(f"Unsupported op name: {op_name}")
 

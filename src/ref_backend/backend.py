@@ -13,6 +13,7 @@ from .cffi_bindings import (
     run_bmm,
     run_broadcast_in_dim,
     run_matmul,
+    run_mul,
     run_sub,
 )
 
@@ -26,6 +27,12 @@ def _run_add(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 def _run_sub(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     out = torch.empty_like(a, memory_format=torch.contiguous_format)
     run_sub(a, b, out)
+    return out
+
+
+def _run_mul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_mul(a, b, out)
     return out
 
 
@@ -94,6 +101,11 @@ def _compile_graph(
         torch.ops.prims.sub: ("sub", _run_sub),
         torch.ops.prims.sub.default: ("sub", _run_sub),
         torch.ops.aten.sub.Tensor: ("sub", _run_sub),
+        operator.mul: ("mul", _run_mul),
+        torch.mul: ("mul", _run_mul),
+        torch.ops.prims.mul: ("mul", _run_mul),
+        torch.ops.prims.mul.default: ("mul", _run_mul),
+        torch.ops.aten.mul.Tensor: ("mul", _run_mul),
         operator.matmul: ("matmul", _run_matmul),
         torch.matmul: ("matmul", _run_matmul),
         torch.ops.aten.mm.default: ("matmul", _run_matmul),

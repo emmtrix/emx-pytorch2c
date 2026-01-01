@@ -9,6 +9,7 @@ setup(
                 "csrc/ops_binary.c",
                 "csrc/ops_add.c",
                 "csrc/ops_sub.c",
+                "csrc/ops_mul.c",
                 "csrc/ops_bmm.c",
                 "csrc/ops_matmul.c",
                 "csrc/ops_broadcast_in_dim.c",
