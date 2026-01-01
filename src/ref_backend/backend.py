@@ -214,7 +214,13 @@ def ref_backend_backend(
     ):
         return _compile_graph(gm, example_inputs)
 
-    decompositions = get_decompositions([torch.ops.aten.add.Tensor, torch.ops.aten.sub.Tensor])
+    decompositions = get_decompositions(
+        [
+            torch.ops.aten.add.Tensor,
+            torch.ops.aten.sub.Tensor,
+            torch.ops.aten.mul.Tensor,
+        ]
+    )
 
     def fw_compiler(
         fx_gm: torch.fx.GraphModule, fx_example_inputs: List[torch.Tensor]
