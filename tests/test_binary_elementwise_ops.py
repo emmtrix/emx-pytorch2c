@@ -8,7 +8,29 @@ from ref_backend.backend import ref_backend_backend
 from ref_backend.cffi_bindings import RefBackendError
 
 
-ADD_SUB_OPS = [op for op in op_db if op.name in ("add", "sub", "mul")]
+OP_TEST_CONFIG = {
+    "add": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "sub": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "mul": {
+        "allowed_dtypes": (torch.float32,),
+    },
+}
+
+DEFAULT_CONSTRAINTS = {
+    "allowed_dtypes": None,
+    "allow_noncontiguous": True,
+    "max_ndim": 8,
+    "requires_same_shape": True,
+    "max_ndim_error": None,
+    "shape_error": None,
+    "skip_invalid_shape_tests": False,
+}
+
+OPS_UNDER_TEST = [op for op in op_db if op.name in OP_TEST_CONFIG]
 
 
 def _compile_op(op):
@@ -18,7 +40,13 @@ def _compile_op(op):
     return torch.compile(compiled_fn, backend=ref_backend_backend)
 
 
-def _iter_supported_samples(op, device, dtype):
+def _constraints_for(op):
+    constraints = DEFAULT_CONSTRAINTS.copy()
+    constraints.update(OP_TEST_CONFIG[op.name])
+    return constraints
+
+
+def _iter_supported_samples(op, device, dtype, constraints):
     for sample in op.sample_inputs(device, dtype):
         if sample.kwargs:
             continue
@@ -33,47 +61,64 @@ def _iter_supported_samples(op, device, dtype):
             continue
         yield sample
 
-        if sample.input.ndim >= 2:
-            a_t = sample.input.transpose(0, 1)
-            b_t = other.transpose(0, 1)
-            yield SampleInput(a_t, args=(b_t,))
+        if constraints["allow_noncontiguous"]:
+            if sample.input.ndim >= 2:
+                a_t = sample.input.transpose(0, 1)
+                b_t = other.transpose(0, 1)
+                yield SampleInput(a_t, args=(b_t,))
 
-        if sample.input.ndim >= 1 and sample.input.size(-1) > 1:
-            a_s = sample.input[..., ::2]
-            b_s = other[..., ::2]
-            if a_s.shape == b_s.shape:
-                yield SampleInput(a_s, args=(b_s,))
+            if sample.input.ndim >= 1 and sample.input.size(-1) > 1:
+                a_s = sample.input[..., ::2]
+                b_s = other[..., ::2]
+                if a_s.shape == b_s.shape:
+                    yield SampleInput(a_s, args=(b_s,))
 
 
-class TestAddSubOpInfo(TestCase):
-    @ops(ADD_SUB_OPS, allowed_dtypes=(torch.float32,))
+class TestBinaryElementwiseOpInfo(TestCase):
+    @ops(OPS_UNDER_TEST)
     def test_ref_backend_matches_eager(self, device, dtype, op):
+        constraints = _constraints_for(op)
+        allowed_dtypes = constraints["allowed_dtypes"]
+        if allowed_dtypes is not None and dtype not in allowed_dtypes:
+            pytest.skip("dtype not supported by test constraints")
         compiled = _compile_op(op)
-        for sample in _iter_supported_samples(op, device, dtype):
+        for sample in _iter_supported_samples(op, device, dtype, constraints):
             a = sample.input
             b = sample.args[0]
             result = compiled(a, b)
             torch.testing.assert_close(result, op(a, b))
 
-    @ops(ADD_SUB_OPS, allowed_dtypes=(torch.float32,))
+    @ops(OPS_UNDER_TEST)
     def test_ref_backend_rejects_invalid_shapes(self, device, dtype, op):
+        constraints = _constraints_for(op)
+        if constraints["skip_invalid_shape_tests"]:
+            pytest.skip("invalid-shape checks disabled by test constraints")
+        allowed_dtypes = constraints["allowed_dtypes"]
+        if allowed_dtypes is not None and dtype not in allowed_dtypes:
+            pytest.skip("dtype not supported by test constraints")
         compiled = _compile_op(op)
-        too_many_dims = torch.randn((1,) * 9, device=device, dtype=dtype)
-        with pytest.raises(
-            RefBackendError, match=f"{op.name} supports at most 8 dimensions"
-        ):
-            compiled(too_many_dims, too_many_dims)
+        max_ndim = constraints["max_ndim"]
+        if max_ndim is not None:
+            too_many_dims = torch.randn((1,) * (max_ndim + 1), device=device, dtype=dtype)
+            max_ndim_error = constraints["max_ndim_error"]
+            if max_ndim_error is None:
+                max_ndim_error = f"{op.name} supports at most {max_ndim} dimensions"
+            with pytest.raises(RefBackendError, match=max_ndim_error):
+                compiled(too_many_dims, too_many_dims)
 
-        a = torch.randn((2, 3), device=device, dtype=dtype)
-        b = torch.randn((2, 4), device=device, dtype=dtype)
-        with pytest.raises(
-            RefBackendError,
-            match=f"{op.name} requires inputs and output to have identical shapes",
-        ):
-            compiled(a, b)
+        if constraints["requires_same_shape"]:
+            a = torch.randn((2, 3), device=device, dtype=dtype)
+            b = torch.randn((2, 4), device=device, dtype=dtype)
+            shape_error = constraints["shape_error"]
+            if shape_error is None:
+                shape_error = (
+                    f"{op.name} requires inputs and output to have identical shapes"
+                )
+            with pytest.raises(RefBackendError, match=shape_error):
+                compiled(a, b)
 
 
-instantiate_device_type_tests(TestAddSubOpInfo, globals(), only_for="cpu")
+instantiate_device_type_tests(TestBinaryElementwiseOpInfo, globals(), only_for="cpu")
 
 
 if __name__ == "__main__":
