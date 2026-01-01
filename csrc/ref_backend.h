@@ -39,7 +39,17 @@ typedef enum RefOpKind {
     REF_OP_MAXIMUM = 7,
     REF_OP_MINIMUM = 8,
     REF_OP_NEG = 9,
-    REF_OP_EXP = 10
+    REF_OP_EXP = 10,
+    REF_OP_ABS = 11,
+    REF_OP_SQRT = 12,
+    REF_OP_LOG = 13,
+    REF_OP_SIN = 14,
+    REF_OP_COS = 15,
+    REF_OP_TANH = 16,
+    REF_OP_FLOOR = 17,
+    REF_OP_CEIL = 18,
+    REF_OP_RECIPROCAL = 19,
+    REF_OP_RELU = 20
 } RefOpKind;
 
 typedef struct RefBroadcastInDimParams {

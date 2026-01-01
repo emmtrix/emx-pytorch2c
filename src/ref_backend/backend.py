@@ -10,16 +10,26 @@ from torch._functorch.aot_autograd import aot_module_simplified
 from .cffi_bindings import (
     RefBackendError,
     run_add,
+    run_abs,
     run_bmm,
     run_broadcast_in_dim,
+    run_ceil,
+    run_cos,
     run_div,
     run_exp,
+    run_floor,
+    run_log,
     run_matmul,
     run_maximum,
     run_minimum,
     run_mul,
     run_neg,
+    run_reciprocal,
+    run_relu,
+    run_sin,
+    run_sqrt,
     run_sub,
+    run_tanh,
 )
 
 
@@ -68,6 +78,66 @@ def _run_neg(a: torch.Tensor) -> torch.Tensor:
 def _run_exp(a: torch.Tensor) -> torch.Tensor:
     out = torch.empty_like(a, memory_format=torch.contiguous_format)
     run_exp(a, out)
+    return out
+
+
+def _run_abs(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_abs(a, out)
+    return out
+
+
+def _run_sqrt(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_sqrt(a, out)
+    return out
+
+
+def _run_log(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_log(a, out)
+    return out
+
+
+def _run_sin(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_sin(a, out)
+    return out
+
+
+def _run_cos(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_cos(a, out)
+    return out
+
+
+def _run_tanh(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_tanh(a, out)
+    return out
+
+
+def _run_floor(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_floor(a, out)
+    return out
+
+
+def _run_ceil(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_ceil(a, out)
+    return out
+
+
+def _run_reciprocal(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_reciprocal(a, out)
+    return out
+
+
+def _run_relu(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_relu(a, out)
     return out
 
 
@@ -157,6 +227,36 @@ def _compile_graph(
         torch.exp: ("exp", _run_exp),
         torch.ops.aten.exp.default: ("exp", _run_exp),
         torch.ops.aten.exp: ("exp", _run_exp),
+        torch.abs: ("abs", _run_abs),
+        torch.ops.aten.abs.default: ("abs", _run_abs),
+        torch.ops.aten.abs: ("abs", _run_abs),
+        torch.sqrt: ("sqrt", _run_sqrt),
+        torch.ops.aten.sqrt.default: ("sqrt", _run_sqrt),
+        torch.ops.aten.sqrt: ("sqrt", _run_sqrt),
+        torch.log: ("log", _run_log),
+        torch.ops.aten.log.default: ("log", _run_log),
+        torch.ops.aten.log: ("log", _run_log),
+        torch.sin: ("sin", _run_sin),
+        torch.ops.aten.sin.default: ("sin", _run_sin),
+        torch.ops.aten.sin: ("sin", _run_sin),
+        torch.cos: ("cos", _run_cos),
+        torch.ops.aten.cos.default: ("cos", _run_cos),
+        torch.ops.aten.cos: ("cos", _run_cos),
+        torch.tanh: ("tanh", _run_tanh),
+        torch.ops.aten.tanh.default: ("tanh", _run_tanh),
+        torch.ops.aten.tanh: ("tanh", _run_tanh),
+        torch.floor: ("floor", _run_floor),
+        torch.ops.aten.floor.default: ("floor", _run_floor),
+        torch.ops.aten.floor: ("floor", _run_floor),
+        torch.ceil: ("ceil", _run_ceil),
+        torch.ops.aten.ceil.default: ("ceil", _run_ceil),
+        torch.ops.aten.ceil: ("ceil", _run_ceil),
+        torch.reciprocal: ("reciprocal", _run_reciprocal),
+        torch.ops.aten.reciprocal.default: ("reciprocal", _run_reciprocal),
+        torch.ops.aten.reciprocal: ("reciprocal", _run_reciprocal),
+        torch.relu: ("relu", _run_relu),
+        torch.ops.aten.relu.default: ("relu", _run_relu),
+        torch.ops.aten.relu: ("relu", _run_relu),
         operator.matmul: ("matmul", _run_matmul),
         torch.matmul: ("matmul", _run_matmul),
         torch.ops.aten.mm.default: ("matmul", _run_matmul),
@@ -170,6 +270,20 @@ def _compile_graph(
             "broadcast_in_dim",
             _run_broadcast_in_dim,
         ),
+    }
+    unary_ops = {
+        "neg",
+        "exp",
+        "abs",
+        "sqrt",
+        "log",
+        "sin",
+        "cos",
+        "tanh",
+        "floor",
+        "ceil",
+        "reciprocal",
+        "relu",
     }
 
     def compiled(*args: torch.Tensor) -> torch.Tensor:
@@ -237,7 +351,7 @@ def _compile_graph(
                         if not isinstance(arg, torch.fx.Node):
                             raise RefBackendError(f"{op_name} expects tensor inputs only")
                         args_values.append(env[arg.name])
-                    if op_name in {"neg", "exp"}:
+                    if op_name in unary_ops:
                         if len(args_values) != 1:
                             raise RefBackendError(f"{op_name} expects exactly one input")
                         result = op_fn(*args_values)

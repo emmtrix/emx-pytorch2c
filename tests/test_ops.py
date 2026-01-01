@@ -88,6 +88,36 @@ OP_TEST_CONFIG = {
     "exp": {
         "allowed_dtypes": (torch.float32,),
     },
+    "abs": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "sqrt": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "log": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "sin": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "cos": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "tanh": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "floor": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "ceil": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "reciprocal": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "relu": {
+        "allowed_dtypes": (torch.float32,),
+    },
     "matmul": {
         "allowed_dtypes": (torch.float32,),
         "allow_noncontiguous": False,

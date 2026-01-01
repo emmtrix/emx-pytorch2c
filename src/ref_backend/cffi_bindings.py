@@ -26,6 +26,16 @@ class RefOpKind:
     REF_OP_MINIMUM = 8
     REF_OP_NEG = 9
     REF_OP_EXP = 10
+    REF_OP_ABS = 11
+    REF_OP_SQRT = 12
+    REF_OP_LOG = 13
+    REF_OP_SIN = 14
+    REF_OP_COS = 15
+    REF_OP_TANH = 16
+    REF_OP_FLOOR = 17
+    REF_OP_CEIL = 18
+    REF_OP_RECIPROCAL = 19
+    REF_OP_RELU = 20
 
 
 class RefTensorView(ctypes.Structure):
@@ -307,6 +317,248 @@ def run_exp(a: torch.Tensor, out: torch.Tensor) -> None:
 
     _ = (a_buf, out_buf)
     _get_library().run_op(RefOpKind.REF_OP_EXP, call)
+
+
+def run_abs(a: torch.Tensor, out: torch.Tensor) -> None:
+    if a.dtype is not torch.float32 or out.dtype is not torch.float32:
+        raise RefBackendError("abs supports only torch.float32 tensors")
+    if a.shape != out.shape:
+        raise RefBackendError("abs requires input and output to have identical shapes")
+    if a.ndim > 8:
+        raise RefBackendError("abs supports at most 8 dimensions")
+    a_view, a_buf = _tensor_to_view(a)
+    out_view, out_buf = _tensor_to_view(out)
+
+    inputs = (RefTensorView * 1)(a_view)
+    outputs = (RefTensorView * 1)(out_view)
+    call = RefOpCall(
+        inputs=inputs,
+        n_inputs=ctypes.c_int32(1),
+        outputs=outputs,
+        n_outputs=ctypes.c_int32(1),
+        params=None,
+    )
+
+    _ = (a_buf, out_buf)
+    _get_library().run_op(RefOpKind.REF_OP_ABS, call)
+
+
+def run_sqrt(a: torch.Tensor, out: torch.Tensor) -> None:
+    if a.dtype is not torch.float32 or out.dtype is not torch.float32:
+        raise RefBackendError("sqrt supports only torch.float32 tensors")
+    if a.shape != out.shape:
+        raise RefBackendError("sqrt requires input and output to have identical shapes")
+    if a.ndim > 8:
+        raise RefBackendError("sqrt supports at most 8 dimensions")
+    a_view, a_buf = _tensor_to_view(a)
+    out_view, out_buf = _tensor_to_view(out)
+
+    inputs = (RefTensorView * 1)(a_view)
+    outputs = (RefTensorView * 1)(out_view)
+    call = RefOpCall(
+        inputs=inputs,
+        n_inputs=ctypes.c_int32(1),
+        outputs=outputs,
+        n_outputs=ctypes.c_int32(1),
+        params=None,
+    )
+
+    _ = (a_buf, out_buf)
+    _get_library().run_op(RefOpKind.REF_OP_SQRT, call)
+
+
+def run_log(a: torch.Tensor, out: torch.Tensor) -> None:
+    if a.dtype is not torch.float32 or out.dtype is not torch.float32:
+        raise RefBackendError("log supports only torch.float32 tensors")
+    if a.shape != out.shape:
+        raise RefBackendError("log requires input and output to have identical shapes")
+    if a.ndim > 8:
+        raise RefBackendError("log supports at most 8 dimensions")
+    a_view, a_buf = _tensor_to_view(a)
+    out_view, out_buf = _tensor_to_view(out)
+
+    inputs = (RefTensorView * 1)(a_view)
+    outputs = (RefTensorView * 1)(out_view)
+    call = RefOpCall(
+        inputs=inputs,
+        n_inputs=ctypes.c_int32(1),
+        outputs=outputs,
+        n_outputs=ctypes.c_int32(1),
+        params=None,
+    )
+
+    _ = (a_buf, out_buf)
+    _get_library().run_op(RefOpKind.REF_OP_LOG, call)
+
+
+def run_sin(a: torch.Tensor, out: torch.Tensor) -> None:
+    if a.dtype is not torch.float32 or out.dtype is not torch.float32:
+        raise RefBackendError("sin supports only torch.float32 tensors")
+    if a.shape != out.shape:
+        raise RefBackendError("sin requires input and output to have identical shapes")
+    if a.ndim > 8:
+        raise RefBackendError("sin supports at most 8 dimensions")
+    a_view, a_buf = _tensor_to_view(a)
+    out_view, out_buf = _tensor_to_view(out)
+
+    inputs = (RefTensorView * 1)(a_view)
+    outputs = (RefTensorView * 1)(out_view)
+    call = RefOpCall(
+        inputs=inputs,
+        n_inputs=ctypes.c_int32(1),
+        outputs=outputs,
+        n_outputs=ctypes.c_int32(1),
+        params=None,
+    )
+
+    _ = (a_buf, out_buf)
+    _get_library().run_op(RefOpKind.REF_OP_SIN, call)
+
+
+def run_cos(a: torch.Tensor, out: torch.Tensor) -> None:
+    if a.dtype is not torch.float32 or out.dtype is not torch.float32:
+        raise RefBackendError("cos supports only torch.float32 tensors")
+    if a.shape != out.shape:
+        raise RefBackendError("cos requires input and output to have identical shapes")
+    if a.ndim > 8:
+        raise RefBackendError("cos supports at most 8 dimensions")
+    a_view, a_buf = _tensor_to_view(a)
+    out_view, out_buf = _tensor_to_view(out)
+
+    inputs = (RefTensorView * 1)(a_view)
+    outputs = (RefTensorView * 1)(out_view)
+    call = RefOpCall(
+        inputs=inputs,
+        n_inputs=ctypes.c_int32(1),
+        outputs=outputs,
+        n_outputs=ctypes.c_int32(1),
+        params=None,
+    )
+
+    _ = (a_buf, out_buf)
+    _get_library().run_op(RefOpKind.REF_OP_COS, call)
+
+
+def run_tanh(a: torch.Tensor, out: torch.Tensor) -> None:
+    if a.dtype is not torch.float32 or out.dtype is not torch.float32:
+        raise RefBackendError("tanh supports only torch.float32 tensors")
+    if a.shape != out.shape:
+        raise RefBackendError("tanh requires input and output to have identical shapes")
+    if a.ndim > 8:
+        raise RefBackendError("tanh supports at most 8 dimensions")
+    a_view, a_buf = _tensor_to_view(a)
+    out_view, out_buf = _tensor_to_view(out)
+
+    inputs = (RefTensorView * 1)(a_view)
+    outputs = (RefTensorView * 1)(out_view)
+    call = RefOpCall(
+        inputs=inputs,
+        n_inputs=ctypes.c_int32(1),
+        outputs=outputs,
+        n_outputs=ctypes.c_int32(1),
+        params=None,
+    )
+
+    _ = (a_buf, out_buf)
+    _get_library().run_op(RefOpKind.REF_OP_TANH, call)
+
+
+def run_floor(a: torch.Tensor, out: torch.Tensor) -> None:
+    if a.dtype is not torch.float32 or out.dtype is not torch.float32:
+        raise RefBackendError("floor supports only torch.float32 tensors")
+    if a.shape != out.shape:
+        raise RefBackendError("floor requires input and output to have identical shapes")
+    if a.ndim > 8:
+        raise RefBackendError("floor supports at most 8 dimensions")
+    a_view, a_buf = _tensor_to_view(a)
+    out_view, out_buf = _tensor_to_view(out)
+
+    inputs = (RefTensorView * 1)(a_view)
+    outputs = (RefTensorView * 1)(out_view)
+    call = RefOpCall(
+        inputs=inputs,
+        n_inputs=ctypes.c_int32(1),
+        outputs=outputs,
+        n_outputs=ctypes.c_int32(1),
+        params=None,
+    )
+
+    _ = (a_buf, out_buf)
+    _get_library().run_op(RefOpKind.REF_OP_FLOOR, call)
+
+
+def run_ceil(a: torch.Tensor, out: torch.Tensor) -> None:
+    if a.dtype is not torch.float32 or out.dtype is not torch.float32:
+        raise RefBackendError("ceil supports only torch.float32 tensors")
+    if a.shape != out.shape:
+        raise RefBackendError("ceil requires input and output to have identical shapes")
+    if a.ndim > 8:
+        raise RefBackendError("ceil supports at most 8 dimensions")
+    a_view, a_buf = _tensor_to_view(a)
+    out_view, out_buf = _tensor_to_view(out)
+
+    inputs = (RefTensorView * 1)(a_view)
+    outputs = (RefTensorView * 1)(out_view)
+    call = RefOpCall(
+        inputs=inputs,
+        n_inputs=ctypes.c_int32(1),
+        outputs=outputs,
+        n_outputs=ctypes.c_int32(1),
+        params=None,
+    )
+
+    _ = (a_buf, out_buf)
+    _get_library().run_op(RefOpKind.REF_OP_CEIL, call)
+
+
+def run_reciprocal(a: torch.Tensor, out: torch.Tensor) -> None:
+    if a.dtype is not torch.float32 or out.dtype is not torch.float32:
+        raise RefBackendError("reciprocal supports only torch.float32 tensors")
+    if a.shape != out.shape:
+        raise RefBackendError(
+            "reciprocal requires input and output to have identical shapes"
+        )
+    if a.ndim > 8:
+        raise RefBackendError("reciprocal supports at most 8 dimensions")
+    a_view, a_buf = _tensor_to_view(a)
+    out_view, out_buf = _tensor_to_view(out)
+
+    inputs = (RefTensorView * 1)(a_view)
+    outputs = (RefTensorView * 1)(out_view)
+    call = RefOpCall(
+        inputs=inputs,
+        n_inputs=ctypes.c_int32(1),
+        outputs=outputs,
+        n_outputs=ctypes.c_int32(1),
+        params=None,
+    )
+
+    _ = (a_buf, out_buf)
+    _get_library().run_op(RefOpKind.REF_OP_RECIPROCAL, call)
+
+
+def run_relu(a: torch.Tensor, out: torch.Tensor) -> None:
+    if a.dtype is not torch.float32 or out.dtype is not torch.float32:
+        raise RefBackendError("relu supports only torch.float32 tensors")
+    if a.shape != out.shape:
+        raise RefBackendError("relu requires input and output to have identical shapes")
+    if a.ndim > 8:
+        raise RefBackendError("relu supports at most 8 dimensions")
+    a_view, a_buf = _tensor_to_view(a)
+    out_view, out_buf = _tensor_to_view(out)
+
+    inputs = (RefTensorView * 1)(a_view)
+    outputs = (RefTensorView * 1)(out_view)
+    call = RefOpCall(
+        inputs=inputs,
+        n_inputs=ctypes.c_int32(1),
+        outputs=outputs,
+        n_outputs=ctypes.c_int32(1),
+        params=None,
+    )
+
+    _ = (a_buf, out_buf)
+    _get_library().run_op(RefOpKind.REF_OP_RELU, call)
 
 
 def run_matmul(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
