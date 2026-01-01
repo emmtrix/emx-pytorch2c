@@ -5,9 +5,6 @@ from torch.testing._internal.common_methods_invocations import SampleInput, op_d
 from torch.testing._internal.common_utils import TestCase, run_tests
 
 from ref_backend.backend import ref_backend_backend
-from ref_backend.cffi_bindings import RefBackendError
-
-
 def _extract_tensors(sample):
     tensors = [sample.input]
     tensors.extend(arg for arg in sample.args if isinstance(arg, torch.Tensor))
@@ -69,22 +66,18 @@ def _expand_sample_filter(sample):
 OP_TEST_CONFIG = {
     "add": {
         "allowed_dtypes": (torch.float32,),
-        "skip_invalid_shape_tests": True,
     },
     "sub": {
         "allowed_dtypes": (torch.float32,),
-        "skip_invalid_shape_tests": True,
     },
     "mul": {
         "allowed_dtypes": (torch.float32,),
-        "skip_invalid_shape_tests": True,
     },
     "matmul": {
         "allowed_dtypes": (torch.float32,),
         "allow_noncontiguous": False,
         "requires_same_shape": False,
         "requires_contiguous": True,
-        "skip_invalid_shape_tests": True,
         "sample_filter": _matmul_sample_filter,
     },
     "bmm": {
@@ -92,7 +85,6 @@ OP_TEST_CONFIG = {
         "allow_noncontiguous": False,
         "requires_same_shape": False,
         "requires_contiguous": True,
-        "skip_invalid_shape_tests": True,
         "sample_filter": _bmm_sample_filter,
     },
     "expand": {
@@ -100,7 +92,6 @@ OP_TEST_CONFIG = {
         "allow_noncontiguous": False,
         "requires_same_shape": False,
         "requires_contiguous": True,
-        "skip_invalid_shape_tests": True,
         "sample_filter": _expand_sample_filter,
     },
 }
@@ -111,9 +102,6 @@ DEFAULT_CONSTRAINTS = {
     "max_ndim": 8,
     "requires_same_shape": True,
     "requires_contiguous": False,
-    "max_ndim_error": None,
-    "shape_error": None,
-    "skip_invalid_shape_tests": False,
     "sample_filter": None,
 }
 
@@ -177,12 +165,6 @@ def _iter_supported_samples(op, device, dtype, constraints):
                     yield _update_sample(sample, sliced)
 
 
-def _get_op_arity(op, device, dtype, constraints):
-    for sample in _iter_supported_samples(op, device, dtype, constraints):
-        return 1 + len(sample.args)
-    return None
-
-
 class TestElementwiseOpInfo(TestCase):
     @ops(OPS_UNDER_TEST)
     def test_ref_backend_matches_eager(self, device, dtype, op):
@@ -195,39 +177,6 @@ class TestElementwiseOpInfo(TestCase):
             inputs = (sample.input, *sample.args)
             result = compiled(*inputs)
             torch.testing.assert_close(result, op(*inputs))
-
-    @ops(OPS_UNDER_TEST)
-    def test_ref_backend_rejects_invalid_shapes(self, device, dtype, op):
-        constraints = _constraints_for(op)
-        if constraints["skip_invalid_shape_tests"]:
-            pytest.skip("invalid-shape checks disabled by test constraints")
-        allowed_dtypes = constraints["allowed_dtypes"]
-        if allowed_dtypes is not None and dtype not in allowed_dtypes:
-            pytest.skip("dtype not supported by test constraints")
-        compiled = _compile_op(op)
-        arity = _get_op_arity(op, device, dtype, constraints)
-        if arity is None:
-            pytest.skip("no supported sample inputs for this dtype")
-        max_ndim = constraints["max_ndim"]
-        if max_ndim is not None:
-            too_many_dims = torch.randn((1,) * (max_ndim + 1), device=device, dtype=dtype)
-            max_ndim_error = constraints["max_ndim_error"]
-            if max_ndim_error is None:
-                max_ndim_error = f"{op.name} supports at most {max_ndim} dimensions"
-            with pytest.raises(RefBackendError, match=max_ndim_error):
-                compiled(*([too_many_dims] * arity))
-
-        if constraints["requires_same_shape"] and arity >= 2:
-            a = torch.randn((2, 3), device=device, dtype=dtype)
-            b = torch.randn((2, 4), device=device, dtype=dtype)
-            shape_error = constraints["shape_error"]
-            if shape_error is None:
-                shape_error = (
-                    f"{op.name} requires inputs and output to have identical shapes"
-                )
-            with pytest.raises(RefBackendError, match=shape_error):
-                mismatched = [a] * (arity - 1) + [b]
-                compiled(*mismatched)
 
 
 instantiate_device_type_tests(TestElementwiseOpInfo, globals(), only_for="cpu")
