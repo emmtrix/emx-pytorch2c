@@ -12,6 +12,7 @@ setup(
                 "csrc/ops_bmm.c",
                 "csrc/ops_matmul.c",
                 "csrc/ops_broadcast_in_dim.c",
+                "csrc/ops_utils.c",
                 "csrc/ref_backend_module.c",
             ],
             include_dirs=["csrc"],
