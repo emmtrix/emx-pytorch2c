@@ -14,6 +14,11 @@ static void write_error(char *err_msg, size_t err_cap, const char *msg) {
 int ref_run_add(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_sub(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_mul(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_div(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_maximum(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_minimum(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_neg(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_exp(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_matmul(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_bmm(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_broadcast_in_dim(const RefOpCall *call, char *err_msg, size_t err_cap);
@@ -30,6 +35,16 @@ int ref_run_op(int32_t op_kind, const RefOpCall *call, char *err_msg, size_t err
             return ref_run_sub(call, err_msg, err_cap);
         case REF_OP_MUL:
             return ref_run_mul(call, err_msg, err_cap);
+        case REF_OP_DIV:
+            return ref_run_div(call, err_msg, err_cap);
+        case REF_OP_MAXIMUM:
+            return ref_run_maximum(call, err_msg, err_cap);
+        case REF_OP_MINIMUM:
+            return ref_run_minimum(call, err_msg, err_cap);
+        case REF_OP_NEG:
+            return ref_run_neg(call, err_msg, err_cap);
+        case REF_OP_EXP:
+            return ref_run_exp(call, err_msg, err_cap);
         case REF_OP_MATMUL:
             return ref_run_matmul(call, err_msg, err_cap);
         case REF_OP_BMM:

@@ -73,6 +73,21 @@ OP_TEST_CONFIG = {
     "mul": {
         "allowed_dtypes": (torch.float32,),
     },
+    "div": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "maximum": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "minimum": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "neg": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "exp": {
+        "allowed_dtypes": (torch.float32,),
+    },
     "matmul": {
         "allowed_dtypes": (torch.float32,),
         "allow_noncontiguous": False,

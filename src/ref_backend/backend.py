@@ -12,8 +12,13 @@ from .cffi_bindings import (
     run_add,
     run_bmm,
     run_broadcast_in_dim,
+    run_div,
+    run_exp,
     run_matmul,
+    run_maximum,
+    run_minimum,
     run_mul,
+    run_neg,
     run_sub,
 )
 
@@ -33,6 +38,36 @@ def _run_sub(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 def _run_mul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     out = torch.empty_like(a, memory_format=torch.contiguous_format)
     run_mul(a, b, out)
+    return out
+
+
+def _run_div(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_div(a, b, out)
+    return out
+
+
+def _run_maximum(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_maximum(a, b, out)
+    return out
+
+
+def _run_minimum(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_minimum(a, b, out)
+    return out
+
+
+def _run_neg(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_neg(a, out)
+    return out
+
+
+def _run_exp(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_exp(a, out)
     return out
 
 
@@ -105,6 +140,23 @@ def _compile_graph(
         torch.ops.prims.mul: ("mul", _run_mul),
         torch.ops.prims.mul.default: ("mul", _run_mul),
         torch.ops.aten.mul.Tensor: ("mul", _run_mul),
+        operator.truediv: ("div", _run_div),
+        torch.div: ("div", _run_div),
+        torch.ops.aten.div.Tensor: ("div", _run_div),
+        torch.ops.aten.div: ("div", _run_div),
+        torch.maximum: ("maximum", _run_maximum),
+        torch.ops.aten.maximum.default: ("maximum", _run_maximum),
+        torch.ops.aten.maximum: ("maximum", _run_maximum),
+        torch.minimum: ("minimum", _run_minimum),
+        torch.ops.aten.minimum.default: ("minimum", _run_minimum),
+        torch.ops.aten.minimum: ("minimum", _run_minimum),
+        operator.neg: ("neg", _run_neg),
+        torch.neg: ("neg", _run_neg),
+        torch.ops.aten.neg.default: ("neg", _run_neg),
+        torch.ops.aten.neg: ("neg", _run_neg),
+        torch.exp: ("exp", _run_exp),
+        torch.ops.aten.exp.default: ("exp", _run_exp),
+        torch.ops.aten.exp: ("exp", _run_exp),
         operator.matmul: ("matmul", _run_matmul),
         torch.matmul: ("matmul", _run_matmul),
         torch.ops.aten.mm.default: ("matmul", _run_matmul),
@@ -185,9 +237,14 @@ def _compile_graph(
                         if not isinstance(arg, torch.fx.Node):
                             raise RefBackendError(f"{op_name} expects tensor inputs only")
                         args_values.append(env[arg.name])
-                    if len(args_values) != 2:
-                        raise RefBackendError(f"{op_name} expects exactly two inputs")
-                    result = op_fn(*args_values)
+                    if op_name in {"neg", "exp"}:
+                        if len(args_values) != 1:
+                            raise RefBackendError(f"{op_name} expects exactly one input")
+                        result = op_fn(*args_values)
+                    else:
+                        if len(args_values) != 2:
+                            raise RefBackendError(f"{op_name} expects exactly two inputs")
+                        result = op_fn(*args_values)
                 env[node.name] = result
                 continue
             if node.op == "output":
