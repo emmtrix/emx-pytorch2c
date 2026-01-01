@@ -14,6 +14,11 @@ int is_contiguous(const RefTensorView *tensor) {
     if (tensor->ndim <= 0) {
         return 1;
     }
+    for (int32_t i = 0; i < tensor->ndim; ++i) {
+        if (tensor->sizes[i] == 0) {
+            return 1;
+        }
+    }
     int64_t expected = 1;
     for (int32_t i = tensor->ndim - 1; i >= 0; --i) {
         if (tensor->strides[i] != expected) {

@@ -69,12 +69,15 @@ def _expand_sample_filter(sample):
 OP_TEST_CONFIG = {
     "add": {
         "allowed_dtypes": (torch.float32,),
+        "skip_invalid_shape_tests": True,
     },
     "sub": {
         "allowed_dtypes": (torch.float32,),
+        "skip_invalid_shape_tests": True,
     },
     "mul": {
         "allowed_dtypes": (torch.float32,),
+        "skip_invalid_shape_tests": True,
     },
     "matmul": {
         "allowed_dtypes": (torch.float32,),

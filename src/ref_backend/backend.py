@@ -75,7 +75,6 @@ def _run_expand(a: torch.Tensor, shape: List[int]) -> torch.Tensor:
     in_rank = a.ndim
     if out_rank < in_rank:
         raise RefBackendError("expand requires output rank >= input rank")
-    broadcast_dimensions = list(range(out_rank - in_rank, out_rank))
     resolved_shape = []
     leading = out_rank - in_rank
     for idx, dim in enumerate(shape):
@@ -84,7 +83,7 @@ def _run_expand(a: torch.Tensor, shape: List[int]) -> torch.Tensor:
                 raise RefBackendError("expand cannot infer leading broadcast dimension")
             dim = a.shape[idx - leading]
         resolved_shape.append(int(dim))
-    return _run_broadcast_in_dim(a, resolved_shape, broadcast_dimensions)
+    return a.expand(*resolved_shape)
 
 
 def _compile_graph(
