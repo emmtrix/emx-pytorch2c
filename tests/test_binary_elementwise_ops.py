@@ -7,7 +7,7 @@ from torch.testing._internal.common_utils import TestCase, run_tests
 from ref_backend.cffi_bindings import run_add, run_div, run_mul, run_sub
 
 
-ADD_SUB_OPS = [op for op in op_db if op.name in ("add", "sub", "mul", "div")]
+BINARY_OPS = [op for op in op_db if op.name in ("add", "sub", "mul", "div")]
 
 
 def _run_ref_op(op_name: str, a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
@@ -53,8 +53,8 @@ def _iter_supported_samples(op, device, dtype):
                 yield SampleInput(a_s, args=(b_s,))
 
 
-class TestAddSubOpInfo(TestCase):
-    @ops(ADD_SUB_OPS, allowed_dtypes=(torch.float32,))
+class TestBinaryOpInfo(TestCase):
+    @ops(BINARY_OPS, allowed_dtypes=(torch.float32,))
     def test_ref_backend_matches_eager(self, device, dtype, op):
         for sample in _iter_supported_samples(op, device, dtype):
             a = sample.input
@@ -64,7 +64,7 @@ class TestAddSubOpInfo(TestCase):
             expected = op(a, b)
             torch.testing.assert_close(out, expected)
 
-    @ops(ADD_SUB_OPS, allowed_dtypes=(torch.float32,))
+    @ops(BINARY_OPS, allowed_dtypes=(torch.float32,))
     def test_ref_backend_rejects_invalid_shapes(self, device, dtype, op):
         too_many_dims = torch.randn((1,) * 9, device=device, dtype=dtype)
         out = torch.empty_like(too_many_dims)
@@ -81,7 +81,7 @@ class TestAddSubOpInfo(TestCase):
             _run_ref_op(op.name, a, b, out)
 
 
-instantiate_device_type_tests(TestAddSubOpInfo, globals(), only_for="cpu")
+instantiate_device_type_tests(TestBinaryOpInfo, globals(), only_for="cpu")
 
 
 if __name__ == "__main__":
