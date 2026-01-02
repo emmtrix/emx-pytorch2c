@@ -22,6 +22,9 @@ from .cffi_bindings import (
     run_ceil,
     run_cos,
     run_cosh,
+    _conv2d_output_shape,
+    _normalize_conv2d_param,
+    run_conv2d,
     run_div,
     run_erf,
     run_erfc,
@@ -281,6 +284,38 @@ def _run_relu(a: torch.Tensor) -> torch.Tensor:
     return out
 
 
+def _run_conv2d(
+    input_tensor: torch.Tensor,
+    weight: torch.Tensor,
+    stride: object,
+    padding: object,
+    dilation: object,
+    groups: int,
+) -> torch.Tensor:
+    stride_pair = _normalize_conv2d_param("stride", stride)
+    padding_pair = _normalize_conv2d_param("padding", padding)
+    dilation_pair = _normalize_conv2d_param("dilation", dilation)
+    out_shape = _conv2d_output_shape(
+        input_tensor, weight, stride_pair, padding_pair, dilation_pair, groups
+    )
+    out = torch.empty(
+        out_shape,
+        dtype=input_tensor.dtype,
+        device=input_tensor.device,
+        memory_format=torch.contiguous_format,
+    )
+    run_conv2d(
+        input_tensor,
+        weight,
+        out,
+        stride=stride_pair,
+        padding=padding_pair,
+        dilation=dilation_pair,
+        groups=groups,
+    )
+    return out
+
+
 def _run_matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     if a.ndim == 3 and b.ndim == 3:
         out = torch.empty(
@@ -457,6 +492,10 @@ def _compile_graph(
         torch.relu: ("relu", _run_relu),
         torch.ops.aten.relu.default: ("relu", _run_relu),
         torch.ops.aten.relu: ("relu", _run_relu),
+        torch.ops.aten.convolution.default: ("conv2d", _run_conv2d),
+        torch.ops.aten.convolution: ("conv2d", _run_conv2d),
+        torch.ops.aten.conv2d.default: ("conv2d", _run_conv2d),
+        torch.ops.aten.conv2d: ("conv2d", _run_conv2d),
         operator.matmul: ("matmul", _run_matmul),
         torch.matmul: ("matmul", _run_matmul),
         torch.ops.aten.mm.default: ("matmul", _run_matmul),
@@ -565,6 +604,66 @@ def _compile_graph(
                     if isinstance(shape, torch.fx.Node):
                         raise RefBackendError("expand expects constant shape")
                     result = op_fn(env[input_arg.name], list(shape))
+                elif op_name == "conv2d":
+                    if node.kwargs:
+                        raise RefBackendError("conv2d expects positional arguments only")
+                    if len(node.args) == 7:
+                        (
+                            input_arg,
+                            weight_arg,
+                            bias,
+                            stride,
+                            padding,
+                            dilation,
+                            groups,
+                        ) = node.args
+                        transposed = False
+                        output_padding = (0, 0)
+                    elif len(node.args) == 9:
+                        (
+                            input_arg,
+                            weight_arg,
+                            bias,
+                            stride,
+                            padding,
+                            dilation,
+                            transposed,
+                            output_padding,
+                            groups,
+                        ) = node.args
+                    else:
+                        raise RefBackendError("conv2d expects convolution arguments")
+                    if not isinstance(input_arg, torch.fx.Node) or not isinstance(
+                        weight_arg, torch.fx.Node
+                    ):
+                        raise RefBackendError("conv2d expects tensor inputs only")
+                    if isinstance(bias, torch.fx.Node) or bias is not None:
+                        raise RefBackendError("conv2d does not support bias")
+                    if isinstance(stride, torch.fx.Node) or isinstance(
+                        padding, torch.fx.Node
+                    ) or isinstance(dilation, torch.fx.Node):
+                        raise RefBackendError(
+                            "conv2d expects constant stride, padding, and dilation"
+                        )
+                    if isinstance(transposed, torch.fx.Node) or transposed:
+                        raise RefBackendError("conv2d does not support transposed")
+                    if isinstance(output_padding, torch.fx.Node) or output_padding not in (
+                        (0, 0),
+                        [0, 0],
+                    ):
+                        raise RefBackendError(
+                            "conv2d expects zero output padding"
+                        )
+                    if isinstance(groups, torch.fx.Node):
+                        raise RefBackendError("conv2d expects constant groups")
+                    result = op_fn(
+                        env[input_arg.name],
+                        env[weight_arg.name],
+                        stride,
+                        padding,
+                        dilation,
+                        groups,
+                    )
                 else:
                     args_values = []
                     for arg in node.args:

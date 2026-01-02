@@ -47,6 +47,7 @@ setup(
                 "csrc/ops_relu.c",
                 "csrc/ops_bmm.c",
                 "csrc/ops_matmul.c",
+                "csrc/ops_conv2d.c",
                 "csrc/ops_broadcast_in_dim.c",
                 "csrc/ops_unary.c",
                 "csrc/ops_utils.c",

@@ -56,6 +56,7 @@ class RefOpKind:
     REF_OP_SIGN = 38
     REF_OP_ROUND = 39
     REF_OP_TRUNC = 40
+    REF_OP_CONV2D = 41
 
 
 class RefTensorView(ctypes.Structure):
@@ -82,6 +83,18 @@ class RefBroadcastInDimParams(ctypes.Structure):
     _fields_ = [
         ("n_dims", ctypes.c_int32),
         ("broadcast_dimensions", ctypes.POINTER(ctypes.c_int32)),
+    ]
+
+
+class RefConv2dParams(ctypes.Structure):
+    _fields_ = [
+        ("stride_h", ctypes.c_int64),
+        ("stride_w", ctypes.c_int64),
+        ("padding_h", ctypes.c_int64),
+        ("padding_w", ctypes.c_int64),
+        ("dilation_h", ctypes.c_int64),
+        ("dilation_w", ctypes.c_int64),
+        ("groups", ctypes.c_int64),
     ]
 
 
@@ -178,6 +191,54 @@ def _validate_float32(op_name: str, *tensors: torch.Tensor) -> None:
 def _validate_max_dims(op_name: str, *tensors: torch.Tensor, max_dims: int = 8) -> None:
     if any(tensor.ndim > max_dims for tensor in tensors):
         raise RefBackendError(f"{op_name} supports at most {max_dims} dimensions")
+
+
+def _normalize_conv2d_param(name: str, value: object) -> Tuple[int, int]:
+    if isinstance(value, int):
+        return (value, value)
+    if (
+        isinstance(value, tuple)
+        and len(value) == 2
+        and all(isinstance(item, int) for item in value)
+    ):
+        return value
+    if (
+        isinstance(value, list)
+        and len(value) == 2
+        and all(isinstance(item, int) for item in value)
+    ):
+        return (value[0], value[1])
+    raise RefBackendError(f"conv2d expects {name} to be an int or a pair of ints")
+
+
+def _conv2d_output_shape(
+    input_tensor: torch.Tensor,
+    weight: torch.Tensor,
+    stride: Tuple[int, int],
+    padding: Tuple[int, int],
+    dilation: Tuple[int, int],
+    groups: int,
+) -> Tuple[int, int, int, int]:
+    batch, in_channels, in_h, in_w = input_tensor.shape
+    out_channels, weight_in_channels, kernel_h, kernel_w = weight.shape
+    if in_channels != weight_in_channels * groups:
+        raise RefBackendError(
+            "conv2d requires input channels to match weight channels * groups"
+        )
+    if out_channels % groups != 0:
+        raise RefBackendError(
+            "conv2d requires output channels to be divisible by groups"
+        )
+    stride_h, stride_w = stride
+    pad_h, pad_w = padding
+    dil_h, dil_w = dilation
+    numerator_h = in_h + 2 * pad_h - dil_h * (kernel_h - 1) - 1
+    numerator_w = in_w + 2 * pad_w - dil_w * (kernel_w - 1) - 1
+    if numerator_h < 0 or numerator_w < 0:
+        raise RefBackendError("conv2d requires output shape (N, C_out, H_out, W_out)")
+    out_h = numerator_h // stride_h + 1
+    out_w = numerator_w // stride_w + 1
+    return batch, out_channels, out_h, out_w
 
 
 def _run_binary_elementwise(
@@ -358,6 +419,68 @@ def run_reciprocal(a: torch.Tensor, out: torch.Tensor) -> None:
 
 def run_relu(a: torch.Tensor, out: torch.Tensor) -> None:
     _run_unary_elementwise("relu", RefOpKind.REF_OP_RELU, a, out)
+
+
+def run_conv2d(
+    input_tensor: torch.Tensor,
+    weight: torch.Tensor,
+    out: torch.Tensor,
+    stride: object = 1,
+    padding: object = 0,
+    dilation: object = 1,
+    groups: int = 1,
+) -> None:
+    if (
+        input_tensor.dtype is not torch.float32
+        or weight.dtype is not torch.float32
+        or out.dtype is not torch.float32
+    ):
+        raise RefBackendError("conv2d supports only torch.float32 tensors")
+    if input_tensor.ndim != 4 or weight.ndim != 4 or out.ndim != 4:
+        raise RefBackendError("conv2d requires 4D input, weight, and output")
+    if (
+        not input_tensor.is_contiguous()
+        or not weight.is_contiguous()
+        or not out.is_contiguous()
+    ):
+        raise RefBackendError("conv2d requires contiguous tensors")
+    stride_pair = _normalize_conv2d_param("stride", stride)
+    padding_pair = _normalize_conv2d_param("padding", padding)
+    dilation_pair = _normalize_conv2d_param("dilation", dilation)
+    if (
+        stride_pair[0] <= 0
+        or stride_pair[1] <= 0
+        or dilation_pair[0] <= 0
+        or dilation_pair[1] <= 0
+        or padding_pair[0] < 0
+        or padding_pair[1] < 0
+    ):
+        raise RefBackendError(
+            "conv2d expects stride and dilation to be positive and padding to be non-negative"
+        )
+    if groups <= 0:
+        raise RefBackendError("conv2d requires positive groups")
+    expected_shape = _conv2d_output_shape(
+        input_tensor, weight, stride_pair, padding_pair, dilation_pair, groups
+    )
+    if out.shape != expected_shape:
+        raise RefBackendError("conv2d requires output shape (N, C_out, H_out, W_out)")
+    params = RefConv2dParams(
+        stride_h=stride_pair[0],
+        stride_w=stride_pair[1],
+        padding_h=padding_pair[0],
+        padding_w=padding_pair[1],
+        dilation_h=dilation_pair[0],
+        dilation_w=dilation_pair[1],
+        groups=groups,
+    )
+    call, buffers = _build_call(
+        (input_tensor, weight),
+        (out,),
+        params=ctypes.cast(ctypes.pointer(params), ctypes.c_void_p),
+    )
+    _ = (buffers, params)
+    _get_library().run_op(RefOpKind.REF_OP_CONV2D, call)
 
 
 def run_matmul(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:

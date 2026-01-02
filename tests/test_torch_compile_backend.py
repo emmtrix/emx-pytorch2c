@@ -25,6 +25,10 @@ def j(a, b):
     return a * b
 
 
+def k(a, b):
+    return torch.nn.functional.conv2d(a, b, stride=1, padding=1)
+
+
 def test_torch_compile_add_matches_eager():
     compiled = torch.compile(f, backend=c_ref_backend_backend)
     a = torch.randn(2, 3, dtype=torch.float32)
@@ -125,5 +129,21 @@ def test_torch_compile_bmm_rejects_non_contiguous():
     compiled = torch.compile(h, backend=c_ref_backend_backend)
     a = torch.randn(2, 4, 3, dtype=torch.float32).transpose(1, 2)
     b = torch.randn(2, 5, 4, dtype=torch.float32).transpose(1, 2)
+    with pytest.raises(RefBackendError, match="contiguous"):
+        compiled(a, b)
+
+
+def test_torch_compile_conv2d_matches_eager():
+    compiled = torch.compile(k, backend=c_ref_backend_backend)
+    a = torch.randn(2, 3, 8, 8, dtype=torch.float32)
+    b = torch.randn(4, 3, 3, 3, dtype=torch.float32)
+    result = compiled(a, b)
+    torch.testing.assert_close(result, k(a, b))
+
+
+def test_torch_compile_conv2d_rejects_non_contiguous():
+    compiled = torch.compile(k, backend=c_ref_backend_backend)
+    a = torch.randn(2, 3, 8, 8, dtype=torch.float32).transpose(2, 3)
+    b = torch.randn(4, 3, 3, 3, dtype=torch.float32)
     with pytest.raises(RefBackendError, match="contiguous"):
         compiled(a, b)
