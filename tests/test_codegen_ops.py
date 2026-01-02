@@ -60,6 +60,8 @@ def _iter_supported_samples(op, device, dtype, constraints):
     for sample in op.sample_inputs(device, dtype):
         if sample.kwargs:
             continue
+        if any(not isinstance(arg, torch.Tensor) for arg in sample.args):
+            continue
         tensors = _extract_tensors(sample)
         if not tensors:
             continue
@@ -93,30 +95,91 @@ def _iter_supported_samples(op, device, dtype, constraints):
                     yield _update_sample(sample, sliced)
 
 
-CODEGEN_OP_NAMES = {"add", "sub", "mul", "matmul", "bmm", "relu"}
+CODEGEN_OP_NAMES = {
+    "abs",
+    "acos",
+    "acosh",
+    "add",
+    "angle",
+    "asin",
+    "asinh",
+    "atan",
+    "atan2",
+    "atanh",
+    "bmm",
+    "ceil",
+    "clamp_max",
+    "clamp_min",
+    "conj",
+    "conj_physical",
+    "copysign",
+    "cos",
+    "cosh",
+    "deg2rad",
+    "digamma",
+    "div",
+    "erf",
+    "erfc",
+    "erfinv",
+    "exp",
+    "exp2",
+    "expm1",
+    "floor",
+    "floor_divide",
+    "fmax",
+    "fmin",
+    "fmod",
+    "frac",
+    "heaviside",
+    "hypot",
+    "i0",
+    "ldexp",
+    "lgamma",
+    "log",
+    "log10",
+    "log1p",
+    "log2",
+    "logaddexp",
+    "logit",
+    "matmul",
+    "maximum",
+    "minimum",
+    "mul",
+    "nan_to_num",
+    "neg",
+    "nextafter",
+    "positive",
+    "pow",
+    "rad2deg",
+    "real",
+    "reciprocal",
+    "relu",
+    "remainder",
+    "round",
+    "rsqrt",
+    "sgn",
+    "sigmoid",
+    "sign",
+    "sin",
+    "sinc",
+    "sinh",
+    "sqrt",
+    "square",
+    "sub",
+    "tan",
+    "tanh",
+    "trunc",
+    "xlogy",
+}
 CODEGEN_OPS_UNDER_TEST = [op for op in op_db if op.name in CODEGEN_OP_NAMES]
 CODEGEN_OP_TEST_CONFIG = {
-    "add": {
-        "allowed_dtypes": (torch.float32,),
-    },
-    "sub": {
-        "allowed_dtypes": (torch.float32,),
-    },
-    "mul": {
-        "allowed_dtypes": (torch.float32,),
-    },
-    "relu": {
-        "allowed_dtypes": (torch.float32,),
-    },
     "matmul": {
-        "allowed_dtypes": (torch.float32,),
         "allow_noncontiguous": False,
         "requires_same_shape": False,
         "requires_contiguous": True,
         "sample_filter": _matmul_sample_filter,
     },
     "bmm": {
-        "allowed_dtypes": (torch.float32,),
         "allow_noncontiguous": False,
         "requires_same_shape": False,
         "requires_contiguous": True,
@@ -124,7 +187,7 @@ CODEGEN_OP_TEST_CONFIG = {
     },
 }
 DEFAULT_CONSTRAINTS = {
-    "allowed_dtypes": None,
+    "allowed_dtypes": (torch.float32,),
     "allow_noncontiguous": True,
     "max_ndim": 8,
     "requires_same_shape": True,
@@ -135,7 +198,7 @@ DEFAULT_CONSTRAINTS = {
 
 def _constraints_for_codegen(op):
     constraints = DEFAULT_CONSTRAINTS.copy()
-    constraints.update(CODEGEN_OP_TEST_CONFIG[op.name])
+    constraints.update(CODEGEN_OP_TEST_CONFIG.get(op.name, {}))
     return constraints
 
 
