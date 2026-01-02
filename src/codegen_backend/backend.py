@@ -982,38 +982,81 @@ def _format_array_suffix(shape: Sequence[int]) -> str:
     return "".join(f"[{dim}]" for dim in shape) or "[1]"
 
 
+def _broadcast_output_shape(
+    op_spec: _OpSpec, a_shape: Sequence[int], b_shape: Sequence[int]
+) -> Tuple[int, ...]:
+    max_len = max(len(a_shape), len(b_shape))
+    output_shape = []
+    for dim in range(1, max_len + 1):
+        a_dim = a_shape[-dim] if dim <= len(a_shape) else 1
+        b_dim = b_shape[-dim] if dim <= len(b_shape) else 1
+        if a_dim != b_dim and a_dim != 1 and b_dim != 1:
+            raise RefBackendError(
+                f"codegen {op_spec.name} requires inputs to be broadcastable"
+            )
+        output_shape.append(max(a_dim, b_dim))
+    return tuple(reversed(output_shape))
+
+
+def _broadcast_index_expr(
+    input_shape: Sequence[int], output_shape: Sequence[int]
+) -> str:
+    output_rank = len(output_shape)
+    input_rank = len(input_shape)
+    if input_rank == 0:
+        return "[0]"
+    index_expr = []
+    offset = output_rank - input_rank
+    for input_dim in range(input_rank):
+        output_dim = input_dim + offset
+        if input_shape[input_dim] == 1:
+            index_expr.append("[0]")
+        else:
+            index_expr.append(f"[i{output_dim}]")
+    return "".join(index_expr)
+
+
 def _write_elementwise_kernel(
-    node_index: int, op_spec: _OpSpec, shape: Sequence[int]
+    node_index: int,
+    op_spec: _OpSpec,
+    output_shape: Sequence[int],
+    input_shapes: Sequence[Sequence[int]],
 ) -> List[str]:
-    array_suffix = _format_array_suffix(shape)
+    out_suffix = _format_array_suffix(output_shape)
     if op_spec.kind == "binary":
+        a_shape, b_shape = input_shapes
+        a_suffix = _format_array_suffix(a_shape)
+        b_suffix = _format_array_suffix(b_shape)
         signature = (
-            f"void node{node_index}_{op_spec.name}_f32(const float a{array_suffix}, "
-            f"const float b{array_suffix}, float out{array_suffix}) {{"
+            f"void node{node_index}_{op_spec.name}_f32(const float a{a_suffix}, "
+            f"const float b{b_suffix}, float out{out_suffix}) {{"
         )
     else:
+        a_suffix = _format_array_suffix(input_shapes[0])
         signature = (
-            f"void node{node_index}_{op_spec.name}_f32(const float a{array_suffix}, "
-            f"float out{array_suffix}) {{"
+            f"void node{node_index}_{op_spec.name}_f32(const float a{a_suffix}, "
+            f"float out{out_suffix}) {{"
         )
     lines = [signature]
     indent = "    "
-    if shape:
-        for dim, size in enumerate(shape):
+    if output_shape:
+        for dim, size in enumerate(output_shape):
             lines.append(
                 f"{indent}for (int64_t i{dim} = 0; i{dim} < {size}; ++i{dim}) {{"
             )
             indent += "    "
-    index_expr = "".join(f"[i{dim}]" for dim in range(len(shape))) or "[0]"
+    index_expr = "".join(f"[i{dim}]" for dim in range(len(output_shape))) or "[0]"
     scalar_fn = f"ref_scalar_f32_{op_spec.name}"
     if op_spec.kind == "binary":
+        a_index_expr = _broadcast_index_expr(a_shape, output_shape)
+        b_index_expr = _broadcast_index_expr(b_shape, output_shape)
         lines.append(
-            f"{indent}out{index_expr} = {scalar_fn}(a{index_expr}, b{index_expr});"
+            f"{indent}out{index_expr} = {scalar_fn}(a{a_index_expr}, b{b_index_expr});"
         )
     else:
         lines.append(f"{indent}out{index_expr} = {scalar_fn}(a{index_expr});")
-    if shape:
-        for _ in range(len(shape)):
+    if output_shape:
+        for _ in range(len(output_shape)):
             indent = indent[:-4]
             lines.append(f"{indent}}}")
     lines.append("}")
@@ -1079,7 +1122,12 @@ def _write_generic_source(graph: _GenericGraph) -> str:
     ]
     for index, op_node in enumerate(op_nodes, start=1):
         if op_node.spec.kind in {"binary", "unary"}:
-            lines.extend(_write_elementwise_kernel(index, op_node.spec, op_node.output_shape))
+            input_shapes = [graph.shapes[arg] for arg in op_node.inputs]
+            lines.extend(
+                _write_elementwise_kernel(
+                    index, op_node.spec, op_node.output_shape, input_shapes
+                )
+            )
         else:
             lhs, rhs = op_node.inputs
             lhs_shape = graph.shapes[lhs]
@@ -1156,11 +1204,7 @@ def _infer_output_shape(
 ) -> Tuple[int, ...]:
     if op_spec.kind == "binary":
         a_shape, b_shape = input_shapes
-        if a_shape != b_shape:
-            raise RefBackendError(
-                f"codegen {op_spec.name} requires inputs to have identical shapes"
-            )
-        return a_shape
+        return _broadcast_output_shape(op_spec, a_shape, b_shape)
     if op_spec.kind == "unary":
         return input_shapes[0]
     a_shape, b_shape = input_shapes
