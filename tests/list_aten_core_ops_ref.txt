@@ -520,7 +520,7 @@ adaptive_max_pool2d_backward             -     -
 adaptive_max_pool3d                      -     -      
 adaptive_max_pool3d_backward             -     -      
 add                                      yes   yes    
-add_                                     -     -      
+add_                                     -     yes    
 addbmm                                   -     -      
 addbmm_                                  -     -      
 addcdiv                                  -     -      
@@ -1722,6 +1722,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1718
 supported by cref only: 3
-supported by codegen only: 2
+supported by codegen only: 3
 supported by both: 74
-unsupported by either: 1639
+unsupported by either: 1638
+supported by codegen: 77 / 1718 (4.5 %)
+supported by c-ref: 77 / 1718 (4.5 %)

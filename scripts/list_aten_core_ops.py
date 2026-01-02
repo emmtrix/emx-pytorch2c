@@ -66,12 +66,20 @@ def main() -> None:
         aten_ops, cref_ops, codegen_ops
     )
     unsupported = total - cref_only - codegen_only - both
+    supported_codegen = codegen_only + both
+    supported_cref = cref_only + both
+    codegen_percent = (supported_codegen / total * 100) if total else 0
+    cref_percent = (supported_cref / total * 100) if total else 0
     print("\nSummary")
     print(f"total aten ops: {total}")
     print(f"supported by cref only: {cref_only}")
     print(f"supported by codegen only: {codegen_only}")
     print(f"supported by both: {both}")
     print(f"unsupported by either: {unsupported}")
+    print(
+        f"supported by codegen: {supported_codegen} / {total} ({codegen_percent:.1f} %)"
+    )
+    print(f"supported by c-ref: {supported_cref} / {total} ({cref_percent:.1f} %)")
 
 
 if __name__ == "__main__":
