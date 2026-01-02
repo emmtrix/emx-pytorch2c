@@ -26,6 +26,12 @@ class _MatmulOpSpec:
     supported_targets: set
 
 
+@dataclass(frozen=True)
+class _UnaryOpSpec:
+    name: str
+    supported_targets: set
+
+
 SUPPORTED_BINARY_OPS = {
     "add": _BinaryOpSpec(
         name="add",
@@ -73,6 +79,17 @@ SUPPORTED_MATMUL_OPS = {
     ),
 }
 
+SUPPORTED_UNARY_OPS = {
+    "relu": _UnaryOpSpec(
+        name="relu",
+        supported_targets={
+            torch.relu,
+            torch.ops.aten.relu,
+            torch.ops.aten.relu.default,
+        },
+    ),
+}
+
 
 @dataclass
 class _BinaryLibrary:
@@ -109,6 +126,20 @@ class _MatmulLibrary:
 
 
 @dataclass
+class _DnnLibrary:
+    so_path: Path
+    lib: object
+    input_shapes: Tuple[Tuple[int, ...], Tuple[int, ...], Tuple[int, ...]]
+    output_shape: Tuple[int, ...]
+
+    def run(self, inputs: Sequence[torch.Tensor], out: torch.Tensor) -> None:
+        fn = getattr(self.lib, "ref_codegen_main_f32")
+        args = [tensor.data_ptr() for tensor in inputs]
+        args.append(out.data_ptr())
+        fn(*args)
+
+
+@dataclass
 class _BinaryGraph:
     placeholders: List[torch.fx.Node]
     op_nodes: List[torch.fx.Node]
@@ -124,6 +155,16 @@ class _SingleOpGraph:
     output_node: torch.fx.Node
     output_value: torch.fx.Node
     tensor_placeholders: List[torch.fx.Node]
+
+
+@dataclass
+class _DnnGraph:
+    placeholders: List[torch.fx.Node]
+    matmul_node: torch.fx.Node
+    add_node: torch.fx.Node
+    relu_node: torch.fx.Node
+    output_node: torch.fx.Node
+    output_value: torch.fx.Node
 
 
 def _format_array_suffix(shape: Sequence[int]) -> str:
@@ -258,6 +299,32 @@ def _write_matmul_source(
     return "\n".join(lines) + "\n"
 
 
+def _write_dnn_source(a_shape: Sequence[int], b_shape: Sequence[int]) -> str:
+    m, k = a_shape
+    _, n = b_shape
+    a_suffix = _format_array_suffix((m, k))
+    b_suffix = _format_array_suffix((k, n))
+    bias_suffix = _format_array_suffix((m, n))
+    out_suffix = _format_array_suffix((m, n))
+    lines = [
+        "#include <stdint.h>",
+        "",
+        f"void ref_codegen_main_f32(const float input_0{a_suffix}, const float input_1{b_suffix}, const float input_2{bias_suffix}, float out{out_suffix}) {{",
+        f"    for (int64_t i = 0; i < {m}; ++i) {{",
+        f"        for (int64_t j = 0; j < {n}; ++j) {{",
+        f"            float acc = 0.0f;",
+        f"            for (int64_t t = 0; t < {k}; ++t) {{",
+        f"                acc += input_0[i][t] * input_1[t][j];",
+        f"            }}",
+        f"            float sum = acc + input_2[i][j];",
+        f"            out[i][j] = sum > 0.0f ? sum : 0.0f;",
+        f"        }}",
+        f"    }}",
+        "}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def _extract_shape(example_inputs: Sequence[torch.Tensor]) -> Tuple[int, ...]:
     if not example_inputs:
         raise RefBackendError(
@@ -298,6 +365,14 @@ def get_bmm_source(
     gm: torch.fx.GraphModule, example_inputs: Sequence[torch.Tensor]
 ) -> str:
     return _get_matmul_source(SUPPORTED_MATMUL_OPS["bmm"], gm, example_inputs)
+
+
+def get_dnn_source(
+    gm: torch.fx.GraphModule, example_inputs: Sequence[torch.Tensor]
+) -> str:
+    _analyze_dnn_graph(gm)
+    a_shape, b_shape, _ = _extract_dnn_shapes(example_inputs)
+    return _write_dnn_source(a_shape, b_shape)
 
 
 def _compile_binary_library(
@@ -393,6 +468,54 @@ def _compile_matmul_library(
     return compiled
 
 
+def _compile_dnn_library(
+    a_shape: Sequence[int], b_shape: Sequence[int]
+) -> _DnnLibrary:
+    source = _write_dnn_source(a_shape, b_shape)
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    cached = _LIBRARY_CACHE.get(digest)
+    if cached is not None:
+        return cached
+
+    build_dir = Path(tempfile.mkdtemp(prefix="codegen_dnn_"))
+    c_path = build_dir / "ref_codegen_dnn.c"
+    so_path = build_dir / "ref_codegen_dnn.so"
+    c_path.write_text(source, encoding="utf-8")
+
+    cmd = [
+        "cc",
+        "-shared",
+        "-O3",
+        "-fPIC",
+        str(c_path),
+        "-o",
+        str(so_path),
+    ]
+    subprocess.check_call(cmd)
+
+    import ctypes
+
+    lib = ctypes.CDLL(str(so_path))
+    argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.ref_codegen_main_f32.argtypes = argtypes
+    lib.ref_codegen_main_f32.restype = None
+
+    output_shape = (a_shape[0], b_shape[1])
+    compiled = _DnnLibrary(
+        so_path=so_path,
+        lib=lib,
+        input_shapes=(tuple(a_shape), tuple(b_shape), output_shape),
+        output_shape=output_shape,
+    )
+    _LIBRARY_CACHE[digest] = compiled
+    return compiled
+
+
 def _validate_binary_inputs(op_spec: _BinaryOpSpec, inputs: Sequence[torch.Tensor]) -> None:
     if not inputs:
         raise RefBackendError(f"codegen {op_spec.name} expects tensor inputs only")
@@ -455,6 +578,30 @@ def _extract_matmul_shapes(
     return a_shape, b_shape
 
 
+def _extract_dnn_shapes(
+    example_inputs: Sequence[torch.Tensor],
+) -> Tuple[Tuple[int, ...], Tuple[int, ...], Tuple[int, ...]]:
+    tensor_inputs = [
+        example for example in example_inputs if isinstance(example, torch.Tensor)
+    ]
+    if len(tensor_inputs) != 3:
+        raise RefBackendError("codegen dnn expects tensor inputs only")
+    _validate_matmul_inputs("dnn", tensor_inputs)
+    a_shape = tuple(tensor_inputs[0].shape)
+    b_shape = tuple(tensor_inputs[1].shape)
+    bias_shape = tuple(tensor_inputs[2].shape)
+    if len(a_shape) != 2 or len(b_shape) != 2:
+        raise RefBackendError("codegen dnn requires 2D inputs")
+    if a_shape[1] != b_shape[0]:
+        raise RefBackendError("codegen dnn requires inner dimensions to match")
+    expected_bias = (a_shape[0], b_shape[1])
+    if bias_shape != expected_bias:
+        raise RefBackendError(
+            f"codegen dnn requires bias to have shape {expected_bias}"
+        )
+    return a_shape, b_shape, bias_shape
+
+
 def _get_matmul_source(
     op_spec: _MatmulOpSpec,
     gm: torch.fx.GraphModule,
@@ -463,6 +610,84 @@ def _get_matmul_source(
     _analyze_single_op_graph(op_spec, gm)
     a_shape, b_shape = _extract_matmul_shapes(op_spec.name, example_inputs)
     return _write_matmul_source(op_spec, a_shape, b_shape)
+
+
+def _analyze_dnn_graph(gm: torch.fx.GraphModule) -> _DnnGraph:
+    output_node = None
+    placeholders: List[torch.fx.Node] = []
+    matmul_nodes: List[torch.fx.Node] = []
+    add_nodes: List[torch.fx.Node] = []
+    relu_nodes: List[torch.fx.Node] = []
+    for node in gm.graph.nodes:
+        if node.op == "placeholder":
+            placeholders.append(node)
+            continue
+        if node.op == "call_function":
+            if node.kwargs:
+                raise RefBackendError(
+                    "codegen dnn backend expects positional args only"
+                )
+            if node.target in SUPPORTED_MATMUL_OPS["matmul"].supported_targets:
+                if len(node.args) != 2:
+                    raise RefBackendError("codegen dnn matmul expects two inputs")
+                matmul_nodes.append(node)
+                continue
+            if node.target in SUPPORTED_BINARY_OPS["add"].supported_targets:
+                if len(node.args) != 2:
+                    raise RefBackendError("codegen dnn add expects two inputs")
+                add_nodes.append(node)
+                continue
+            if node.target in SUPPORTED_UNARY_OPS["relu"].supported_targets:
+                if len(node.args) != 1:
+                    raise RefBackendError("codegen dnn relu expects one input")
+                relu_nodes.append(node)
+                continue
+            raise RefBackendError(f"Unsupported call_function: {node.target}")
+        if node.op == "output":
+            output_node = node
+            continue
+        raise RefBackendError(f"Unsupported node op: {node.op}")
+
+    if len(matmul_nodes) != 1:
+        raise RefBackendError("codegen dnn backend requires a single matmul")
+    if len(add_nodes) != 1:
+        raise RefBackendError("codegen dnn backend requires a single add")
+    if len(relu_nodes) != 1:
+        raise RefBackendError("codegen dnn backend requires a single relu")
+    if output_node is None:
+        raise RefBackendError("codegen dnn backend requires an output node")
+
+    matmul_node = matmul_nodes[0]
+    add_node = add_nodes[0]
+    relu_node = relu_nodes[0]
+    add_lhs, add_rhs = add_node.args
+    if not isinstance(add_lhs, torch.fx.Node) or not isinstance(
+        add_rhs, torch.fx.Node
+    ):
+        raise RefBackendError("codegen dnn expects tensor inputs only")
+    if matmul_node not in (add_lhs, add_rhs):
+        raise RefBackendError("codegen dnn add must consume matmul output")
+    relu_arg = relu_node.args[0]
+    if relu_arg is not add_node:
+        raise RefBackendError("codegen dnn relu must consume add output")
+    output_value = output_node.args[0]
+    if isinstance(output_value, (tuple, list, immutable_list)):
+        if len(output_value) != 1 or not isinstance(output_value[0], torch.fx.Node):
+            raise RefBackendError("codegen dnn backend expects a single output node")
+        output_value = output_value[0]
+    if not isinstance(output_value, torch.fx.Node):
+        raise RefBackendError("codegen dnn backend expects a single output node")
+    if output_value is not relu_node:
+        raise RefBackendError("codegen dnn output must be the relu node")
+
+    return _DnnGraph(
+        placeholders=placeholders,
+        matmul_node=matmul_node,
+        add_node=add_node,
+        relu_node=relu_node,
+        output_node=output_node,
+        output_value=output_value,
+    )
 
 
 def _analyze_graph(
@@ -744,6 +969,65 @@ def _compile_matmul_graph(
     return compiled
 
 
+def _compile_dnn_graph(
+    gm: torch.fx.GraphModule, example_inputs: List[torch.Tensor]
+) -> Callable[..., torch.Tensor]:
+    op_graph = _analyze_dnn_graph(gm)
+    placeholders = op_graph.placeholders
+    if len(example_inputs) != len(placeholders):
+        raise RefBackendError(
+            "codegen dnn backend expects example inputs to match placeholder count"
+        )
+    a_shape, b_shape, bias_shape = _extract_dnn_shapes(example_inputs)
+    lib = _compile_dnn_library(a_shape, b_shape)
+    output_node = op_graph.output_node
+    output_value = op_graph.output_value
+    output_structure = output_node.args[0]
+
+    def resolve_output(value: object, env: Dict[str, object]) -> object:
+        if isinstance(value, torch.fx.Node):
+            return env[value.name]
+        if isinstance(value, (list, tuple, immutable_list)):
+            resolved = [resolve_output(item, env) for item in value]
+            return type(value)(resolved)
+        return value
+
+    def compiled(*args: object) -> object:
+        if len(args) != len(placeholders):
+            raise RefBackendError(
+                f"codegen dnn expects {len(placeholders)} inputs, got {len(args)}"
+            )
+        env: Dict[str, object] = {}
+        for node, value in zip(placeholders, args):
+            env[node.name] = value
+        input_tensors = [value for value in args if isinstance(value, torch.Tensor)]
+        if len(input_tensors) != 3:
+            raise RefBackendError("codegen dnn expects tensor inputs only")
+        _validate_matmul_inputs("dnn", input_tensors)
+        a_expected, b_expected, bias_expected = lib.input_shapes
+        if tuple(input_tensors[0].shape) != a_expected or tuple(
+            input_tensors[1].shape
+        ) != b_expected:
+            raise RefBackendError(
+                f"codegen dnn requires inputs to have shapes {a_expected} and {b_expected}"
+            )
+        if tuple(input_tensors[2].shape) != bias_expected:
+            raise RefBackendError(
+                f"codegen dnn requires bias to have shape {bias_expected}"
+            )
+        contiguous_inputs = [tensor.contiguous() for tensor in input_tensors]
+        out = torch.empty(
+            lib.output_shape,
+            dtype=contiguous_inputs[0].dtype,
+            device=contiguous_inputs[0].device,
+        )
+        lib.run(contiguous_inputs, out)
+        env[output_value.name] = out
+        return resolve_output(output_structure, env)
+
+    return compiled
+
+
 def codegen_add_backend(
     gm: torch.fx.GraphModule, example_inputs: List[torch.Tensor]
 ) -> Callable[..., torch.Tensor]:
@@ -766,3 +1050,9 @@ def codegen_bmm_backend(
     gm: torch.fx.GraphModule, example_inputs: List[torch.Tensor]
 ) -> Callable[..., torch.Tensor]:
     return _compile_matmul_graph(SUPPORTED_MATMUL_OPS["bmm"], gm, example_inputs)
+
+
+def codegen_dnn_backend(
+    gm: torch.fx.GraphModule, example_inputs: List[torch.Tensor]
+) -> Callable[..., torch.Tensor]:
+    return _compile_dnn_graph(gm, example_inputs)

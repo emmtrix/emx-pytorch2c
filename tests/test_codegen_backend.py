@@ -6,12 +6,14 @@ import torch
 from codegen_backend import (
     codegen_add_backend,
     codegen_bmm_backend,
+    codegen_dnn_backend,
     codegen_matmul_backend,
     codegen_sub_backend,
 )
 from codegen_backend.backend import (
     get_add_source,
     get_bmm_source,
+    get_dnn_source,
     get_matmul_source,
     get_sub_source,
 )
@@ -58,6 +60,10 @@ def bmm_fn(a, b):
     return torch.bmm(a, b)
 
 
+def dnn_fn(a, b, c):
+    return torch.relu(a @ b + c)
+
+
 def _matmul_inputs():
     return (
         torch.randn(2, 3, dtype=torch.float32),
@@ -69,6 +75,14 @@ def _bmm_inputs():
     return (
         torch.randn(2, 3, 4, dtype=torch.float32),
         torch.randn(2, 4, 5, dtype=torch.float32),
+    )
+
+
+def _dnn_inputs():
+    return (
+        torch.randn(2, 3, dtype=torch.float32),
+        torch.randn(3, 4, dtype=torch.float32),
+        torch.randn(2, 4, dtype=torch.float32),
     )
 
 
@@ -96,20 +110,30 @@ def _bmm_noncontig_inputs():
             codegen_matmul_backend,
         ),
         ("bmm_matches_eager.c", bmm_fn, get_bmm_source, codegen_bmm_backend),
+        ("dnn_matches_eager.c", dnn_fn, get_dnn_source, codegen_dnn_backend),
     ],
 )
 def test_codegen_binary_matches_eager(reference_name, fn, source_fn, backend):
     if fn is matmul_fn:
         a, b = _matmul_inputs()
+    elif fn is dnn_fn:
+        a, b, c = _dnn_inputs()
     elif fn is bmm_fn:
         a, b = _bmm_inputs()
     else:
         a = torch.randn(2, 3, dtype=torch.float32)
         b = torch.randn(2, 3, dtype=torch.float32)
-    _assert_codegen_source_matches(reference_name, source_fn, fn, (a, b))
+    if fn is dnn_fn:
+        _assert_codegen_source_matches(reference_name, source_fn, fn, (a, b, c))
+    else:
+        _assert_codegen_source_matches(reference_name, source_fn, fn, (a, b))
     compiled = torch.compile(fn, backend=backend)
-    result = compiled(a, b)
-    torch.testing.assert_close(result, fn(a, b))
+    if fn is dnn_fn:
+        result = compiled(a, b, c)
+        torch.testing.assert_close(result, fn(a, b, c))
+    else:
+        result = compiled(a, b)
+        torch.testing.assert_close(result, fn(a, b))
 
 
 @pytest.mark.parametrize(
