@@ -14,6 +14,16 @@ Run the test suite with:
 PYTHONPATH=src pytest -q
 ```
 
+### Codegen reference updates
+
+The codegen backend tests compare generated C sources against reference files. To
+refresh the references after intentional changes, set `UPDATE_CODEGEN_REFS=1`
+when running tests:
+
+```bash
+UPDATE_CODEGEN_REFS=1 PYTHONPATH=src pytest -q
+```
+
 ## Operator Guidelines
 
 When adding a new operator, follow the same structure as the existing `add`/`matmul` paths:
