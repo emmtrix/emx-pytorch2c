@@ -148,6 +148,42 @@ static inline float ref_scalar_sigmoid(float a) {
     return 1.0f / (1.0f + expf(-a));
 }
 
+static inline float ref_scalar_silu(float a) {
+    return a / (1.0f + expf(-a));
+}
+
+static inline float ref_scalar_hardsigmoid(float a) {
+    float scaled = (a + 3.0f) / 6.0f;
+    if (scaled <= 0.0f) {
+        return 0.0f;
+    }
+    if (scaled >= 1.0f) {
+        return 1.0f;
+    }
+    return scaled;
+}
+
+static inline float ref_scalar_hardswish(float a) {
+    return a * ref_scalar_hardsigmoid(a);
+}
+
+static inline float ref_scalar_mish(float a) {
+    float abs_a = fabsf(a);
+    float softplus = log1pf(expf(-abs_a)) + fmaxf(a, 0.0f);
+    return a * tanhf(softplus);
+}
+
+static inline float ref_scalar_softshrink(float a) {
+    const float lambda = 0.5f;
+    if (a > lambda) {
+        return a - lambda;
+    }
+    if (a < -lambda) {
+        return a + lambda;
+    }
+    return 0.0f;
+}
+
 static inline float ref_scalar_sign(float a) {
     if (isnan(a)) {
         return a;

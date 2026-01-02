@@ -98,7 +98,12 @@ typedef enum RefOpKind {
     REF_OP_REAL = 56,
     REF_OP_SGN = 57,
     REF_OP_SINC = 58,
-    REF_OP_SQUARE = 59
+    REF_OP_SQUARE = 59,
+    REF_OP_SILU = 60,
+    REF_OP_HARDSIGMOID = 61,
+    REF_OP_HARDSWISH = 62,
+    REF_OP_MISH = 63,
+    REF_OP_SOFTSHRINK = 64
 } RefOpKind;
 
 typedef struct RefBroadcastInDimParams {

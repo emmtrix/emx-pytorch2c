@@ -3,6 +3,7 @@ from typing import Callable, Dict, List
 
 import torch
 import torch.fx
+import torch.nn.functional as F
 from torch.fx.immutable_collections import immutable_list
 from torch._decomp import get_decompositions
 from torch._functorch.aot_autograd import aot_module_simplified
@@ -63,14 +64,19 @@ from .cffi_bindings import (
     run_square,
     run_rsqrt,
     run_sigmoid,
+    run_silu,
     run_sin,
     run_sign,
     run_sinh,
     run_sqrt,
+    run_hardsigmoid,
+    run_hardswish,
+    run_mish,
     run_sub,
     run_tan,
     run_tanh,
     run_trunc,
+    run_softshrink,
 )
 
 
@@ -254,9 +260,33 @@ def _run_sigmoid(a: torch.Tensor) -> torch.Tensor:
     return out
 
 
+def _run_silu(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_silu(a, out)
+    return out
+
+
 def _run_sign(a: torch.Tensor) -> torch.Tensor:
     out = torch.empty_like(a, memory_format=torch.contiguous_format)
     run_sign(a, out)
+    return out
+
+
+def _run_hardsigmoid(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_hardsigmoid(a, out)
+    return out
+
+
+def _run_hardswish(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_hardswish(a, out)
+    return out
+
+
+def _run_mish(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_mish(a, out)
     return out
 
 
@@ -407,6 +437,12 @@ def _run_sinc(a: torch.Tensor) -> torch.Tensor:
 def _run_square(a: torch.Tensor) -> torch.Tensor:
     out = torch.empty_like(a, memory_format=torch.contiguous_format)
     run_square(a, out)
+    return out
+
+
+def _run_softshrink(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_softshrink(a, out)
     return out
 
 
@@ -594,9 +630,21 @@ def _compile_graph(
         torch.sigmoid: ("sigmoid", _run_sigmoid),
         torch.ops.aten.sigmoid.default: ("sigmoid", _run_sigmoid),
         torch.ops.aten.sigmoid: ("sigmoid", _run_sigmoid),
+        F.silu: ("silu", _run_silu),
+        torch.ops.aten.silu.default: ("silu", _run_silu),
+        torch.ops.aten.silu: ("silu", _run_silu),
         torch.sign: ("sign", _run_sign),
         torch.ops.aten.sign.default: ("sign", _run_sign),
         torch.ops.aten.sign: ("sign", _run_sign),
+        F.hardsigmoid: ("hardsigmoid", _run_hardsigmoid),
+        torch.ops.aten.hardsigmoid.default: ("hardsigmoid", _run_hardsigmoid),
+        torch.ops.aten.hardsigmoid: ("hardsigmoid", _run_hardsigmoid),
+        F.hardswish: ("hardswish", _run_hardswish),
+        torch.ops.aten.hardswish.default: ("hardswish", _run_hardswish),
+        torch.ops.aten.hardswish: ("hardswish", _run_hardswish),
+        F.mish: ("mish", _run_mish),
+        torch.ops.aten.mish.default: ("mish", _run_mish),
+        torch.ops.aten.mish: ("mish", _run_mish),
         torch.round: ("round", _run_round),
         torch.ops.aten.round.default: ("round", _run_round),
         torch.ops.aten.round: ("round", _run_round),
@@ -672,6 +720,9 @@ def _compile_graph(
         torch.square: ("square", _run_square),
         torch.ops.aten.square.default: ("square", _run_square),
         torch.ops.aten.square: ("square", _run_square),
+        F.softshrink: ("softshrink", _run_softshrink),
+        torch.ops.aten.softshrink.default: ("softshrink", _run_softshrink),
+        torch.ops.aten.softshrink: ("softshrink", _run_softshrink),
         torch.ops.aten.convolution.default: ("conv2d", _run_conv2d),
         torch.ops.aten.convolution: ("conv2d", _run_conv2d),
         torch.ops.aten.conv2d.default: ("conv2d", _run_conv2d),
@@ -715,7 +766,11 @@ def _compile_graph(
         "log10",
         "rsqrt",
         "sigmoid",
+        "silu",
         "sign",
+        "hardsigmoid",
+        "hardswish",
+        "mish",
         "round",
         "trunc",
         "tanh",
@@ -741,6 +796,7 @@ def _compile_graph(
         "sgn",
         "sinc",
         "square",
+        "softshrink",
     }
 
     def compiled(*args: torch.Tensor) -> torch.Tensor:

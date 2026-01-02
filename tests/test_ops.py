@@ -154,7 +154,19 @@ OP_TEST_CONFIG = {
     "sigmoid": {
         "allowed_dtypes": (torch.float32,),
     },
+    "nn.functional.silu": {
+        "allowed_dtypes": (torch.float32,),
+    },
     "sign": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "nn.functional.hardsigmoid": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "nn.functional.hardswish": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "nn.functional.mish": {
         "allowed_dtypes": (torch.float32,),
     },
     "round": {
@@ -230,6 +242,9 @@ OP_TEST_CONFIG = {
         "allowed_dtypes": (torch.float32,),
     },
     "square": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "nn.functional.softshrink": {
         "allowed_dtypes": (torch.float32,),
     },
     "matmul": {

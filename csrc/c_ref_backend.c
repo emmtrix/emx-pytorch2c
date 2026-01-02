@@ -41,7 +41,11 @@ int ref_run_log2(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_log10(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_rsqrt(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_sigmoid(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_silu(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_sign(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_hardsigmoid(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_hardswish(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_mish(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_round(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_trunc(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_tanh(const RefOpCall *call, char *err_msg, size_t err_cap);
@@ -67,6 +71,7 @@ int ref_run_real(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_sgn(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_sinc(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_square(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_softshrink(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_matmul(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_bmm(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_broadcast_in_dim(const RefOpCall *call, char *err_msg, size_t err_cap);
@@ -142,8 +147,16 @@ REF_BACKEND_API int ref_run_op(
             return ref_run_rsqrt(call, err_msg, err_cap);
         case REF_OP_SIGMOID:
             return ref_run_sigmoid(call, err_msg, err_cap);
+        case REF_OP_SILU:
+            return ref_run_silu(call, err_msg, err_cap);
         case REF_OP_SIGN:
             return ref_run_sign(call, err_msg, err_cap);
+        case REF_OP_HARDSIGMOID:
+            return ref_run_hardsigmoid(call, err_msg, err_cap);
+        case REF_OP_HARDSWISH:
+            return ref_run_hardswish(call, err_msg, err_cap);
+        case REF_OP_MISH:
+            return ref_run_mish(call, err_msg, err_cap);
         case REF_OP_ROUND:
             return ref_run_round(call, err_msg, err_cap);
         case REF_OP_TRUNC:
@@ -194,6 +207,8 @@ REF_BACKEND_API int ref_run_op(
             return ref_run_sinc(call, err_msg, err_cap);
         case REF_OP_SQUARE:
             return ref_run_square(call, err_msg, err_cap);
+        case REF_OP_SOFTSHRINK:
+            return ref_run_softshrink(call, err_msg, err_cap);
         case REF_OP_MATMUL:
             return ref_run_matmul(call, err_msg, err_cap);
         case REF_OP_BMM:

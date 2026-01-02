@@ -58,6 +58,14 @@ def mixed_ops_fn(a, b, c):
     return torch.relu(a + b) - c
 
 
+def unary_chain_fn(a):
+    x = torch.ops.aten.silu.default(a)
+    x = torch.ops.aten.hardsigmoid.default(x)
+    x = torch.ops.aten.hardswish.default(x)
+    x = torch.ops.aten.mish.default(x)
+    return torch.ops.aten.softshrink.default(x)
+
+
 def _matmul_inputs():
     return (
         torch.randn(2, 3, dtype=torch.float32),
@@ -236,3 +244,13 @@ def test_codegen_generic_handles_mixed_ops():
     compiled = torch.compile(mixed_ops_fn, backend=codegen_generic_backend)
     result = compiled(a, b, c)
     torch.testing.assert_close(result, mixed_ops_fn(a, b, c))
+
+
+def test_codegen_unary_chain_matches_eager():
+    a = torch.randn(2, 3, dtype=torch.float32)
+    _assert_codegen_source_matches(
+        "unary_chain.c", get_generic_source, unary_chain_fn, (a,)
+    )
+    compiled = torch.compile(unary_chain_fn, backend=codegen_generic_backend)
+    result = compiled(a)
+    torch.testing.assert_close(result, unary_chain_fn(a))

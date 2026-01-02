@@ -75,6 +75,11 @@ class RefOpKind:
     REF_OP_SGN = 57
     REF_OP_SINC = 58
     REF_OP_SQUARE = 59
+    REF_OP_SILU = 60
+    REF_OP_HARDSIGMOID = 61
+    REF_OP_HARDSWISH = 62
+    REF_OP_MISH = 63
+    REF_OP_SOFTSHRINK = 64
 
 
 class RefTensorView(ctypes.Structure):
@@ -407,8 +412,24 @@ def run_sigmoid(a: torch.Tensor, out: torch.Tensor) -> None:
     _run_unary_elementwise("sigmoid", RefOpKind.REF_OP_SIGMOID, a, out)
 
 
+def run_silu(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("silu", RefOpKind.REF_OP_SILU, a, out)
+
+
 def run_sign(a: torch.Tensor, out: torch.Tensor) -> None:
     _run_unary_elementwise("sign", RefOpKind.REF_OP_SIGN, a, out)
+
+
+def run_hardsigmoid(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("hardsigmoid", RefOpKind.REF_OP_HARDSIGMOID, a, out)
+
+
+def run_hardswish(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("hardswish", RefOpKind.REF_OP_HARDSWISH, a, out)
+
+
+def run_mish(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("mish", RefOpKind.REF_OP_MISH, a, out)
 
 
 def run_round(a: torch.Tensor, out: torch.Tensor) -> None:
@@ -510,6 +531,10 @@ def run_sinc(a: torch.Tensor, out: torch.Tensor) -> None:
 
 def run_square(a: torch.Tensor, out: torch.Tensor) -> None:
     _run_unary_elementwise("square", RefOpKind.REF_OP_SQUARE, a, out)
+
+
+def run_softshrink(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("softshrink", RefOpKind.REF_OP_SOFTSHRINK, a, out)
 
 
 def run_conv2d(

@@ -8,6 +8,7 @@ from typing import Callable, Dict, Iterable, List, Sequence, Tuple
 
 import torch
 import torch.fx
+import torch.nn.functional as F
 from torch.fx.immutable_collections import immutable_list
 
 from c_ref_backend.cffi_bindings import RefBackendError
@@ -77,6 +78,56 @@ SUPPORTED_OPS = {
             torch.relu,
             torch.ops.aten.relu,
             torch.ops.aten.relu.default,
+        },
+    ),
+    "silu": _OpSpec(
+        name="silu",
+        kind="unary",
+        symbol=None,
+        supported_targets={
+            F.silu,
+            torch.ops.aten.silu,
+            torch.ops.aten.silu.default,
+        },
+    ),
+    "hardsigmoid": _OpSpec(
+        name="hardsigmoid",
+        kind="unary",
+        symbol=None,
+        supported_targets={
+            F.hardsigmoid,
+            torch.ops.aten.hardsigmoid,
+            torch.ops.aten.hardsigmoid.default,
+        },
+    ),
+    "hardswish": _OpSpec(
+        name="hardswish",
+        kind="unary",
+        symbol=None,
+        supported_targets={
+            F.hardswish,
+            torch.ops.aten.hardswish,
+            torch.ops.aten.hardswish.default,
+        },
+    ),
+    "mish": _OpSpec(
+        name="mish",
+        kind="unary",
+        symbol=None,
+        supported_targets={
+            F.mish,
+            torch.ops.aten.mish,
+            torch.ops.aten.mish.default,
+        },
+    ),
+    "softshrink": _OpSpec(
+        name="softshrink",
+        kind="unary",
+        symbol=None,
+        supported_targets={
+            F.softshrink,
+            torch.ops.aten.softshrink,
+            torch.ops.aten.softshrink.default,
         },
     ),
 }
