@@ -56,43 +56,78 @@ def _all_same_shape(tensors):
     return all(tensor.shape == shape for tensor in tensors[1:])
 
 
+def _broadcast_shapes(*shapes):
+    if not shapes:
+        return ()
+    max_len = max(len(shape) for shape in shapes)
+    output_shape = []
+    for dim in range(1, max_len + 1):
+        sizes = [
+            shape[-dim] if dim <= len(shape) else 1
+            for shape in shapes
+        ]
+        max_size = max(sizes)
+        if any(size not in (1, max_size) for size in sizes):
+            raise ValueError("shapes are not broadcastable")
+        output_shape.append(max_size)
+    return tuple(reversed(output_shape))
+
+
+def _broadcastable_sample_filter(sample):
+    tensors = _extract_tensors(sample)
+    if not tensors:
+        return False
+    try:
+        _broadcast_shapes(*(tensor.shape for tensor in tensors))
+    except ValueError:
+        return False
+    return True
+
+
+def _sample_matches_constraints(sample, dtype, constraints):
+    tensors = _extract_tensors(sample)
+    if not tensors:
+        return False
+    max_ndim = constraints["max_ndim"]
+    if max_ndim is not None and any(tensor.ndim > max_ndim for tensor in tensors):
+        return False
+    if not all(tensor.dtype is dtype for tensor in tensors):
+        return False
+    if constraints["requires_same_shape"] and not _all_same_shape(tensors):
+        return False
+    if constraints["requires_contiguous"] and any(
+        not tensor.is_contiguous() for tensor in tensors
+    ):
+        return False
+    sample_filter = constraints["sample_filter"]
+    if sample_filter is not None and not sample_filter(sample):
+        return False
+    return True
+
+
 def _iter_supported_samples(op, device, dtype, constraints):
     for sample in op.sample_inputs(device, dtype):
         if sample.kwargs:
             continue
         if any(not isinstance(arg, torch.Tensor) for arg in sample.args):
             continue
-        tensors = _extract_tensors(sample)
-        if not tensors:
-            continue
-        max_ndim = constraints["max_ndim"]
-        if max_ndim is not None and any(tensor.ndim > max_ndim for tensor in tensors):
-            continue
-        if constraints["requires_same_shape"] and not _all_same_shape(tensors):
-            continue
-        if not all(tensor.dtype is dtype for tensor in tensors):
-            continue
-        if constraints["requires_contiguous"] and any(
-            not tensor.is_contiguous() for tensor in tensors
-        ):
-            continue
-        sample_filter = constraints["sample_filter"]
-        if sample_filter is not None and not sample_filter(sample):
+        if not _sample_matches_constraints(sample, dtype, constraints):
             continue
         yield sample
 
         if constraints["allow_noncontiguous"]:
+            tensors = _extract_tensors(sample)
             if all(tensor.ndim >= 2 for tensor in tensors):
                 transposed = [tensor.transpose(0, 1) for tensor in tensors]
-                if not constraints["requires_same_shape"] or _all_same_shape(
-                    transposed
-                ):
-                    yield _update_sample(sample, transposed)
+                updated = _update_sample(sample, transposed)
+                if _sample_matches_constraints(updated, dtype, constraints):
+                    yield updated
 
             if all(tensor.ndim >= 1 and tensor.size(-1) > 1 for tensor in tensors):
                 sliced = [tensor[..., ::2] for tensor in tensors]
-                if not constraints["requires_same_shape"] or _all_same_shape(sliced):
-                    yield _update_sample(sample, sliced)
+                updated = _update_sample(sample, sliced)
+                if _sample_matches_constraints(updated, dtype, constraints):
+                    yield updated
 
 
 CODEGEN_OP_NAMES = {
@@ -173,6 +208,10 @@ CODEGEN_OP_NAMES = {
 }
 CODEGEN_OPS_UNDER_TEST = [op for op in op_db if op.name in CODEGEN_OP_NAMES]
 CODEGEN_OP_TEST_CONFIG = {
+    "add": {
+        "requires_same_shape": False,
+        "sample_filter": _broadcastable_sample_filter,
+    },
     "matmul": {
         "allow_noncontiguous": False,
         "requires_same_shape": False,
