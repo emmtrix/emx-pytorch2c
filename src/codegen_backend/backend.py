@@ -83,14 +83,19 @@ def _write_binary_source(op_spec: _BinaryOpSpec, op_graph: _BinaryGraph) -> str:
         "#include <stdint.h>",
         "#include <stdlib.h>",
         "",
-        f"void ref_codegen_{op_spec.name}_f32(const float* a, const float* b, float* out, int64_t numel) {{",
-        "    for (int64_t i = 0; i < numel; ++i) {",
-        f"        out[i] = a[i] {op_spec.symbol} b[i];",
-        "    }",
-        "}",
-        "",
-        f"void ref_codegen_main_f32({input_args}float* out, int64_t numel) {{",
     ]
+    for idx, _ in enumerate(op_nodes, start=1):
+        lines.extend(
+            [
+                f"void node{idx}_{op_spec.name}_f32(const float* a, const float* b, float* out, int64_t numel) {{",
+                "    for (int64_t i = 0; i < numel; ++i) {",
+                f"        out[i] = a[i] {op_spec.symbol} b[i];",
+                "    }",
+                "}",
+                "",
+            ]
+        )
+    lines.append(f"void ref_codegen_main_f32({input_args}float* out, int64_t numel) {{")
     name_map: Dict[torch.fx.Node, str] = {}
     for idx, placeholder in enumerate(inputs):
         name_map[placeholder] = f"input_{idx}"
@@ -102,13 +107,13 @@ def _write_binary_source(op_spec: _BinaryOpSpec, op_graph: _BinaryGraph) -> str:
             out_name = f"tmp_{idx}"
             lines.append(f"    float* {out_name} = (float*)malloc(numel * sizeof(float));")
         name_map[op_node] = out_name
-    for op_node in op_nodes:
+    for idx, op_node in enumerate(op_nodes, start=1):
         lhs, rhs = op_node.args
         lhs_name = name_map[lhs]
         rhs_name = name_map[rhs]
         out_name = name_map[op_node]
         lines.append(
-            f"    ref_codegen_{op_spec.name}_f32({lhs_name}, {rhs_name}, {out_name}, numel);"
+            f"    node{idx}_{op_spec.name}_f32({lhs_name}, {rhs_name}, {out_name}, numel);"
         )
     for idx, op_node in reversed(list(enumerate(op_nodes))):
         if op_node is output_op:
