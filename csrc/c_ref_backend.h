@@ -79,7 +79,8 @@ typedef enum RefOpKind {
     REF_OP_SIGMOID = 37,
     REF_OP_SIGN = 38,
     REF_OP_ROUND = 39,
-    REF_OP_TRUNC = 40
+    REF_OP_TRUNC = 40,
+    REF_OP_CONV2D = 41
 } RefOpKind;
 
 typedef struct RefBroadcastInDimParams {
