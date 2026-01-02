@@ -21,42 +21,631 @@ class _OpSpec:
     supported_targets: set
 
 
-SUPPORTED_OPS = {
-    "add": _OpSpec(
-        name="add",
+def _binary_spec(name: str, targets: Iterable[object], symbol: str | None) -> _OpSpec:
+    return _OpSpec(
+        name=name,
         kind="binary",
-        symbol="+",
-        supported_targets={
+        symbol=symbol,
+        supported_targets=set(targets),
+    )
+
+
+def _unary_spec(name: str, targets: Iterable[object]) -> _OpSpec:
+    return _OpSpec(
+        name=name,
+        kind="unary",
+        symbol=None,
+        supported_targets=set(targets),
+    )
+
+
+SUPPORTED_OPS = {
+    "add": _binary_spec(
+        "add",
+        (
             operator.add,
             torch.add,
             torch.ops.prims.add,
             torch.ops.prims.add.default,
             torch.ops.aten.add.Tensor,
-        },
+        ),
+        "+",
     ),
-    "sub": _OpSpec(
-        name="sub",
-        kind="binary",
-        symbol="-",
-        supported_targets={
+    "sub": _binary_spec(
+        "sub",
+        (
             operator.sub,
             torch.sub,
             torch.ops.prims.sub,
             torch.ops.prims.sub.default,
             torch.ops.aten.sub.Tensor,
-        },
+        ),
+        "-",
     ),
-    "mul": _OpSpec(
-        name="mul",
-        kind="binary",
-        symbol="*",
-        supported_targets={
+    "mul": _binary_spec(
+        "mul",
+        (
             operator.mul,
             torch.mul,
             torch.ops.prims.mul,
             torch.ops.prims.mul.default,
             torch.ops.aten.mul.Tensor,
-        },
+        ),
+        "*",
+    ),
+    "div": _binary_spec(
+        "div",
+        (
+            operator.truediv,
+            torch.div,
+            torch.true_divide,
+            torch.ops.aten.div.Tensor,
+            torch.ops.aten.div,
+        ),
+        "/",
+    ),
+    "maximum": _binary_spec(
+        "maximum",
+        (
+            torch.maximum,
+            torch.ops.aten.maximum.default,
+            torch.ops.aten.maximum,
+        ),
+        None,
+    ),
+    "minimum": _binary_spec(
+        "minimum",
+        (
+            torch.minimum,
+            torch.ops.aten.minimum.default,
+            torch.ops.aten.minimum,
+        ),
+        None,
+    ),
+    "atan2": _binary_spec(
+        "atan2",
+        (
+            torch.atan2,
+            torch.ops.aten.atan2.default,
+            torch.ops.aten.atan2,
+        ),
+        None,
+    ),
+    "pow": _binary_spec(
+        "pow",
+        (
+            operator.pow,
+            torch.pow,
+            torch.ops.aten.pow.Tensor_Tensor,
+        ),
+        None,
+    ),
+    "remainder": _binary_spec(
+        "remainder",
+        (
+            torch.remainder,
+            torch.ops.aten.remainder.Tensor,
+            torch.ops.aten.remainder,
+        ),
+        None,
+    ),
+    "fmod": _binary_spec(
+        "fmod",
+        (
+            torch.fmod,
+            torch.ops.aten.fmod.Tensor,
+            torch.ops.aten.fmod,
+        ),
+        None,
+    ),
+    "floor_divide": _binary_spec(
+        "floor_divide",
+        (
+            torch.floor_divide,
+            torch.ops.aten.floor_divide.default,
+            torch.ops.aten.floor_divide,
+        ),
+        None,
+    ),
+    "fmax": _binary_spec(
+        "fmax",
+        (
+            torch.fmax,
+            torch.ops.aten.fmax.default,
+            torch.ops.aten.fmax,
+        ),
+        None,
+    ),
+    "fmin": _binary_spec(
+        "fmin",
+        (
+            torch.fmin,
+            torch.ops.aten.fmin.default,
+            torch.ops.aten.fmin,
+        ),
+        None,
+    ),
+    "copysign": _binary_spec(
+        "copysign",
+        (
+            torch.copysign,
+            torch.ops.aten.copysign.default,
+            torch.ops.aten.copysign,
+        ),
+        None,
+    ),
+    "hypot": _binary_spec(
+        "hypot",
+        (
+            torch.hypot,
+            torch.ops.aten.hypot.default,
+            torch.ops.aten.hypot,
+        ),
+        None,
+    ),
+    "logaddexp": _binary_spec(
+        "logaddexp",
+        (
+            torch.logaddexp,
+            torch.ops.aten.logaddexp.default,
+            torch.ops.aten.logaddexp,
+        ),
+        None,
+    ),
+    "nextafter": _binary_spec(
+        "nextafter",
+        (
+            torch.nextafter,
+            torch.ops.aten.nextafter.default,
+            torch.ops.aten.nextafter,
+        ),
+        None,
+    ),
+    "xlogy": _binary_spec(
+        "xlogy",
+        (
+            torch.xlogy,
+            torch.ops.aten.xlogy.Tensor,
+            torch.ops.aten.xlogy,
+        ),
+        None,
+    ),
+    "heaviside": _binary_spec(
+        "heaviside",
+        (
+            torch.heaviside,
+            torch.ops.aten.heaviside.default,
+            torch.ops.aten.heaviside,
+        ),
+        None,
+    ),
+    "ldexp": _binary_spec(
+        "ldexp",
+        (
+            torch.ldexp,
+            torch.ops.aten.ldexp.default,
+            torch.ops.aten.ldexp,
+        ),
+        None,
+    ),
+    "clamp_min": _binary_spec(
+        "clamp_min",
+        (
+            torch.clamp_min,
+            torch.ops.aten.clamp_min.default,
+            torch.ops.aten.clamp_min,
+        ),
+        None,
+    ),
+    "clamp_max": _binary_spec(
+        "clamp_max",
+        (
+            torch.clamp_max,
+            torch.ops.aten.clamp_max.default,
+            torch.ops.aten.clamp_max,
+        ),
+        None,
+    ),
+    "neg": _unary_spec(
+        "neg",
+        (
+            operator.neg,
+            torch.neg,
+            torch.ops.aten.neg.default,
+            torch.ops.aten.neg,
+        ),
+    ),
+    "exp": _unary_spec(
+        "exp",
+        (
+            torch.exp,
+            torch.ops.aten.exp.default,
+            torch.ops.aten.exp,
+        ),
+    ),
+    "abs": _unary_spec(
+        "abs",
+        (
+            torch.abs,
+            torch.ops.aten.abs.default,
+            torch.ops.aten.abs,
+        ),
+    ),
+    "sqrt": _unary_spec(
+        "sqrt",
+        (
+            torch.sqrt,
+            torch.ops.aten.sqrt.default,
+            torch.ops.aten.sqrt,
+        ),
+    ),
+    "log": _unary_spec(
+        "log",
+        (
+            torch.log,
+            torch.ops.aten.log.default,
+            torch.ops.aten.log,
+        ),
+    ),
+    "sin": _unary_spec(
+        "sin",
+        (
+            torch.sin,
+            torch.ops.aten.sin.default,
+            torch.ops.aten.sin,
+        ),
+    ),
+    "cos": _unary_spec(
+        "cos",
+        (
+            torch.cos,
+            torch.ops.aten.cos.default,
+            torch.ops.aten.cos,
+        ),
+    ),
+    "acos": _unary_spec(
+        "acos",
+        (
+            torch.acos,
+            torch.ops.aten.acos.default,
+            torch.ops.aten.acos,
+        ),
+    ),
+    "acosh": _unary_spec(
+        "acosh",
+        (
+            torch.acosh,
+            torch.ops.aten.acosh.default,
+            torch.ops.aten.acosh,
+        ),
+    ),
+    "asin": _unary_spec(
+        "asin",
+        (
+            torch.asin,
+            torch.ops.aten.asin.default,
+            torch.ops.aten.asin,
+        ),
+    ),
+    "asinh": _unary_spec(
+        "asinh",
+        (
+            torch.asinh,
+            torch.ops.aten.asinh.default,
+            torch.ops.aten.asinh,
+        ),
+    ),
+    "atan": _unary_spec(
+        "atan",
+        (
+            torch.atan,
+            torch.ops.aten.atan.default,
+            torch.ops.aten.atan,
+        ),
+    ),
+    "atanh": _unary_spec(
+        "atanh",
+        (
+            torch.atanh,
+            torch.ops.aten.atanh.default,
+            torch.ops.aten.atanh,
+        ),
+    ),
+    "cosh": _unary_spec(
+        "cosh",
+        (
+            torch.cosh,
+            torch.ops.aten.cosh.default,
+            torch.ops.aten.cosh,
+        ),
+    ),
+    "sinh": _unary_spec(
+        "sinh",
+        (
+            torch.sinh,
+            torch.ops.aten.sinh.default,
+            torch.ops.aten.sinh,
+        ),
+    ),
+    "tan": _unary_spec(
+        "tan",
+        (
+            torch.tan,
+            torch.ops.aten.tan.default,
+            torch.ops.aten.tan,
+        ),
+    ),
+    "erf": _unary_spec(
+        "erf",
+        (
+            torch.erf,
+            torch.ops.aten.erf.default,
+            torch.ops.aten.erf,
+        ),
+    ),
+    "erfc": _unary_spec(
+        "erfc",
+        (
+            torch.erfc,
+            torch.ops.aten.erfc.default,
+            torch.ops.aten.erfc,
+        ),
+    ),
+    "expm1": _unary_spec(
+        "expm1",
+        (
+            torch.expm1,
+            torch.ops.aten.expm1.default,
+            torch.ops.aten.expm1,
+        ),
+    ),
+    "log1p": _unary_spec(
+        "log1p",
+        (
+            torch.log1p,
+            torch.ops.aten.log1p.default,
+            torch.ops.aten.log1p,
+        ),
+    ),
+    "log2": _unary_spec(
+        "log2",
+        (
+            torch.log2,
+            torch.ops.aten.log2.default,
+            torch.ops.aten.log2,
+        ),
+    ),
+    "log10": _unary_spec(
+        "log10",
+        (
+            torch.log10,
+            torch.ops.aten.log10.default,
+            torch.ops.aten.log10,
+        ),
+    ),
+    "rsqrt": _unary_spec(
+        "rsqrt",
+        (
+            torch.rsqrt,
+            torch.ops.aten.rsqrt.default,
+            torch.ops.aten.rsqrt,
+        ),
+    ),
+    "sigmoid": _unary_spec(
+        "sigmoid",
+        (
+            torch.sigmoid,
+            torch.ops.aten.sigmoid.default,
+            torch.ops.aten.sigmoid,
+        ),
+    ),
+    "sign": _unary_spec(
+        "sign",
+        (
+            torch.sign,
+            torch.ops.aten.sign.default,
+            torch.ops.aten.sign,
+        ),
+    ),
+    "round": _unary_spec(
+        "round",
+        (
+            torch.round,
+            torch.ops.aten.round.default,
+            torch.ops.aten.round,
+        ),
+    ),
+    "trunc": _unary_spec(
+        "trunc",
+        (
+            torch.trunc,
+            torch.ops.aten.trunc.default,
+            torch.ops.aten.trunc,
+        ),
+    ),
+    "tanh": _unary_spec(
+        "tanh",
+        (
+            torch.tanh,
+            torch.ops.aten.tanh.default,
+            torch.ops.aten.tanh,
+        ),
+    ),
+    "floor": _unary_spec(
+        "floor",
+        (
+            torch.floor,
+            torch.ops.aten.floor.default,
+            torch.ops.aten.floor,
+        ),
+    ),
+    "ceil": _unary_spec(
+        "ceil",
+        (
+            torch.ceil,
+            torch.ops.aten.ceil.default,
+            torch.ops.aten.ceil,
+        ),
+    ),
+    "reciprocal": _unary_spec(
+        "reciprocal",
+        (
+            torch.reciprocal,
+            torch.ops.aten.reciprocal.default,
+            torch.ops.aten.reciprocal,
+        ),
+    ),
+    "relu": _unary_spec(
+        "relu",
+        (
+            torch.relu,
+            torch.ops.aten.relu.default,
+            torch.ops.aten.relu,
+        ),
+    ),
+    "angle": _unary_spec(
+        "angle",
+        (
+            torch.angle,
+            torch.ops.aten.angle.default,
+            torch.ops.aten.angle,
+        ),
+    ),
+    "conj": _unary_spec(
+        "conj",
+        (
+            torch.conj,
+            torch.ops.aten.conj.default,
+            torch.ops.aten.conj,
+        ),
+    ),
+    "conj_physical": _unary_spec(
+        "conj_physical",
+        (
+            torch.conj_physical,
+            torch.ops.aten.conj_physical.default,
+            torch.ops.aten.conj_physical,
+        ),
+    ),
+    "deg2rad": _unary_spec(
+        "deg2rad",
+        (
+            torch.deg2rad,
+            torch.ops.aten.deg2rad.default,
+            torch.ops.aten.deg2rad,
+        ),
+    ),
+    "digamma": _unary_spec(
+        "digamma",
+        (
+            torch.digamma,
+            torch.ops.aten.digamma.default,
+            torch.ops.aten.digamma,
+        ),
+    ),
+    "erfinv": _unary_spec(
+        "erfinv",
+        (
+            torch.erfinv,
+            torch.ops.aten.erfinv.default,
+            torch.ops.aten.erfinv,
+        ),
+    ),
+    "exp2": _unary_spec(
+        "exp2",
+        (
+            torch.exp2,
+            torch.ops.aten.exp2.default,
+            torch.ops.aten.exp2,
+        ),
+    ),
+    "frac": _unary_spec(
+        "frac",
+        (
+            torch.frac,
+            torch.ops.aten.frac.default,
+            torch.ops.aten.frac,
+        ),
+    ),
+    "i0": _unary_spec(
+        "i0",
+        (
+            torch.i0,
+            torch.ops.aten.i0.default,
+            torch.ops.aten.i0,
+        ),
+    ),
+    "lgamma": _unary_spec(
+        "lgamma",
+        (
+            torch.lgamma,
+            torch.ops.aten.lgamma.default,
+            torch.ops.aten.lgamma,
+        ),
+    ),
+    "logit": _unary_spec(
+        "logit",
+        (
+            torch.logit,
+            torch.ops.aten.logit.default,
+            torch.ops.aten.logit,
+        ),
+    ),
+    "nan_to_num": _unary_spec(
+        "nan_to_num",
+        (
+            torch.nan_to_num,
+            torch.ops.aten.nan_to_num.default,
+            torch.ops.aten.nan_to_num,
+        ),
+    ),
+    "positive": _unary_spec(
+        "positive",
+        (
+            torch.positive,
+            torch.ops.aten.positive.default,
+            torch.ops.aten.positive,
+        ),
+    ),
+    "rad2deg": _unary_spec(
+        "rad2deg",
+        (
+            torch.rad2deg,
+            torch.ops.aten.rad2deg.default,
+            torch.ops.aten.rad2deg,
+        ),
+    ),
+    "real": _unary_spec(
+        "real",
+        (
+            torch.real,
+            torch.ops.aten.real.default,
+            torch.ops.aten.real,
+        ),
+    ),
+    "sgn": _unary_spec(
+        "sgn",
+        (
+            torch.sgn,
+            torch.ops.aten.sgn.default,
+            torch.ops.aten.sgn,
+        ),
+    ),
+    "sinc": _unary_spec(
+        "sinc",
+        (
+            torch.sinc,
+            torch.ops.aten.sinc.default,
+            torch.ops.aten.sinc,
+        ),
+    ),
+    "square": _unary_spec(
+        "square",
+        (
+            torch.square,
+            torch.ops.aten.square.default,
+            torch.ops.aten.square,
+        ),
     ),
     "matmul": _OpSpec(
         name="matmul",
@@ -79,16 +668,6 @@ SUPPORTED_OPS = {
             torch.bmm,
             torch.ops.aten.bmm,
             torch.ops.aten.bmm.default,
-        },
-    ),
-    "relu": _OpSpec(
-        name="relu",
-        kind="unary",
-        symbol=None,
-        supported_targets={
-            torch.relu,
-            torch.ops.aten.relu,
-            torch.ops.aten.relu.default,
         },
     ),
 }
