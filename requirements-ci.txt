@@ -1,4 +1,4 @@
 torch==2.9.1
 pytest==8.2.0
-numpy==2.4.0
+numpy==2.2.6
 expecttest==0.1.6
