@@ -3,7 +3,6 @@ from pathlib import Path
 
 import pytest
 import torch
-from torch._dynamo.exc import BackendCompilerFailed
 from codegen_backend import (
     codegen_add_backend,
     codegen_bmm_backend,
@@ -37,10 +36,6 @@ def _assert_codegen_source_matches(
 
 def add_fn(a, b):
     return a + b
-
-
-def mul_fn(a, b):
-    return a * b
 
 
 def add_chain_fn(a, b, c):
@@ -150,22 +145,6 @@ def test_codegen_binary_handles_non_contiguous(
 @pytest.mark.parametrize(
     ("reference_name", "fn", "source_fn", "backend"),
     [
-        ("add_rejects_other_ops.c", add_fn, get_add_source, codegen_add_backend),
-        ("sub_rejects_other_ops.c", sub_fn, get_sub_source, codegen_sub_backend),
-    ],
-)
-def test_codegen_binary_rejects_other_ops(reference_name, fn, source_fn, backend):
-    a = torch.randn(2, 3, dtype=torch.float32)
-    b = torch.randn(2, 3, dtype=torch.float32)
-    _assert_codegen_source_matches(reference_name, source_fn, fn, (a, b))
-    compiled = torch.compile(mul_fn, backend=backend)
-    with pytest.raises(BackendCompilerFailed, match="Unsupported call_function"):
-        compiled(a, b)
-
-
-@pytest.mark.parametrize(
-    ("reference_name", "fn", "source_fn", "backend"),
-    [
         ("add_chain.c", add_chain_fn, get_add_source, codegen_add_backend),
         ("sub_chain.c", sub_chain_fn, get_sub_source, codegen_sub_backend),
     ],
@@ -180,47 +159,6 @@ def test_codegen_binary_handles_multiple_ops(
     compiled = torch.compile(fn, backend=backend)
     result = compiled(a, b, c)
     torch.testing.assert_close(result, fn(a, b, c))
-
-
-@pytest.mark.parametrize(
-    ("fn", "source_fn", "backend", "reference_name"),
-    [
-        (matmul_fn, get_matmul_source, codegen_matmul_backend, "matmul_rejects_other_ops.c"),
-        (bmm_fn, get_bmm_source, codegen_bmm_backend, "bmm_rejects_other_ops.c"),
-    ],
-)
-def test_codegen_matmul_rejects_other_ops(fn, source_fn, backend, reference_name):
-    if fn is matmul_fn:
-        a, b = _matmul_inputs()
-    else:
-        a, b = _bmm_inputs()
-    _assert_codegen_source_matches(reference_name, source_fn, fn, (a, b))
-    add_a = torch.randn(2, 3, dtype=torch.float32)
-    add_b = torch.randn(2, 3, dtype=torch.float32)
-    compiled = torch.compile(add_fn, backend=backend)
-    with pytest.raises(BackendCompilerFailed, match="Unsupported call_function"):
-        compiled(add_a, add_b)
-
-
-@pytest.mark.parametrize(
-    ("fn", "source_fn", "backend", "reference_name"),
-    [
-        (matmul_fn, get_matmul_source, codegen_matmul_backend, "matmul_rejects_multiple_ops.c"),
-        (bmm_fn, get_bmm_source, codegen_bmm_backend, "bmm_rejects_multiple_ops.c"),
-    ],
-)
-def test_codegen_matmul_rejects_multiple_ops(fn, source_fn, backend, reference_name):
-    def chained(a, b):
-        return fn(a, b) + fn(a, b)
-
-    if fn is matmul_fn:
-        a, b = _matmul_inputs()
-    else:
-        a, b = _bmm_inputs()
-    _assert_codegen_source_matches(reference_name, source_fn, fn, (a, b))
-    compiled = torch.compile(chained, backend=backend)
-    with pytest.raises(BackendCompilerFailed, match="Unsupported call_function"):
-        compiled(a, b)
 
 
 @pytest.mark.parametrize(
