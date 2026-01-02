@@ -8,8 +8,6 @@ from codegen_backend.backend import (
     get_generic_source,
 )
 from c_ref_backend.cffi_bindings import RefBackendError
-
-
 REFERENCE_DIR = Path(__file__).resolve().parent / "codegen_refs"
 
 
