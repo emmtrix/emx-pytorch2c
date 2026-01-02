@@ -1,9 +1,6 @@
 #include "ops_unary.h"
-
-static float relu_op(float a) {
-    return a > 0.0f ? a : 0.0f;
-}
+#include "ops_scalar.h"
 
 int ref_run_relu(const RefOpCall *call, char *err_msg, size_t err_cap) {
-    return ref_run_unary_f32(call, err_msg, err_cap, relu_op, "relu");
+    return ref_run_unary_f32(call, err_msg, err_cap, ref_scalar_relu, "relu");
 }
