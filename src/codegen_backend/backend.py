@@ -46,6 +46,18 @@ SUPPORTED_OPS = {
             torch.ops.aten.sub.Tensor,
         },
     ),
+    "mul": _OpSpec(
+        name="mul",
+        kind="binary",
+        symbol="*",
+        supported_targets={
+            operator.mul,
+            torch.mul,
+            torch.ops.prims.mul,
+            torch.ops.prims.mul.default,
+            torch.ops.aten.mul.Tensor,
+        },
+    ),
     "matmul": _OpSpec(
         name="matmul",
         kind="matmul",

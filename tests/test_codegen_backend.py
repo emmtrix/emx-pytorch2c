@@ -42,6 +42,14 @@ def sub_chain_fn(a, b, c):
     return (a - b) - c
 
 
+def mul_fn(a, b):
+    return a * b
+
+
+def mul_chain_fn(a, b, c):
+    return (a * b) * c
+
+
 def matmul_fn(a, b):
     return a @ b
 
@@ -97,6 +105,7 @@ def _bmm_noncontig_inputs():
     [
         ("add_matches_eager.c", add_fn, get_generic_source, codegen_generic_backend),
         ("sub_matches_eager.c", sub_fn, get_generic_source, codegen_generic_backend),
+        ("mul_matches_eager.c", mul_fn, get_generic_source, codegen_generic_backend),
         (
             "matmul_matches_eager.c",
             matmul_fn,
@@ -146,6 +155,12 @@ def test_codegen_binary_matches_eager(reference_name, fn, source_fn, backend):
             codegen_generic_backend,
         ),
         (
+            "mul_handles_non_contiguous.c",
+            mul_fn,
+            get_generic_source,
+            codegen_generic_backend,
+        ),
+        (
             "matmul_handles_non_contiguous.c",
             matmul_fn,
             get_generic_source,
@@ -187,6 +202,12 @@ def test_codegen_binary_handles_non_contiguous(
         (
             "sub_chain.c",
             sub_chain_fn,
+            get_generic_source,
+            codegen_generic_backend,
+        ),
+        (
+            "mul_chain.c",
+            mul_chain_fn,
             get_generic_source,
             codegen_generic_backend,
         ),
