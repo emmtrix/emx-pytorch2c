@@ -584,7 +584,7 @@ atan2                                    yes   yes
 atan2_                                   -     -      
 atan_                                    -     -      
 atanh                                    yes   yes    
-atanh_                                   -     -      
+atanh_                                   -     yes    
 atleast_1d                               -     -      
 atleast_2d                               -     -      
 atleast_3d                               -     -      
@@ -1722,6 +1722,6 @@ zfill                                    -     -
 Summary
 total aten ops: 1718
 supported by cref only: 3
-supported by codegen only: 1
+supported by codegen only: 2
 supported by both: 74
-unsupported by either: 1640
+unsupported by either: 1639

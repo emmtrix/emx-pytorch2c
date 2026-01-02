@@ -39,6 +39,16 @@ def mixed_ops_fn(a, b, c):
     return torch.relu(a + b) - c
 
 
+def atan_fn(a):
+    return torch.atan(a)
+
+
+def inplace_fn(a):
+    b = torch.atan(a)
+    b = torch.ops.aten.add_.Tensor(b, a)
+    return torch.mul(b, a)
+
+
 @pytest.mark.parametrize(
     ("reference_name", "fn", "source_fn", "backend"),
     [
@@ -84,3 +94,27 @@ def test_codegen_generic_handles_mixed_ops():
     compiled = torch.compile(mixed_ops_fn, backend=codegen_generic_backend)
     result = compiled(a, b, c)
     torch.testing.assert_close(result, mixed_ops_fn(a, b, c))
+
+
+def test_codegen_generic_handles_atan():
+    a = torch.randn(2, 3, dtype=torch.float32)
+    _assert_codegen_source_matches("atan.c", get_generic_source, atan_fn, (a,))
+    compiled = torch.compile(atan_fn, backend=codegen_generic_backend)
+    result = compiled(a)
+    torch.testing.assert_close(result, atan_fn(a))
+
+
+def test_codegen_generic_supports_inplace_ops():
+    a = torch.randn(2, 3, dtype=torch.float32)
+    expected = a.clone()
+    gm = torch.fx.symbolic_trace(inplace_fn)
+    source = get_generic_source(gm, (a,))
+    assert "node2_add_f32(tmp_0, input_0, tmp_0);" in source
+    _assert_codegen_source_matches(
+        "inplace_chain.c", get_generic_source, inplace_fn, (a,)
+    )
+    compiled = torch.compile(inplace_fn, backend=codegen_generic_backend)
+    result = compiled(a)
+    expected_result = inplace_fn(expected)
+    torch.testing.assert_close(result, expected_result)
+    torch.testing.assert_close(a, expected)

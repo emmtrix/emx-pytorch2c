@@ -48,6 +48,7 @@ SUPPORTED_OPS = {
             torch.ops.prims.add,
             torch.ops.prims.add.default,
             torch.ops.aten.add.Tensor,
+            torch.ops.aten.add_.Tensor,
         ),
         "+",
     ),
@@ -349,6 +350,8 @@ SUPPORTED_OPS = {
             torch.atanh,
             torch.ops.aten.atanh.default,
             torch.ops.aten.atanh,
+            torch.ops.aten.atanh_.default,
+            torch.ops.aten.atanh_,
         ),
     ),
     "cosh": _unary_spec(
@@ -679,6 +682,13 @@ TARGET_TO_OP: Dict[object, _OpSpec] = {
     for target in spec.supported_targets
 }
 
+INPLACE_TARGETS = {
+    torch.ops.aten.atanh_.default: 0,
+    torch.ops.aten.atanh_: 0,
+    torch.ops.aten.add_.Tensor: 0,
+    torch.ops.aten.add_: 0,
+}
+
 
 @dataclass
 class _OpNode:
@@ -686,6 +696,7 @@ class _OpNode:
     spec: _OpSpec
     inputs: Tuple[torch.fx.Node, ...]
     output_shape: Tuple[int, ...]
+    inplace_input: int | None = None
 
 
 @dataclass
@@ -695,6 +706,7 @@ class _GenericGraph:
     op_nodes: List[_OpNode]
     output_node: torch.fx.Node
     output_value: torch.fx.Node
+    output_inplace_input: torch.fx.Node | None
     output_structure: object
     shapes: Dict[torch.fx.Node, Tuple[int, ...]]
 
@@ -834,21 +846,30 @@ def _write_generic_source(graph: _GenericGraph) -> str:
         ]
     )
     input_args = f"{input_args}, " if input_args else ""
-    lines.append(f"void ref_codegen_main_f32({input_args}float out{_format_array_suffix(graph.shapes[graph.output_value])}) {{")
+    lines.append(
+        "void ref_codegen_main_f32("
+        f"{input_args}float out{_format_array_suffix(graph.shapes[graph.output_value])}) {{"
+    )
     name_map: Dict[torch.fx.Node, str] = {}
     for idx, placeholder in enumerate(placeholders):
         name_map[placeholder] = f"input_{idx}"
     temp_index = 0
     for op_node in op_nodes:
         if op_node.node is graph.output_value:
-            name_map[op_node.node] = "out"
-        else:
-            temp_name = f"tmp_{temp_index}"
-            temp_index += 1
-            name_map[op_node.node] = temp_name
-            lines.append(
-                f"    float {temp_name}{_format_array_suffix(op_node.output_shape)};"
-            )
+            if op_node.inplace_input is not None:
+                name_map[op_node.node] = name_map[op_node.inputs[op_node.inplace_input]]
+            else:
+                name_map[op_node.node] = "out"
+            continue
+        if op_node.inplace_input is not None:
+            name_map[op_node.node] = name_map[op_node.inputs[op_node.inplace_input]]
+            continue
+        temp_name = f"tmp_{temp_index}"
+        temp_index += 1
+        name_map[op_node.node] = temp_name
+        lines.append(
+            f"    float {temp_name}{_format_array_suffix(op_node.output_shape)};"
+        )
     for index, op_node in enumerate(op_nodes, start=1):
         input_names = [name_map[arg] for arg in op_node.inputs]
         output_name = name_map[op_node.node]
@@ -939,6 +960,7 @@ def _analyze_generic_graph(
             op_spec = TARGET_TO_OP.get(node.target)
             if op_spec is None:
                 raise RefBackendError(f"Unsupported call_function: {node.target}")
+            inplace_input = INPLACE_TARGETS.get(node.target)
             expected_arity = 1 if op_spec.kind == "unary" else 2
             if len(node.args) != expected_arity:
                 if expected_arity == 1:
@@ -969,6 +991,7 @@ def _analyze_generic_graph(
                     spec=op_spec,
                     inputs=tuple(input_nodes),
                     output_shape=output_shape,
+                    inplace_input=inplace_input,
                 )
             )
             continue
@@ -998,12 +1021,21 @@ def _analyze_generic_graph(
     if output_value not in {op.node for op in op_nodes}:
         raise RefBackendError("codegen backend output must be an operator result")
 
+    output_inplace_input = None
+    for op_node in op_nodes:
+        if op_node.node is output_value and op_node.inplace_input is not None:
+            candidate = op_node.inputs[op_node.inplace_input]
+            if candidate in tensor_placeholders:
+                output_inplace_input = candidate
+            break
+
     return _GenericGraph(
         placeholders=placeholders,
         tensor_placeholders=tensor_placeholders,
         op_nodes=op_nodes,
         output_node=output_node,
         output_value=output_value,
+        output_inplace_input=output_inplace_input,
         output_structure=output_structure,
         shapes=shapes,
     )
@@ -1068,6 +1100,7 @@ def _compile_graph(
     lib = _compile_generic_library(graph)
     output_structure = graph.output_structure
     output_value = graph.output_value
+    output_inplace_input = graph.output_inplace_input
 
     def resolve_output(value: object, env: Dict[torch.fx.Node, object]) -> object:
         if isinstance(value, torch.fx.Node):
@@ -1098,13 +1131,24 @@ def _compile_graph(
                     f"codegen backend requires inputs to have shapes {expected_shapes}"
                 )
         contiguous_inputs = [tensor.contiguous() for tensor in input_tensors]
-        out = torch.empty(
-            lib.output_shape,
-            dtype=contiguous_inputs[0].dtype,
-            device=contiguous_inputs[0].device,
-        )
-        lib.run(contiguous_inputs, out)
-        env[output_value] = out
+        if output_inplace_input is not None:
+            original_input = env[output_inplace_input]
+            if not isinstance(original_input, torch.Tensor):
+                raise RefBackendError("codegen backend expects tensor inputs only")
+            inplace_index = graph.tensor_placeholders.index(output_inplace_input)
+            inplace_out = contiguous_inputs[inplace_index]
+            lib.run(contiguous_inputs, inplace_out)
+            if inplace_out is not original_input:
+                original_input.copy_(inplace_out)
+            env[output_value] = original_input
+        else:
+            out = torch.empty(
+                lib.output_shape,
+                dtype=contiguous_inputs[0].dtype,
+                device=contiguous_inputs[0].device,
+            )
+            lib.run(contiguous_inputs, out)
+            env[output_value] = out
         return resolve_output(output_structure, env)
 
     return compiled
