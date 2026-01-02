@@ -28,6 +28,8 @@ typedef struct RefOpCall {
     void *params;
 } RefOpCall;
 
+#define REF_MAX_DIMS 8
+
 typedef enum RefOpKind {
     REF_OP_ADD = 0,
     REF_OP_SUB = 1,

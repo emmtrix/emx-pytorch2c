@@ -6,7 +6,7 @@ static void broadcast_in_dim_f32(const float *a_data, float *out_data, int32_t o
                                  const int64_t *a_sizes, const int64_t *a_strides,
                                  const int64_t *out_sizes, const int32_t *out_to_in,
                                  int64_t total) {
-    int64_t out_index[out_ndim];
+    int64_t out_index[REF_MAX_DIMS];
 
     for (int64_t linear = 0; linear < total; ++linear) {
         int64_t remaining = linear;
@@ -28,6 +28,7 @@ static void broadcast_in_dim_f32(const float *a_data, float *out_data, int32_t o
         }
         out_data[linear] = a_data[a_offset];
     }
+
 }
 
 int ref_run_broadcast_in_dim(const RefOpCall *call, char *err_msg, size_t err_cap) {
@@ -62,12 +63,16 @@ int ref_run_broadcast_in_dim(const RefOpCall *call, char *err_msg, size_t err_ca
         write_error(err_msg, err_cap, "broadcast_in_dim requires output rank >= input rank");
         return 6;
     }
+    if (out->ndim > REF_MAX_DIMS) {
+        write_error(err_msg, err_cap, "broadcast_in_dim exceeds maximum supported rank");
+        return 7;
+    }
 
     int32_t out_ndim = out->ndim;
     int32_t *out_to_in = (int32_t *)malloc(sizeof(int32_t) * out_ndim);
     if (out_to_in == NULL) {
         write_error(err_msg, err_cap, "broadcast_in_dim allocation failed");
-        return 7;
+        return 8;
     }
     for (int32_t i = 0; i < out_ndim; ++i) {
         out_to_in[i] = -1;
@@ -79,18 +84,18 @@ int ref_run_broadcast_in_dim(const RefOpCall *call, char *err_msg, size_t err_ca
         if (out_dim < 0 || out_dim >= out_ndim) {
             free(out_to_in);
             write_error(err_msg, err_cap, "broadcast_in_dim has out-of-range dimensions");
-            return 8;
+            return 9;
         }
         if (out_dim <= last_dim) {
             free(out_to_in);
             write_error(err_msg, err_cap,
                         "broadcast_in_dim expects strictly increasing broadcast_dimensions");
-            return 9;
+            return 10;
         }
         if (out_to_in[out_dim] != -1) {
             free(out_to_in);
             write_error(err_msg, err_cap, "broadcast_in_dim requires unique dimensions");
-            return 10;
+            return 11;
         }
         out_to_in[out_dim] = in_dim;
         last_dim = out_dim;
@@ -101,7 +106,7 @@ int ref_run_broadcast_in_dim(const RefOpCall *call, char *err_msg, size_t err_ca
             free(out_to_in);
             write_error(err_msg, err_cap,
                         "broadcast_in_dim requires broadcast-compatible shapes");
-            return 11;
+            return 12;
         }
     }
 
