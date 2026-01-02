@@ -16,7 +16,7 @@ def _assert_codegen_source_matches(
     reference_path = REFERENCE_DIR / reference_name
     gm = torch.fx.symbolic_trace(fn)
     source = source_fn(gm, example_inputs).lstrip()
-    if os.getenv("UPDATE_CODEGEN_REFS"):
+    if os.getenv("UPDATE_REFS"):
         reference_path.parent.mkdir(parents=True, exist_ok=True)
         reference_path.write_text(source, encoding="utf-8")
     expected = reference_path.read_text(encoding="utf-8")

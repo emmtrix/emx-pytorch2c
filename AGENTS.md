@@ -17,11 +17,11 @@ PYTHONPATH=src pytest -q
 ### Codegen reference updates
 
 The codegen backend tests compare generated C sources against reference files. To
-refresh the references after intentional changes, set `UPDATE_CODEGEN_REFS=1`
-when running tests:
+refresh the references after intentional changes, set `UPDATE_REFS=1` when
+running tests:
 
 ```bash
-UPDATE_CODEGEN_REFS=1 PYTHONPATH=src pytest -q
+UPDATE_REFS=1 PYTHONPATH=src pytest -q
 ```
 
 ## Operator Guidelines
