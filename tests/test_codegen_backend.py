@@ -3,19 +3,9 @@ from pathlib import Path
 
 import pytest
 import torch
-from codegen_backend import (
-    codegen_add_backend,
-    codegen_bmm_backend,
-    codegen_dnn_backend,
-    codegen_matmul_backend,
-    codegen_sub_backend,
-)
+from codegen_backend import codegen_generic_backend
 from codegen_backend.backend import (
-    get_add_source,
-    get_bmm_source,
-    get_dnn_source,
-    get_matmul_source,
-    get_sub_source,
+    get_generic_source,
 )
 from c_ref_backend.cffi_bindings import RefBackendError
 
@@ -64,6 +54,10 @@ def dnn_fn(a, b, c):
     return torch.relu(a @ b + c)
 
 
+def mixed_ops_fn(a, b, c):
+    return torch.relu(a + b) - c
+
+
 def _matmul_inputs():
     return (
         torch.randn(2, 3, dtype=torch.float32),
@@ -101,16 +95,16 @@ def _bmm_noncontig_inputs():
 @pytest.mark.parametrize(
     ("reference_name", "fn", "source_fn", "backend"),
     [
-        ("add_matches_eager.c", add_fn, get_add_source, codegen_add_backend),
-        ("sub_matches_eager.c", sub_fn, get_sub_source, codegen_sub_backend),
+        ("add_matches_eager.c", add_fn, get_generic_source, codegen_generic_backend),
+        ("sub_matches_eager.c", sub_fn, get_generic_source, codegen_generic_backend),
         (
             "matmul_matches_eager.c",
             matmul_fn,
-            get_matmul_source,
-            codegen_matmul_backend,
+            get_generic_source,
+            codegen_generic_backend,
         ),
-        ("bmm_matches_eager.c", bmm_fn, get_bmm_source, codegen_bmm_backend),
-        ("dnn_matches_eager.c", dnn_fn, get_dnn_source, codegen_dnn_backend),
+        ("bmm_matches_eager.c", bmm_fn, get_generic_source, codegen_generic_backend),
+        ("dnn_matches_eager.c", dnn_fn, get_generic_source, codegen_generic_backend),
     ],
 )
 def test_codegen_binary_matches_eager(reference_name, fn, source_fn, backend):
@@ -139,15 +133,30 @@ def test_codegen_binary_matches_eager(reference_name, fn, source_fn, backend):
 @pytest.mark.parametrize(
     ("reference_name", "fn", "source_fn", "backend"),
     [
-        ("add_handles_non_contiguous.c", add_fn, get_add_source, codegen_add_backend),
-        ("sub_handles_non_contiguous.c", sub_fn, get_sub_source, codegen_sub_backend),
+        (
+            "add_handles_non_contiguous.c",
+            add_fn,
+            get_generic_source,
+            codegen_generic_backend,
+        ),
+        (
+            "sub_handles_non_contiguous.c",
+            sub_fn,
+            get_generic_source,
+            codegen_generic_backend,
+        ),
         (
             "matmul_handles_non_contiguous.c",
             matmul_fn,
-            get_matmul_source,
-            codegen_matmul_backend,
+            get_generic_source,
+            codegen_generic_backend,
         ),
-        ("bmm_handles_non_contiguous.c", bmm_fn, get_bmm_source, codegen_bmm_backend),
+        (
+            "bmm_handles_non_contiguous.c",
+            bmm_fn,
+            get_generic_source,
+            codegen_generic_backend,
+        ),
     ],
 )
 def test_codegen_binary_handles_non_contiguous(
@@ -169,8 +178,18 @@ def test_codegen_binary_handles_non_contiguous(
 @pytest.mark.parametrize(
     ("reference_name", "fn", "source_fn", "backend"),
     [
-        ("add_chain.c", add_chain_fn, get_add_source, codegen_add_backend),
-        ("sub_chain.c", sub_chain_fn, get_sub_source, codegen_sub_backend),
+        (
+            "add_chain.c",
+            add_chain_fn,
+            get_generic_source,
+            codegen_generic_backend,
+        ),
+        (
+            "sub_chain.c",
+            sub_chain_fn,
+            get_generic_source,
+            codegen_generic_backend,
+        ),
     ],
 )
 def test_codegen_binary_handles_multiple_ops(
@@ -188,8 +207,8 @@ def test_codegen_binary_handles_multiple_ops(
 @pytest.mark.parametrize(
     ("fn", "backend"),
     [
-        (matmul_fn, codegen_matmul_backend),
-        (bmm_fn, codegen_bmm_backend),
+        (matmul_fn, codegen_generic_backend),
+        (bmm_fn, codegen_generic_backend),
     ],
 )
 def test_codegen_matmul_rejects_bad_runtime_shapes(fn, backend):
@@ -205,3 +224,15 @@ def test_codegen_matmul_rejects_bad_runtime_shapes(fn, backend):
     compiled = backend(gm, [good_a, good_b])
     with pytest.raises(RefBackendError, match="requires inputs to have shapes"):
         compiled(bad_a, bad_b)
+
+
+def test_codegen_generic_handles_mixed_ops():
+    a = torch.randn(2, 3, dtype=torch.float32)
+    b = torch.randn(2, 3, dtype=torch.float32)
+    c = torch.randn(2, 3, dtype=torch.float32)
+    _assert_codegen_source_matches(
+        "mixed_ops.c", get_generic_source, mixed_ops_fn, (a, b, c)
+    )
+    compiled = torch.compile(mixed_ops_fn, backend=codegen_generic_backend)
+    result = compiled(a, b, c)
+    torch.testing.assert_close(result, mixed_ops_fn(a, b, c))
