@@ -75,6 +75,22 @@ class RefOpKind:
     REF_OP_SGN = 57
     REF_OP_SINC = 58
     REF_OP_SQUARE = 59
+    REF_OP_ATAN2 = 60
+    REF_OP_POW = 61
+    REF_OP_REMAINDER = 62
+    REF_OP_FMOD = 63
+    REF_OP_FLOOR_DIVIDE = 64
+    REF_OP_FMAX = 65
+    REF_OP_FMIN = 66
+    REF_OP_COPYSIGN = 67
+    REF_OP_HYPOT = 68
+    REF_OP_LOGADDEXP = 69
+    REF_OP_NEXTAFTER = 70
+    REF_OP_XLOGY = 71
+    REF_OP_HEAVISIDE = 72
+    REF_OP_LDEXP = 73
+    REF_OP_CLAMP_MIN = 74
+    REF_OP_CLAMP_MAX = 75
 
 
 class RefTensorView(ctypes.Structure):
@@ -309,6 +325,71 @@ def run_maximum(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
 
 def run_minimum(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
     _run_binary_elementwise("minimum", RefOpKind.REF_OP_MINIMUM, a, b, out)
+
+def run_atan2(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    _run_binary_elementwise("atan2", RefOpKind.REF_OP_ATAN2, a, b, out)
+
+
+def run_pow(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    _run_binary_elementwise("pow", RefOpKind.REF_OP_POW, a, b, out)
+
+
+def run_remainder(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    _run_binary_elementwise("remainder", RefOpKind.REF_OP_REMAINDER, a, b, out)
+
+
+def run_fmod(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    _run_binary_elementwise("fmod", RefOpKind.REF_OP_FMOD, a, b, out)
+
+
+def run_floor_divide(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    _run_binary_elementwise(
+        "floor_divide", RefOpKind.REF_OP_FLOOR_DIVIDE, a, b, out
+    )
+
+
+def run_fmax(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    _run_binary_elementwise("fmax", RefOpKind.REF_OP_FMAX, a, b, out)
+
+
+def run_fmin(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    _run_binary_elementwise("fmin", RefOpKind.REF_OP_FMIN, a, b, out)
+
+
+def run_copysign(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    _run_binary_elementwise("copysign", RefOpKind.REF_OP_COPYSIGN, a, b, out)
+
+
+def run_hypot(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    _run_binary_elementwise("hypot", RefOpKind.REF_OP_HYPOT, a, b, out)
+
+
+def run_logaddexp(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    _run_binary_elementwise("logaddexp", RefOpKind.REF_OP_LOGADDEXP, a, b, out)
+
+
+def run_nextafter(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    _run_binary_elementwise("nextafter", RefOpKind.REF_OP_NEXTAFTER, a, b, out)
+
+
+def run_xlogy(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    _run_binary_elementwise("xlogy", RefOpKind.REF_OP_XLOGY, a, b, out)
+
+
+def run_heaviside(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    _run_binary_elementwise("heaviside", RefOpKind.REF_OP_HEAVISIDE, a, b, out)
+
+
+def run_ldexp(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    _run_binary_elementwise("ldexp", RefOpKind.REF_OP_LDEXP, a, b, out)
+
+
+def run_clamp_min(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    _run_binary_elementwise("clamp_min", RefOpKind.REF_OP_CLAMP_MIN, a, b, out)
+
+
+def run_clamp_max(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
+    _run_binary_elementwise("clamp_max", RefOpKind.REF_OP_CLAMP_MAX, a, b, out)
 
 
 def run_neg(a: torch.Tensor, out: torch.Tensor) -> None:

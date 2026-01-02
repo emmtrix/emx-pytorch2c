@@ -82,6 +82,54 @@ OP_TEST_CONFIG = {
     "minimum": {
         "allowed_dtypes": (torch.float32,),
     },
+    "atan2": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "pow": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "remainder": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "fmod": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "floor_divide": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "fmax": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "fmin": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "copysign": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "hypot": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "logaddexp": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "nextafter": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "xlogy": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "heaviside": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "ldexp": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "clamp_min": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "clamp_max": {
+        "allowed_dtypes": (torch.float32,),
+    },
     "neg": {
         "allowed_dtypes": (torch.float32,),
     },

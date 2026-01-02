@@ -67,6 +67,22 @@ int ref_run_real(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_sgn(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_sinc(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_square(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_atan2(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_pow(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_remainder(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_fmod(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_floor_divide(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_fmax(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_fmin(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_copysign(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_hypot(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_logaddexp(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_nextafter(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_xlogy(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_heaviside(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_ldexp(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_clamp_min(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_clamp_max(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_matmul(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_bmm(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_broadcast_in_dim(const RefOpCall *call, char *err_msg, size_t err_cap);
@@ -194,6 +210,38 @@ REF_BACKEND_API int ref_run_op(
             return ref_run_sinc(call, err_msg, err_cap);
         case REF_OP_SQUARE:
             return ref_run_square(call, err_msg, err_cap);
+        case REF_OP_ATAN2:
+            return ref_run_atan2(call, err_msg, err_cap);
+        case REF_OP_POW:
+            return ref_run_pow(call, err_msg, err_cap);
+        case REF_OP_REMAINDER:
+            return ref_run_remainder(call, err_msg, err_cap);
+        case REF_OP_FMOD:
+            return ref_run_fmod(call, err_msg, err_cap);
+        case REF_OP_FLOOR_DIVIDE:
+            return ref_run_floor_divide(call, err_msg, err_cap);
+        case REF_OP_FMAX:
+            return ref_run_fmax(call, err_msg, err_cap);
+        case REF_OP_FMIN:
+            return ref_run_fmin(call, err_msg, err_cap);
+        case REF_OP_COPYSIGN:
+            return ref_run_copysign(call, err_msg, err_cap);
+        case REF_OP_HYPOT:
+            return ref_run_hypot(call, err_msg, err_cap);
+        case REF_OP_LOGADDEXP:
+            return ref_run_logaddexp(call, err_msg, err_cap);
+        case REF_OP_NEXTAFTER:
+            return ref_run_nextafter(call, err_msg, err_cap);
+        case REF_OP_XLOGY:
+            return ref_run_xlogy(call, err_msg, err_cap);
+        case REF_OP_HEAVISIDE:
+            return ref_run_heaviside(call, err_msg, err_cap);
+        case REF_OP_LDEXP:
+            return ref_run_ldexp(call, err_msg, err_cap);
+        case REF_OP_CLAMP_MIN:
+            return ref_run_clamp_min(call, err_msg, err_cap);
+        case REF_OP_CLAMP_MAX:
+            return ref_run_clamp_max(call, err_msg, err_cap);
         case REF_OP_MATMUL:
             return ref_run_matmul(call, err_msg, err_cap);
         case REF_OP_BMM:

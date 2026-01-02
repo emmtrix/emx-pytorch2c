@@ -16,6 +16,7 @@ from .cffi_bindings import (
     run_asin,
     run_asinh,
     run_atan,
+    run_atan2,
     run_atanh,
     run_bmm,
     run_broadcast_in_dim,
@@ -30,20 +31,27 @@ from .cffi_bindings import (
     run_erfc,
     run_exp,
     run_expm1,
+    run_fmax,
+    run_fmin,
+    run_floor_divide,
+    run_fmod,
     run_floor,
     run_log,
     run_log1p,
     run_log10,
     run_log2,
+    run_logaddexp,
     run_matmul,
     run_maximum,
     run_minimum,
     run_mul,
     run_neg,
+    run_nextafter,
     run_round,
     run_reciprocal,
     run_relu,
     run_angle,
+    run_copysign,
     run_conj,
     run_conj_physical,
     run_deg2rad,
@@ -51,12 +59,17 @@ from .cffi_bindings import (
     run_erfinv,
     run_exp2,
     run_frac,
+    run_heaviside,
+    run_hypot,
     run_i0,
     run_lgamma,
+    run_ldexp,
     run_logit,
     run_nan_to_num,
     run_positive,
+    run_pow,
     run_rad2deg,
+    run_remainder,
     run_real,
     run_sgn,
     run_sinc,
@@ -71,6 +84,9 @@ from .cffi_bindings import (
     run_tan,
     run_tanh,
     run_trunc,
+    run_xlogy,
+    run_clamp_min,
+    run_clamp_max,
 )
 
 
@@ -107,6 +123,102 @@ def _run_maximum(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 def _run_minimum(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     out = torch.empty_like(a, memory_format=torch.contiguous_format)
     run_minimum(a, b, out)
+    return out
+
+
+def _run_atan2(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_atan2(a, b, out)
+    return out
+
+
+def _run_pow(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_pow(a, b, out)
+    return out
+
+
+def _run_remainder(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_remainder(a, b, out)
+    return out
+
+
+def _run_fmod(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_fmod(a, b, out)
+    return out
+
+
+def _run_floor_divide(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_floor_divide(a, b, out)
+    return out
+
+
+def _run_fmax(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_fmax(a, b, out)
+    return out
+
+
+def _run_fmin(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_fmin(a, b, out)
+    return out
+
+
+def _run_copysign(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_copysign(a, b, out)
+    return out
+
+
+def _run_hypot(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_hypot(a, b, out)
+    return out
+
+
+def _run_logaddexp(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_logaddexp(a, b, out)
+    return out
+
+
+def _run_nextafter(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_nextafter(a, b, out)
+    return out
+
+
+def _run_xlogy(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_xlogy(a, b, out)
+    return out
+
+
+def _run_heaviside(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_heaviside(a, b, out)
+    return out
+
+
+def _run_ldexp(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_ldexp(a, b, out)
+    return out
+
+
+def _run_clamp_min(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_clamp_min(a, b, out)
+    return out
+
+
+def _run_clamp_max(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_clamp_max(a, b, out)
     return out
 
 
@@ -513,6 +625,7 @@ def _compile_graph(
         torch.ops.aten.mul.Tensor: ("mul", _run_mul),
         operator.truediv: ("div", _run_div),
         torch.div: ("div", _run_div),
+        torch.true_divide: ("div", _run_div),
         torch.ops.aten.div.Tensor: ("div", _run_div),
         torch.ops.aten.div: ("div", _run_div),
         torch.maximum: ("maximum", _run_maximum),
@@ -521,6 +634,54 @@ def _compile_graph(
         torch.minimum: ("minimum", _run_minimum),
         torch.ops.aten.minimum.default: ("minimum", _run_minimum),
         torch.ops.aten.minimum: ("minimum", _run_minimum),
+        torch.atan2: ("atan2", _run_atan2),
+        torch.ops.aten.atan2.default: ("atan2", _run_atan2),
+        torch.ops.aten.atan2: ("atan2", _run_atan2),
+        operator.pow: ("pow", _run_pow),
+        torch.pow: ("pow", _run_pow),
+        torch.ops.aten.pow.Tensor_Tensor: ("pow", _run_pow),
+        torch.remainder: ("remainder", _run_remainder),
+        torch.ops.aten.remainder.Tensor: ("remainder", _run_remainder),
+        torch.ops.aten.remainder: ("remainder", _run_remainder),
+        torch.fmod: ("fmod", _run_fmod),
+        torch.ops.aten.fmod.Tensor: ("fmod", _run_fmod),
+        torch.ops.aten.fmod: ("fmod", _run_fmod),
+        torch.floor_divide: ("floor_divide", _run_floor_divide),
+        torch.ops.aten.floor_divide.default: ("floor_divide", _run_floor_divide),
+        torch.ops.aten.floor_divide: ("floor_divide", _run_floor_divide),
+        torch.fmax: ("fmax", _run_fmax),
+        torch.ops.aten.fmax.default: ("fmax", _run_fmax),
+        torch.ops.aten.fmax: ("fmax", _run_fmax),
+        torch.fmin: ("fmin", _run_fmin),
+        torch.ops.aten.fmin.default: ("fmin", _run_fmin),
+        torch.ops.aten.fmin: ("fmin", _run_fmin),
+        torch.copysign: ("copysign", _run_copysign),
+        torch.ops.aten.copysign.default: ("copysign", _run_copysign),
+        torch.ops.aten.copysign: ("copysign", _run_copysign),
+        torch.hypot: ("hypot", _run_hypot),
+        torch.ops.aten.hypot.default: ("hypot", _run_hypot),
+        torch.ops.aten.hypot: ("hypot", _run_hypot),
+        torch.logaddexp: ("logaddexp", _run_logaddexp),
+        torch.ops.aten.logaddexp.default: ("logaddexp", _run_logaddexp),
+        torch.ops.aten.logaddexp: ("logaddexp", _run_logaddexp),
+        torch.nextafter: ("nextafter", _run_nextafter),
+        torch.ops.aten.nextafter.default: ("nextafter", _run_nextafter),
+        torch.ops.aten.nextafter: ("nextafter", _run_nextafter),
+        torch.xlogy: ("xlogy", _run_xlogy),
+        torch.ops.aten.xlogy.Tensor: ("xlogy", _run_xlogy),
+        torch.ops.aten.xlogy: ("xlogy", _run_xlogy),
+        torch.heaviside: ("heaviside", _run_heaviside),
+        torch.ops.aten.heaviside.default: ("heaviside", _run_heaviside),
+        torch.ops.aten.heaviside: ("heaviside", _run_heaviside),
+        torch.ldexp: ("ldexp", _run_ldexp),
+        torch.ops.aten.ldexp.default: ("ldexp", _run_ldexp),
+        torch.ops.aten.ldexp: ("ldexp", _run_ldexp),
+        torch.clamp_min: ("clamp_min", _run_clamp_min),
+        torch.ops.aten.clamp_min.default: ("clamp_min", _run_clamp_min),
+        torch.ops.aten.clamp_min: ("clamp_min", _run_clamp_min),
+        torch.clamp_max: ("clamp_max", _run_clamp_max),
+        torch.ops.aten.clamp_max.default: ("clamp_max", _run_clamp_max),
+        torch.ops.aten.clamp_max: ("clamp_max", _run_clamp_max),
         operator.neg: ("neg", _run_neg),
         torch.neg: ("neg", _run_neg),
         torch.ops.aten.neg.default: ("neg", _run_neg),

@@ -36,6 +36,103 @@ static inline float ref_scalar_minimum(float a, float b) {
     return fminf(a, b);
 }
 
+static inline float ref_scalar_fmax(float a, float b) {
+    return fmaxf(a, b);
+}
+
+static inline float ref_scalar_fmin(float a, float b) {
+    return fminf(a, b);
+}
+
+static inline float ref_scalar_copysign(float a, float b) {
+    return copysignf(a, b);
+}
+
+static inline float ref_scalar_hypot(float a, float b) {
+    return hypotf(a, b);
+}
+
+static inline float ref_scalar_atan2(float a, float b) {
+    return atan2f(a, b);
+}
+
+static inline float ref_scalar_pow(float a, float b) {
+    return powf(a, b);
+}
+
+static inline float ref_scalar_fmod(float a, float b) {
+    return fmodf(a, b);
+}
+
+static inline float ref_scalar_remainder(float a, float b) {
+    if (isnan(a) || isnan(b)) {
+        return NAN;
+    }
+    if (b == 0.0f) {
+        return NAN;
+    }
+    float mod = fmodf(a, b);
+    if (mod == 0.0f) {
+        return mod;
+    }
+    if ((mod < 0.0f) != (b < 0.0f)) {
+        mod += b;
+    }
+    return mod;
+}
+
+static inline float ref_scalar_floor_divide(float a, float b) {
+    return floorf(a / b);
+}
+
+static inline float ref_scalar_logaddexp(float a, float b) {
+    if (isnan(a) || isnan(b)) {
+        return NAN;
+    }
+    float max_val = fmaxf(a, b);
+    float min_val = fminf(a, b);
+    if (max_val == -INFINITY) {
+        return -INFINITY;
+    }
+    return max_val + log1pf(expf(min_val - max_val));
+}
+
+static inline float ref_scalar_nextafter(float a, float b) {
+    return nextafterf(a, b);
+}
+
+static inline float ref_scalar_xlogy(float a, float b) {
+    if (isnan(a) || isnan(b)) {
+        return NAN;
+    }
+    if (a == 0.0f) {
+        return 0.0f;
+    }
+    return a * logf(b);
+}
+
+static inline float ref_scalar_heaviside(float a, float b) {
+    if (a > 0.0f) {
+        return 1.0f;
+    }
+    if (a == 0.0f) {
+        return b;
+    }
+    return 0.0f;
+}
+
+static inline float ref_scalar_ldexp(float a, float b) {
+    return a * exp2f(b);
+}
+
+static inline float ref_scalar_clamp_min(float a, float b) {
+    return fmaxf(a, b);
+}
+
+static inline float ref_scalar_clamp_max(float a, float b) {
+    return fminf(a, b);
+}
+
 static inline float ref_scalar_neg(float a) {
     return -a;
 }
