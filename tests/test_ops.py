@@ -178,6 +178,60 @@ OP_TEST_CONFIG = {
     "relu": {
         "allowed_dtypes": (torch.float32,),
     },
+    "angle": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "conj": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "conj_physical": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "deg2rad": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "digamma": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "erfinv": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "exp2": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "frac": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "i0": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "lgamma": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "logit": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "nan_to_num": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "positive": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "rad2deg": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "real": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "sgn": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "sinc": {
+        "allowed_dtypes": (torch.float32,),
+    },
+    "square": {
+        "allowed_dtypes": (torch.float32,),
+    },
     "matmul": {
         "allowed_dtypes": (torch.float32,),
         "allow_noncontiguous": False,

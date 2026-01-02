@@ -43,6 +43,24 @@ from .cffi_bindings import (
     run_round,
     run_reciprocal,
     run_relu,
+    run_angle,
+    run_conj,
+    run_conj_physical,
+    run_deg2rad,
+    run_digamma,
+    run_erfinv,
+    run_exp2,
+    run_frac,
+    run_i0,
+    run_lgamma,
+    run_logit,
+    run_nan_to_num,
+    run_positive,
+    run_rad2deg,
+    run_real,
+    run_sgn,
+    run_sinc,
+    run_square,
     run_rsqrt,
     run_sigmoid,
     run_sin,
@@ -284,6 +302,114 @@ def _run_relu(a: torch.Tensor) -> torch.Tensor:
     return out
 
 
+def _run_angle(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_angle(a, out)
+    return out
+
+
+def _run_conj(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_conj(a, out)
+    return out
+
+
+def _run_conj_physical(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_conj_physical(a, out)
+    return out
+
+
+def _run_deg2rad(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_deg2rad(a, out)
+    return out
+
+
+def _run_digamma(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_digamma(a, out)
+    return out
+
+
+def _run_erfinv(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_erfinv(a, out)
+    return out
+
+
+def _run_exp2(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_exp2(a, out)
+    return out
+
+
+def _run_frac(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_frac(a, out)
+    return out
+
+
+def _run_i0(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_i0(a, out)
+    return out
+
+
+def _run_lgamma(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_lgamma(a, out)
+    return out
+
+
+def _run_logit(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_logit(a, out)
+    return out
+
+
+def _run_nan_to_num(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_nan_to_num(a, out)
+    return out
+
+
+def _run_positive(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_positive(a, out)
+    return out
+
+
+def _run_rad2deg(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_rad2deg(a, out)
+    return out
+
+
+def _run_real(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_real(a, out)
+    return out
+
+
+def _run_sgn(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_sgn(a, out)
+    return out
+
+
+def _run_sinc(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_sinc(a, out)
+    return out
+
+
+def _run_square(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_square(a, out)
+    return out
+
+
 def _run_conv2d(
     input_tensor: torch.Tensor,
     weight: torch.Tensor,
@@ -492,6 +618,60 @@ def _compile_graph(
         torch.relu: ("relu", _run_relu),
         torch.ops.aten.relu.default: ("relu", _run_relu),
         torch.ops.aten.relu: ("relu", _run_relu),
+        torch.angle: ("angle", _run_angle),
+        torch.ops.aten.angle.default: ("angle", _run_angle),
+        torch.ops.aten.angle: ("angle", _run_angle),
+        torch.conj: ("conj", _run_conj),
+        torch.ops.aten.conj.default: ("conj", _run_conj),
+        torch.ops.aten.conj: ("conj", _run_conj),
+        torch.conj_physical: ("conj_physical", _run_conj_physical),
+        torch.ops.aten.conj_physical.default: ("conj_physical", _run_conj_physical),
+        torch.ops.aten.conj_physical: ("conj_physical", _run_conj_physical),
+        torch.deg2rad: ("deg2rad", _run_deg2rad),
+        torch.ops.aten.deg2rad.default: ("deg2rad", _run_deg2rad),
+        torch.ops.aten.deg2rad: ("deg2rad", _run_deg2rad),
+        torch.digamma: ("digamma", _run_digamma),
+        torch.ops.aten.digamma.default: ("digamma", _run_digamma),
+        torch.ops.aten.digamma: ("digamma", _run_digamma),
+        torch.erfinv: ("erfinv", _run_erfinv),
+        torch.ops.aten.erfinv.default: ("erfinv", _run_erfinv),
+        torch.ops.aten.erfinv: ("erfinv", _run_erfinv),
+        torch.exp2: ("exp2", _run_exp2),
+        torch.ops.aten.exp2.default: ("exp2", _run_exp2),
+        torch.ops.aten.exp2: ("exp2", _run_exp2),
+        torch.frac: ("frac", _run_frac),
+        torch.ops.aten.frac.default: ("frac", _run_frac),
+        torch.ops.aten.frac: ("frac", _run_frac),
+        torch.i0: ("i0", _run_i0),
+        torch.ops.aten.i0.default: ("i0", _run_i0),
+        torch.ops.aten.i0: ("i0", _run_i0),
+        torch.lgamma: ("lgamma", _run_lgamma),
+        torch.ops.aten.lgamma.default: ("lgamma", _run_lgamma),
+        torch.ops.aten.lgamma: ("lgamma", _run_lgamma),
+        torch.logit: ("logit", _run_logit),
+        torch.ops.aten.logit.default: ("logit", _run_logit),
+        torch.ops.aten.logit: ("logit", _run_logit),
+        torch.nan_to_num: ("nan_to_num", _run_nan_to_num),
+        torch.ops.aten.nan_to_num.default: ("nan_to_num", _run_nan_to_num),
+        torch.ops.aten.nan_to_num: ("nan_to_num", _run_nan_to_num),
+        torch.positive: ("positive", _run_positive),
+        torch.ops.aten.positive.default: ("positive", _run_positive),
+        torch.ops.aten.positive: ("positive", _run_positive),
+        torch.rad2deg: ("rad2deg", _run_rad2deg),
+        torch.ops.aten.rad2deg.default: ("rad2deg", _run_rad2deg),
+        torch.ops.aten.rad2deg: ("rad2deg", _run_rad2deg),
+        torch.real: ("real", _run_real),
+        torch.ops.aten.real.default: ("real", _run_real),
+        torch.ops.aten.real: ("real", _run_real),
+        torch.sgn: ("sgn", _run_sgn),
+        torch.ops.aten.sgn.default: ("sgn", _run_sgn),
+        torch.ops.aten.sgn: ("sgn", _run_sgn),
+        torch.sinc: ("sinc", _run_sinc),
+        torch.ops.aten.sinc.default: ("sinc", _run_sinc),
+        torch.ops.aten.sinc: ("sinc", _run_sinc),
+        torch.square: ("square", _run_square),
+        torch.ops.aten.square.default: ("square", _run_square),
+        torch.ops.aten.square: ("square", _run_square),
         torch.ops.aten.convolution.default: ("conv2d", _run_conv2d),
         torch.ops.aten.convolution: ("conv2d", _run_conv2d),
         torch.ops.aten.conv2d.default: ("conv2d", _run_conv2d),
@@ -543,6 +723,24 @@ def _compile_graph(
         "ceil",
         "reciprocal",
         "relu",
+        "angle",
+        "conj",
+        "conj_physical",
+        "deg2rad",
+        "digamma",
+        "erfinv",
+        "exp2",
+        "frac",
+        "i0",
+        "lgamma",
+        "logit",
+        "nan_to_num",
+        "positive",
+        "rad2deg",
+        "real",
+        "sgn",
+        "sinc",
+        "square",
     }
 
     def compiled(*args: torch.Tensor) -> torch.Tensor:

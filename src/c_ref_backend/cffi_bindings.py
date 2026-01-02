@@ -57,6 +57,24 @@ class RefOpKind:
     REF_OP_ROUND = 39
     REF_OP_TRUNC = 40
     REF_OP_CONV2D = 41
+    REF_OP_ANGLE = 42
+    REF_OP_CONJ = 43
+    REF_OP_CONJ_PHYSICAL = 44
+    REF_OP_DEG2RAD = 45
+    REF_OP_DIGAMMA = 46
+    REF_OP_ERFINV = 47
+    REF_OP_EXP2 = 48
+    REF_OP_FRAC = 49
+    REF_OP_I0 = 50
+    REF_OP_LGAMMA = 51
+    REF_OP_LOGIT = 52
+    REF_OP_NAN_TO_NUM = 53
+    REF_OP_POSITIVE = 54
+    REF_OP_RAD2DEG = 55
+    REF_OP_REAL = 56
+    REF_OP_SGN = 57
+    REF_OP_SINC = 58
+    REF_OP_SQUARE = 59
 
 
 class RefTensorView(ctypes.Structure):
@@ -419,6 +437,79 @@ def run_reciprocal(a: torch.Tensor, out: torch.Tensor) -> None:
 
 def run_relu(a: torch.Tensor, out: torch.Tensor) -> None:
     _run_unary_elementwise("relu", RefOpKind.REF_OP_RELU, a, out)
+
+def run_angle(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("angle", RefOpKind.REF_OP_ANGLE, a, out)
+
+
+def run_conj(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("conj", RefOpKind.REF_OP_CONJ, a, out)
+
+
+def run_conj_physical(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise(
+        "conj_physical", RefOpKind.REF_OP_CONJ_PHYSICAL, a, out
+    )
+
+
+def run_deg2rad(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("deg2rad", RefOpKind.REF_OP_DEG2RAD, a, out)
+
+
+def run_digamma(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("digamma", RefOpKind.REF_OP_DIGAMMA, a, out)
+
+
+def run_erfinv(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("erfinv", RefOpKind.REF_OP_ERFINV, a, out)
+
+
+def run_exp2(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("exp2", RefOpKind.REF_OP_EXP2, a, out)
+
+
+def run_frac(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("frac", RefOpKind.REF_OP_FRAC, a, out)
+
+
+def run_i0(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("i0", RefOpKind.REF_OP_I0, a, out)
+
+
+def run_lgamma(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("lgamma", RefOpKind.REF_OP_LGAMMA, a, out)
+
+
+def run_logit(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("logit", RefOpKind.REF_OP_LOGIT, a, out)
+
+
+def run_nan_to_num(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("nan_to_num", RefOpKind.REF_OP_NAN_TO_NUM, a, out)
+
+
+def run_positive(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("positive", RefOpKind.REF_OP_POSITIVE, a, out)
+
+
+def run_rad2deg(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("rad2deg", RefOpKind.REF_OP_RAD2DEG, a, out)
+
+
+def run_real(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("real", RefOpKind.REF_OP_REAL, a, out)
+
+
+def run_sgn(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("sgn", RefOpKind.REF_OP_SGN, a, out)
+
+
+def run_sinc(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("sinc", RefOpKind.REF_OP_SINC, a, out)
+
+
+def run_square(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("square", RefOpKind.REF_OP_SQUARE, a, out)
 
 
 def run_conv2d(

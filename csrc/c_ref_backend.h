@@ -80,7 +80,25 @@ typedef enum RefOpKind {
     REF_OP_SIGN = 38,
     REF_OP_ROUND = 39,
     REF_OP_TRUNC = 40,
-    REF_OP_CONV2D = 41
+    REF_OP_CONV2D = 41,
+    REF_OP_ANGLE = 42,
+    REF_OP_CONJ = 43,
+    REF_OP_CONJ_PHYSICAL = 44,
+    REF_OP_DEG2RAD = 45,
+    REF_OP_DIGAMMA = 46,
+    REF_OP_ERFINV = 47,
+    REF_OP_EXP2 = 48,
+    REF_OP_FRAC = 49,
+    REF_OP_I0 = 50,
+    REF_OP_LGAMMA = 51,
+    REF_OP_LOGIT = 52,
+    REF_OP_NAN_TO_NUM = 53,
+    REF_OP_POSITIVE = 54,
+    REF_OP_RAD2DEG = 55,
+    REF_OP_REAL = 56,
+    REF_OP_SGN = 57,
+    REF_OP_SINC = 58,
+    REF_OP_SQUARE = 59
 } RefOpKind;
 
 typedef struct RefBroadcastInDimParams {

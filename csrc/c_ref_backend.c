@@ -49,6 +49,24 @@ int ref_run_floor(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_ceil(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_reciprocal(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_relu(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_angle(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_conj(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_conj_physical(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_deg2rad(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_digamma(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_erfinv(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_exp2(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_frac(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_i0(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_lgamma(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_logit(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_nan_to_num(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_positive(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_rad2deg(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_real(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_sgn(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_sinc(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_square(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_matmul(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_bmm(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_broadcast_in_dim(const RefOpCall *call, char *err_msg, size_t err_cap);
@@ -140,6 +158,42 @@ REF_BACKEND_API int ref_run_op(
             return ref_run_reciprocal(call, err_msg, err_cap);
         case REF_OP_RELU:
             return ref_run_relu(call, err_msg, err_cap);
+        case REF_OP_ANGLE:
+            return ref_run_angle(call, err_msg, err_cap);
+        case REF_OP_CONJ:
+            return ref_run_conj(call, err_msg, err_cap);
+        case REF_OP_CONJ_PHYSICAL:
+            return ref_run_conj_physical(call, err_msg, err_cap);
+        case REF_OP_DEG2RAD:
+            return ref_run_deg2rad(call, err_msg, err_cap);
+        case REF_OP_DIGAMMA:
+            return ref_run_digamma(call, err_msg, err_cap);
+        case REF_OP_ERFINV:
+            return ref_run_erfinv(call, err_msg, err_cap);
+        case REF_OP_EXP2:
+            return ref_run_exp2(call, err_msg, err_cap);
+        case REF_OP_FRAC:
+            return ref_run_frac(call, err_msg, err_cap);
+        case REF_OP_I0:
+            return ref_run_i0(call, err_msg, err_cap);
+        case REF_OP_LGAMMA:
+            return ref_run_lgamma(call, err_msg, err_cap);
+        case REF_OP_LOGIT:
+            return ref_run_logit(call, err_msg, err_cap);
+        case REF_OP_NAN_TO_NUM:
+            return ref_run_nan_to_num(call, err_msg, err_cap);
+        case REF_OP_POSITIVE:
+            return ref_run_positive(call, err_msg, err_cap);
+        case REF_OP_RAD2DEG:
+            return ref_run_rad2deg(call, err_msg, err_cap);
+        case REF_OP_REAL:
+            return ref_run_real(call, err_msg, err_cap);
+        case REF_OP_SGN:
+            return ref_run_sgn(call, err_msg, err_cap);
+        case REF_OP_SINC:
+            return ref_run_sinc(call, err_msg, err_cap);
+        case REF_OP_SQUARE:
+            return ref_run_square(call, err_msg, err_cap);
         case REF_OP_MATMUL:
             return ref_run_matmul(call, err_msg, err_cap);
         case REF_OP_BMM:
