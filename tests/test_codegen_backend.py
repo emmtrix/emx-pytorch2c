@@ -27,6 +27,10 @@ def add_chain_fn(a, b, c):
     return (a + b) + c
 
 
+def add_broadcast_fn(a, b):
+    return a + b
+
+
 def sub_chain_fn(a, b, c):
     return (a - b) - c
 
@@ -94,6 +98,17 @@ def test_codegen_generic_handles_mixed_ops():
     compiled = torch.compile(mixed_ops_fn, backend=codegen_generic_backend)
     result = compiled(a, b, c)
     torch.testing.assert_close(result, mixed_ops_fn(a, b, c))
+
+
+def test_codegen_generic_handles_add_broadcast():
+    a = torch.randn(2, 1, 3, dtype=torch.float32)
+    b = torch.randn(1, 4, 1, dtype=torch.float32)
+    _assert_codegen_source_matches(
+        "add_broadcast.c", get_generic_source, add_broadcast_fn, (a, b)
+    )
+    compiled = torch.compile(add_broadcast_fn, backend=codegen_generic_backend)
+    result = compiled(a, b)
+    torch.testing.assert_close(result, add_broadcast_fn(a, b))
 
 
 def test_codegen_generic_handles_atan():
