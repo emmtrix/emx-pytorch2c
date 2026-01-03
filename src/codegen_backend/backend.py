@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -1223,6 +1223,26 @@ def _is_contiguous(shape: Sequence[int], strides: Sequence[int]) -> bool:
     )
 
 
+def _emit_strided_access(
+    name: str,
+    indices: Sequence[str],
+    strides: Sequence[int],
+    contig: bool,
+    sizes: Optional[Sequence[int]] = None,
+) -> str:
+    if contig:
+        return f"{name}{''.join(f'[{idx}]' for idx in indices)}"
+    terms = []
+    for idx_name, stride, size in zip(
+        indices, strides, sizes or [None] * len(indices)
+    ):
+        if size == 1:
+            continue
+        terms.append(f"{idx_name} * {stride}")
+    index_expr = " + ".join(terms) if terms else "0"
+    return f"((float*){name})[{index_expr}]"
+
+
 def _format_strided_access(
     name: str,
     input_shape: Sequence[int],
@@ -1234,15 +1254,14 @@ def _format_strided_access(
     if input_rank == 0:
         return f"((float*){name})[0]"
     offset = output_rank - input_rank
-    terms = []
-    for input_dim in range(input_rank):
-        output_dim = input_dim + offset
-        if input_shape[input_dim] == 1:
-            continue
-        stride = input_strides[input_dim]
-        terms.append(f"i{output_dim} * {stride}")
-    index_expr = " + ".join(terms) if terms else "0"
-    return f"((float*){name})[{index_expr}]"
+    indices = [f"i{input_dim + offset}" for input_dim in range(input_rank)]
+    return _emit_strided_access(
+        name,
+        indices,
+        input_strides,
+        contig=False,
+        sizes=input_shape,
+    )
 
 
 def _format_output_access(
@@ -1349,22 +1368,6 @@ def _write_matmul_kernel(
     matmul_template = _get_template_env().get_template("matmul_kernel.c.j2")
     a_is_contiguous = _is_contiguous(a_shape, a_strides)
     b_is_contiguous = _is_contiguous(b_shape, b_strides)
-    def strided_access(
-        name: str,
-        indices: Sequence[str],
-        shape: Sequence[int],
-        strides: Sequence[int],
-        contig: bool,
-    ) -> str:
-        if contig:
-            return f"{name}{''.join(f'[{idx}]' for idx in indices)}"
-        terms = []
-        for idx_name, size, stride in zip(indices, shape, strides):
-            if size == 1:
-                continue
-            terms.append(f"{idx_name} * {stride}")
-        index_expr = " + ".join(terms) if terms else "0"
-        return f"((float*){name})[{index_expr}]"
 
     if op_spec.name == "matmul":
         m, k = a_shape
@@ -1381,8 +1384,12 @@ def _write_matmul_kernel(
             m=m,
             n=n,
             k=k,
-            a_access=strided_access("a", ("i", "t"), a_shape, a_strides, a_is_contiguous),
-            b_access=strided_access("b", ("t", "j"), b_shape, b_strides, b_is_contiguous),
+            a_access=_emit_strided_access(
+                "a", ("i", "t"), a_strides, a_is_contiguous, sizes=a_shape
+            ),
+            b_access=_emit_strided_access(
+                "b", ("t", "j"), b_strides, b_is_contiguous, sizes=b_shape
+            ),
             out_access="out[i][j]",
         )
         return rendered.strip().splitlines()
@@ -1400,11 +1407,11 @@ def _write_matmul_kernel(
         m=m,
         n=n,
         k=k,
-        a_access=strided_access(
-            "a", ("b_idx", "i", "t"), a_shape, a_strides, a_is_contiguous
+        a_access=_emit_strided_access(
+            "a", ("b_idx", "i", "t"), a_strides, a_is_contiguous, sizes=a_shape
         ),
-        b_access=strided_access(
-            "b", ("b_idx", "t", "j"), b_shape, b_strides, b_is_contiguous
+        b_access=_emit_strided_access(
+            "b", ("b_idx", "t", "j"), b_strides, b_is_contiguous, sizes=b_shape
         ),
         out_access="out[b_idx][i][j]",
     )

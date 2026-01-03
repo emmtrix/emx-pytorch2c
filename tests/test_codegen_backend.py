@@ -5,6 +5,8 @@ import pytest
 import torch
 from codegen_backend import codegen_generic_backend
 from codegen_backend.backend import (
+    _emit_strided_access,
+    _format_strided_access,
     get_generic_source,
 )
 REFERENCE_DIR = Path(__file__).resolve().parent / "codegen_refs"
@@ -152,3 +154,22 @@ def test_codegen_generic_supports_inplace_ops():
     expected_result = inplace_fn(expected)
     torch.testing.assert_close(result, expected_result)
     torch.testing.assert_close(a, expected)
+
+
+def test_emit_strided_access_expressions():
+    broadcast_expr = _format_strided_access(
+        "b", (1, 3), (3, 1), (2, 3)
+    )
+    helper_expr = _emit_strided_access(
+        "b", ("i0", "i1"), (3, 1), contig=False, sizes=(1, 3)
+    )
+    assert broadcast_expr == helper_expr
+    assert broadcast_expr == "((float*)b)[i1 * 1]"
+    assert (
+        _emit_strided_access("a", ("i", "t"), (5, 1), contig=False, sizes=(2, 3))
+        == "((float*)a)[i * 5 + t * 1]"
+    )
+    assert (
+        _emit_strided_access("a", ("i", "t"), (5, 1), contig=True, sizes=(2, 3))
+        == "a[i][t]"
+    )
