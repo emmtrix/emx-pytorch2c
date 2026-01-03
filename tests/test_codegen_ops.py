@@ -145,6 +145,7 @@ CODEGEN_OP_NAMES = {
     "atan2",
     "atanh",
     "bmm",
+    "cbrt",
     "ceil",
     "clamp_max",
     "clamp_min",

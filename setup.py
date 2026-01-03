@@ -33,6 +33,7 @@ setup(
                 "csrc/ops_exp.c",
                 "csrc/ops_abs.c",
                 "csrc/ops_sqrt.c",
+                "csrc/ops_cbrt.c",
                 "csrc/ops_log.c",
                 "csrc/ops_sin.c",
                 "csrc/ops_cos.c",

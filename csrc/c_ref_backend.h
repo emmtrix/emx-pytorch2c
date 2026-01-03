@@ -114,7 +114,8 @@ typedef enum RefOpKind {
     REF_OP_HEAVISIDE = 72,
     REF_OP_LDEXP = 73,
     REF_OP_CLAMP_MIN = 74,
-    REF_OP_CLAMP_MAX = 75
+    REF_OP_CLAMP_MAX = 75,
+    REF_OP_CBRT = 76
 } RefOpKind;
 
 typedef struct RefBroadcastInDimParams {

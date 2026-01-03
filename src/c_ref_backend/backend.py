@@ -23,6 +23,7 @@ from .cffi_bindings import (
     run_ceil,
     run_cos,
     run_cosh,
+    run_cbrt,
     _conv2d_output_shape,
     _normalize_conv2d_param,
     run_conv2d,
@@ -243,6 +244,12 @@ def _run_abs(a: torch.Tensor) -> torch.Tensor:
 def _run_sqrt(a: torch.Tensor) -> torch.Tensor:
     out = torch.empty_like(a, memory_format=torch.contiguous_format)
     run_sqrt(a, out)
+    return out
+
+
+def _run_cbrt(a: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_cbrt(a, out)
     return out
 
 
@@ -851,6 +858,13 @@ def _compile_graph(
             _run_broadcast_in_dim,
         ),
     }
+    cbrt_op = getattr(torch, "cbrt", None)
+    if cbrt_op is not None:
+        supported_targets[cbrt_op] = ("cbrt", _run_cbrt)
+    aten_cbrt = getattr(torch.ops.aten, "cbrt", None)
+    if aten_cbrt is not None:
+        supported_targets[aten_cbrt.default] = ("cbrt", _run_cbrt)
+        supported_targets[aten_cbrt] = ("cbrt", _run_cbrt)
     unary_ops = {
         "neg",
         "exp",

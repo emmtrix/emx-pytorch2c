@@ -91,6 +91,7 @@ class RefOpKind:
     REF_OP_LDEXP = 73
     REF_OP_CLAMP_MIN = 74
     REF_OP_CLAMP_MAX = 75
+    REF_OP_CBRT = 76
 
 
 class RefTensorView(ctypes.Structure):
@@ -406,6 +407,10 @@ def run_abs(a: torch.Tensor, out: torch.Tensor) -> None:
 
 def run_sqrt(a: torch.Tensor, out: torch.Tensor) -> None:
     _run_unary_elementwise("sqrt", RefOpKind.REF_OP_SQRT, a, out)
+
+
+def run_cbrt(a: torch.Tensor, out: torch.Tensor) -> None:
+    _run_unary_elementwise("cbrt", RefOpKind.REF_OP_CBRT, a, out)
 
 
 def run_log(a: torch.Tensor, out: torch.Tensor) -> None:

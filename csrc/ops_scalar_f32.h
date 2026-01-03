@@ -165,6 +165,10 @@ static inline float ref_scalar_f32_sqrt(float a) {
     return sqrtf(a);
 }
 
+static inline float ref_scalar_f32_cbrt(float a) {
+    return cbrtf(a);
+}
+
 static inline float ref_scalar_f32_exp(float a) {
     return expf(a);
 }
