@@ -516,7 +516,7 @@ adaptive_max_pool2d_backward             -     -
 adaptive_max_pool3d                      -     -      
 adaptive_max_pool3d_backward             -     -      
 add                                      yes   yes    
-add_                                     -     -      
+add_                                     -     yes    
 addbmm                                   -     -      
 addbmm_                                  -     -      
 addcdiv                                  -     -      
@@ -759,7 +759,7 @@ dim                                      -     -
 dist                                     -     -      
 dist_backward                            -     -      
 div                                      yes   yes    
-div_                                     -     -      
+div_                                     -     yes    
 divide                                   -     -      
 divide_                                  -     -      
 divmod                                   -     -      
@@ -1217,7 +1217,7 @@ mse_loss                                 -     -
 mse_loss_backward                        -     -      
 msort                                    -     -      
 mul                                      yes   yes    
-mul_                                     -     -      
+mul_                                     -     yes    
 multi_margin_loss                        -     -      
 multi_margin_loss_backward               -     -      
 multilabel_margin_loss                   -     -      
@@ -1584,7 +1584,7 @@ str                                      -     -
 stride                                   -     -      
 strip                                    -     -      
 sub                                      yes   yes    
-sub_                                     -     -      
+sub_                                     -     yes    
 subtract                                 -     -      
 subtract_                                -     -      
 sum                                      -     -      
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 4
-supported by codegen only: 2
+supported by codegen only: 6
 supported by both: 73
-unsupported by either: 1635
-supported by codegen: 75 / 1714 (4.4 %)
+unsupported by either: 1631
+supported by codegen: 79 / 1714 (4.6 %)
 supported by c-ref: 77 / 1714 (4.5 %)

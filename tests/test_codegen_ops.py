@@ -137,6 +137,7 @@ CODEGEN_OP_NAMES = {
     "acos",
     "acosh",
     "add",
+    "add_",
     "angle",
     "asin",
     "asinh",
@@ -155,6 +156,7 @@ CODEGEN_OP_NAMES = {
     "deg2rad",
     "digamma",
     "div",
+    "div_",
     "erf",
     "erfc",
     "erfinv",
@@ -182,6 +184,7 @@ CODEGEN_OP_NAMES = {
     "maximum",
     "minimum",
     "mul",
+    "mul_",
     "nan_to_num",
     "neg",
     "nextafter",
@@ -203,11 +206,24 @@ CODEGEN_OP_NAMES = {
     "sqrt",
     "square",
     "sub",
+    "sub_",
     "tan",
     "tanh",
     "transpose",
     "trunc",
     "xlogy",
+}
+CODEGEN_INPLACE_OPS = (
+    "add_",
+    "div_",
+    "mul_",
+    "sub_",
+)
+INPLACE_ATEN_TARGETS = {
+    "add_": torch.ops.aten.add_.Tensor,
+    "div_": torch.ops.aten.div_.Tensor,
+    "mul_": torch.ops.aten.mul_.Tensor,
+    "sub_": torch.ops.aten.sub_.Tensor,
 }
 CODEGEN_OPS_UNDER_TEST = [op for op in op_db if op.name in CODEGEN_OP_NAMES]
 CODEGEN_OP_TEST_CONFIG = {
@@ -253,6 +269,15 @@ def _compile_codegen_op(op):
     return torch.compile(compiled_fn, backend=codegen_generic_backend)
 
 
+def _compile_codegen_inplace_op(op_name):
+    target = INPLACE_ATEN_TARGETS[op_name]
+
+    def compiled_fn(lhs: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
+        return target(lhs, rhs)
+
+    return torch.compile(compiled_fn, backend=codegen_generic_backend)
+
+
 class TestCodegenOpInfo(TestCase):
     @ops(CODEGEN_OPS_UNDER_TEST)
     def test_codegen_backend_matches_eager(self, device, dtype, op):
@@ -265,6 +290,30 @@ class TestCodegenOpInfo(TestCase):
             inputs = (sample.input, *sample.args)
             result = compiled(*inputs)
             torch.testing.assert_close(result, op(*inputs))
+
+
+class TestCodegenInplaceOps(TestCase):
+    def test_codegen_backend_inplace_ops(self):
+        device = torch.device("cpu")
+        dtype = torch.float32
+        sample_shapes = (
+            ((2, 3), (2, 3)),
+        )
+
+        for op_name in CODEGEN_INPLACE_OPS:
+            compiled = _compile_codegen_inplace_op(op_name)
+            for lhs_shape, rhs_shape in sample_shapes:
+                lhs = torch.randn(lhs_shape, device=device, dtype=dtype)
+                rhs = torch.randn(rhs_shape, device=device, dtype=dtype)
+
+                expected = lhs.clone()
+                expected_result = getattr(expected, op_name)(rhs)
+
+                compiled_lhs = lhs.clone()
+                compiled_result = compiled(compiled_lhs, rhs)
+
+                torch.testing.assert_close(compiled_result, expected_result)
+                torch.testing.assert_close(compiled_lhs, expected)
 
 
 instantiate_device_type_tests(TestCodegenOpInfo, globals(), only_for="cpu")
