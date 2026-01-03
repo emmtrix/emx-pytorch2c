@@ -803,6 +803,22 @@ SUPPORTED_OPS = {
 }
 
 
+_TEMPLATE_ENV: Environment | None = None
+
+
+def _get_template_env() -> Environment:
+    global _TEMPLATE_ENV
+    if _TEMPLATE_ENV is None:
+        _TEMPLATE_ENV = Environment(
+            loader=FileSystemLoader(
+                resources.files("codegen_backend") / "templates"
+            ),
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
+    return _TEMPLATE_ENV
+
+
 TARGET_TO_OP: Dict[object, _OpSpec] = {
     target: spec
     for spec in SUPPORTED_OPS.values()
@@ -1162,14 +1178,7 @@ def _write_matmul_kernel(
     a_strides: Sequence[int],
     b_strides: Sequence[int],
 ) -> List[str]:
-    template_env = Environment(
-        loader=FileSystemLoader(
-            resources.files("codegen_backend") / "templates"
-        ),
-        trim_blocks=True,
-        lstrip_blocks=True,
-    )
-    matmul_template = template_env.get_template("matmul_kernel.c.j2")
+    matmul_template = _get_template_env().get_template("matmul_kernel.c.j2")
     a_is_contiguous = _is_contiguous(a_shape, a_strides)
     b_is_contiguous = _is_contiguous(b_shape, b_strides)
     def strided_access(
@@ -1237,25 +1246,23 @@ def _write_matmul_kernel(
 def _write_generic_source(graph: _GenericGraph) -> str:
     placeholders = graph.tensor_placeholders
     op_nodes = graph.op_nodes
-    lines = [
+    headers = [
         "#include <stdint.h>",
         "#include \"ops_scalar_f32.h\"",
-        "",
     ]
+    kernels: List[str] = []
     for index, op_node in enumerate(op_nodes, start=1):
         if op_node.spec.kind in {"binary", "unary"}:
             input_shapes = [graph.shapes[arg] for arg in op_node.inputs]
             input_strides = [graph.strides[arg] for arg in op_node.inputs]
             output_strides = graph.strides[op_node.node]
-            lines.extend(
-                _write_elementwise_kernel(
-                    index,
-                    op_node.spec,
-                    op_node.output_shape,
-                    input_shapes,
-                    input_strides,
-                    output_strides,
-                )
+            kernel_lines = _write_elementwise_kernel(
+                index,
+                op_node.spec,
+                op_node.output_shape,
+                input_shapes,
+                input_strides,
+                output_strides,
             )
         else:
             lhs, rhs = op_node.inputs
@@ -1263,12 +1270,10 @@ def _write_generic_source(graph: _GenericGraph) -> str:
             rhs_shape = graph.shapes[rhs]
             lhs_strides = graph.strides[lhs]
             rhs_strides = graph.strides[rhs]
-            lines.extend(
-                _write_matmul_kernel(
-                    index, op_node.spec, lhs_shape, rhs_shape, lhs_strides, rhs_strides
-                )
+            kernel_lines = _write_matmul_kernel(
+                index, op_node.spec, lhs_shape, rhs_shape, lhs_strides, rhs_strides
             )
-        lines.append("")
+        kernels.append("\n".join(kernel_lines))
     input_args = ", ".join(
         [
             f"const float input_{idx}{_format_array_suffix(graph.shapes[node])}"
@@ -1276,7 +1281,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
         ]
     )
     input_args = f"{input_args}, " if input_args else ""
-    lines.append(
+    signature = (
         "void ref_codegen_main_f32("
         f"{input_args}float out{_format_array_suffix(graph.shapes[graph.output_value])}) {{"
     )
@@ -1284,6 +1289,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
     for idx, placeholder in enumerate(placeholders):
         name_map[placeholder] = f"input_{idx}"
     temp_index = 0
+    temp_decls: List[str] = []
     for op_node in op_nodes:
         if op_node.node is graph.output_value:
             if op_node.inplace_input is not None:
@@ -1297,16 +1303,26 @@ def _write_generic_source(graph: _GenericGraph) -> str:
         temp_name = f"tmp_{temp_index}"
         temp_index += 1
         name_map[op_node.node] = temp_name
-        lines.append(
-            f"    float {temp_name}{_format_array_suffix(op_node.output_shape)};"
+        temp_decls.append(
+            f"float {temp_name}{_format_array_suffix(op_node.output_shape)};"
         )
+    call_lines: List[str] = []
     for index, op_node in enumerate(op_nodes, start=1):
         input_names = [name_map[arg] for arg in op_node.inputs]
         output_name = name_map[op_node.node]
         args = ", ".join([*input_names, output_name])
-        lines.append(f"    node{index}_{op_node.spec.name}_f32({args});")
-    lines.append("}")
-    return "\n".join(lines) + "\n"
+        call_lines.append(f"node{index}_{op_node.spec.name}_f32({args});")
+    template = _get_template_env().get_template("generic_source.c.j2")
+    return (
+        template.render(
+            headers=headers,
+            kernels=kernels,
+            signature=signature,
+            temp_decls=temp_decls,
+            call_lines=call_lines,
+        )
+        + "\n"
+    )
 
 
 def _validate_example_inputs(example_inputs: Sequence[torch.Tensor]) -> None:

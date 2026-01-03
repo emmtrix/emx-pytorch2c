@@ -1,0 +1,16 @@
+{% for header in headers %}
+{{ header }}
+{% endfor %}
+
+{% for kernel in kernels %}
+{{ kernel }}
+
+{% endfor %}
+{{ signature }}
+{% for decl in temp_decls %}
+    {{ decl }}
+{% endfor %}
+{% for call in call_lines %}
+    {{ call }}
+{% endfor %}
+}
