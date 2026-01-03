@@ -958,6 +958,7 @@ class _GenericGraph:
     output_inplace_input: torch.fx.Node | None
     output_structure: object
     shapes: Dict[torch.fx.Node, Tuple[int, ...]]
+    strides: Dict[torch.fx.Node, Tuple[int, ...]]
 
 
 @dataclass
@@ -965,6 +966,7 @@ class _GenericLibrary:
     so_path: Path
     lib: object
     input_shapes: Tuple[Tuple[int, ...], ...]
+    input_strides: Tuple[Tuple[int, ...], ...]
     output_shape: Tuple[int, ...]
 
     def run(self, inputs: Sequence[torch.Tensor], out: torch.Tensor) -> None:
@@ -1016,15 +1018,75 @@ def _broadcast_index_expr(
     return "".join(index_expr)
 
 
+def _contiguous_strides(shape: Sequence[int]) -> Tuple[int, ...]:
+    if not shape:
+        return ()
+    strides = [0] * len(shape)
+    stride = 1
+    for dim in range(len(shape) - 1, -1, -1):
+        strides[dim] = stride
+        stride *= max(shape[dim], 1)
+    return tuple(strides)
+
+
+def _is_contiguous(shape: Sequence[int], strides: Sequence[int]) -> bool:
+    expected = _contiguous_strides(shape)
+    return all(
+        size == 1 or stride == expected_stride
+        for size, stride, expected_stride in zip(shape, strides, expected)
+    )
+
+
+def _format_strided_access(
+    name: str,
+    input_shape: Sequence[int],
+    input_strides: Sequence[int],
+    output_shape: Sequence[int],
+) -> str:
+    output_rank = len(output_shape)
+    input_rank = len(input_shape)
+    if input_rank == 0:
+        return f"((float*){name})[0]"
+    offset = output_rank - input_rank
+    terms = []
+    for input_dim in range(input_rank):
+        output_dim = input_dim + offset
+        if input_shape[input_dim] == 1:
+            continue
+        stride = input_strides[input_dim]
+        terms.append(f"i{output_dim} * {stride}")
+    index_expr = " + ".join(terms) if terms else "0"
+    return f"((float*){name})[{index_expr}]"
+
+
+def _format_output_access(
+    name: str,
+    output_shape: Sequence[int],
+    output_strides: Sequence[int],
+) -> str:
+    if not output_shape:
+        return f"((float*){name})[0]"
+    terms = []
+    for dim, stride in enumerate(output_strides):
+        if output_shape[dim] == 1:
+            continue
+        terms.append(f"i{dim} * {stride}")
+    index_expr = " + ".join(terms) if terms else "0"
+    return f"((float*){name})[{index_expr}]"
+
+
 def _write_elementwise_kernel(
     node_index: int,
     op_spec: _OpSpec,
     output_shape: Sequence[int],
     input_shapes: Sequence[Sequence[int]],
+    input_strides: Sequence[Sequence[int]],
+    output_strides: Sequence[int],
 ) -> List[str]:
     out_suffix = _format_array_suffix(output_shape)
     if op_spec.kind == "binary":
         a_shape, b_shape = input_shapes
+        a_strides, b_strides = input_strides
         a_suffix = _format_array_suffix(a_shape)
         b_suffix = _format_array_suffix(b_shape)
         signature = (
@@ -1045,16 +1107,43 @@ def _write_elementwise_kernel(
                 f"{indent}for (int64_t i{dim} = 0; i{dim} < {size}; ++i{dim}) {{"
             )
             indent += "    "
-    index_expr = "".join(f"[i{dim}]" for dim in range(len(output_shape))) or "[0]"
+    output_is_contiguous = _is_contiguous(output_shape, output_strides)
+    if output_is_contiguous:
+        output_access = (
+            "".join(f"[i{dim}]" for dim in range(len(output_shape))) or "[0]"
+        )
+        output_access = f"out{output_access}"
+    else:
+        output_access = _format_output_access("out", output_shape, output_strides)
     scalar_fn = f"ref_scalar_f32_{op_spec.name}"
     if op_spec.kind == "binary":
-        a_index_expr = _broadcast_index_expr(a_shape, output_shape)
-        b_index_expr = _broadcast_index_expr(b_shape, output_shape)
+        a_is_contiguous = _is_contiguous(a_shape, a_strides)
+        b_is_contiguous = _is_contiguous(b_shape, b_strides)
+        if a_is_contiguous:
+            a_index_expr = f"a{_broadcast_index_expr(a_shape, output_shape)}"
+        else:
+            a_index_expr = _format_strided_access(
+                "a", a_shape, a_strides, output_shape
+            )
+        if b_is_contiguous:
+            b_index_expr = f"b{_broadcast_index_expr(b_shape, output_shape)}"
+        else:
+            b_index_expr = _format_strided_access(
+                "b", b_shape, b_strides, output_shape
+            )
         lines.append(
-            f"{indent}out{index_expr} = {scalar_fn}(a{a_index_expr}, b{b_index_expr});"
+            f"{indent}{output_access} = {scalar_fn}({a_index_expr}, {b_index_expr});"
         )
     else:
-        lines.append(f"{indent}out{index_expr} = {scalar_fn}(a{index_expr});")
+        a_shape = input_shapes[0]
+        a_strides = input_strides[0]
+        if _is_contiguous(a_shape, a_strides):
+            input_access = f"a{''.join(f'[i{dim}]' for dim in range(len(output_shape))) or '[0]'}"
+        else:
+            input_access = _format_strided_access(
+                "a", a_shape, a_strides, output_shape
+            )
+        lines.append(f"{indent}{output_access} = {scalar_fn}({input_access});")
     if output_shape:
         for _ in range(len(output_shape)):
             indent = indent[:-4]
@@ -1068,7 +1157,28 @@ def _write_matmul_kernel(
     op_spec: _OpSpec,
     a_shape: Sequence[int],
     b_shape: Sequence[int],
+    a_strides: Sequence[int],
+    b_strides: Sequence[int],
 ) -> List[str]:
+    a_is_contiguous = _is_contiguous(a_shape, a_strides)
+    b_is_contiguous = _is_contiguous(b_shape, b_strides)
+    def strided_access(
+        name: str,
+        indices: Sequence[str],
+        shape: Sequence[int],
+        strides: Sequence[int],
+        contig: bool,
+    ) -> str:
+        if contig:
+            return f"{name}{''.join(f'[{idx}]' for idx in indices)}"
+        terms = []
+        for idx_name, size, stride in zip(indices, shape, strides):
+            if size == 1:
+                continue
+            terms.append(f"{idx_name} * {stride}")
+        index_expr = " + ".join(terms) if terms else "0"
+        return f"((float*){name})[{index_expr}]"
+
     if op_spec.name == "matmul":
         m, k = a_shape
         _, n = b_shape
@@ -1081,7 +1191,7 @@ def _write_matmul_kernel(
             f"        for (int64_t j = 0; j < {n}; ++j) {{",
             "            float acc = 0.0f;",
             f"            for (int64_t t = 0; t < {k}; ++t) {{",
-            "                acc += a[i][t] * b[t][j];",
+            f"                acc += {strided_access('a', ('i', 't'), a_shape, a_strides, a_is_contiguous)} * {strided_access('b', ('t', 'j'), b_shape, b_strides, b_is_contiguous)};",
             "            }",
             "            out[i][j] = acc;",
             "        }",
@@ -1101,7 +1211,7 @@ def _write_matmul_kernel(
         f"            for (int64_t j = 0; j < {n}; ++j) {{",
         "                float acc = 0.0f;",
         f"                for (int64_t t = 0; t < {k}; ++t) {{",
-        "                    acc += a[b_idx][i][t] * b[b_idx][t][j];",
+        f"                    acc += {strided_access('a', ('b_idx', 'i', 't'), a_shape, a_strides, a_is_contiguous)} * {strided_access('b', ('b_idx', 't', 'j'), b_shape, b_strides, b_is_contiguous)};",
         "                }",
         "                out[b_idx][i][j] = acc;",
         "            }",
@@ -1123,17 +1233,28 @@ def _write_generic_source(graph: _GenericGraph) -> str:
     for index, op_node in enumerate(op_nodes, start=1):
         if op_node.spec.kind in {"binary", "unary"}:
             input_shapes = [graph.shapes[arg] for arg in op_node.inputs]
+            input_strides = [graph.strides[arg] for arg in op_node.inputs]
+            output_strides = graph.strides[op_node.node]
             lines.extend(
                 _write_elementwise_kernel(
-                    index, op_node.spec, op_node.output_shape, input_shapes
+                    index,
+                    op_node.spec,
+                    op_node.output_shape,
+                    input_shapes,
+                    input_strides,
+                    output_strides,
                 )
             )
         else:
             lhs, rhs = op_node.inputs
             lhs_shape = graph.shapes[lhs]
             rhs_shape = graph.shapes[rhs]
+            lhs_strides = graph.strides[lhs]
+            rhs_strides = graph.strides[rhs]
             lines.extend(
-                _write_matmul_kernel(index, op_node.spec, lhs_shape, rhs_shape)
+                _write_matmul_kernel(
+                    index, op_node.spec, lhs_shape, rhs_shape, lhs_strides, rhs_strides
+                )
             )
         lines.append("")
     input_args = ", ".join(
@@ -1232,6 +1353,7 @@ def _analyze_generic_graph(
     tensor_placeholders: List[torch.fx.Node] = []
     op_nodes: List[_OpNode] = []
     shapes: Dict[torch.fx.Node, Tuple[int, ...]] = {}
+    strides: Dict[torch.fx.Node, Tuple[int, ...]] = {}
     input_iter = iter(example_inputs)
 
     for node in gm.graph.nodes:
@@ -1245,6 +1367,7 @@ def _analyze_generic_graph(
             placeholders.append(node)
             if isinstance(example, torch.Tensor):
                 shapes[node] = tuple(example.shape)
+                strides[node] = tuple(example.stride())
                 tensor_placeholders.append(node)
             continue
         if node.op == "call_function":
@@ -1278,6 +1401,10 @@ def _analyze_generic_graph(
                 input_shapes.append(shapes[arg])
             output_shape = _infer_output_shape(op_spec, input_shapes)
             shapes[node] = output_shape
+            if inplace_input is not None:
+                strides[node] = strides[input_nodes[inplace_input]]
+            else:
+                strides[node] = _contiguous_strides(output_shape)
             op_nodes.append(
                 _OpNode(
                     node=node,
@@ -1331,6 +1458,7 @@ def _analyze_generic_graph(
         output_inplace_input=output_inplace_input,
         output_structure=output_structure,
         shapes=shapes,
+        strides=strides,
     )
 
 
@@ -1368,10 +1496,12 @@ def _compile_generic_library(graph: _GenericGraph) -> _GenericLibrary:
     lib.ref_codegen_main_f32.restype = None
 
     input_shapes = tuple(graph.shapes[node] for node in graph.tensor_placeholders)
+    input_strides = tuple(graph.strides[node] for node in graph.tensor_placeholders)
     compiled = _GenericLibrary(
         so_path=so_path,
         lib=lib,
         input_shapes=input_shapes,
+        input_strides=input_strides,
         output_shape=graph.shapes[graph.output_value],
     )
     _LIBRARY_CACHE[digest] = compiled
@@ -1418,12 +1548,18 @@ def _compile_graph(
                 input_tensors.append(value)
         _validate_runtime_inputs(input_tensors)
         expected_shapes = lib.input_shapes
+        expected_strides = lib.input_strides
         for tensor, expected in zip(input_tensors, expected_shapes):
             if tuple(tensor.shape) != expected:
                 raise RefBackendError(
                     f"codegen backend requires inputs to have shapes {expected_shapes}"
                 )
-        contiguous_inputs = [tensor.contiguous() for tensor in input_tensors]
+        for tensor, expected in zip(input_tensors, expected_strides):
+            if tuple(tensor.stride()) != expected:
+                raise RefBackendError(
+                    f"codegen backend requires inputs to have strides {expected_strides}"
+                )
+        contiguous_inputs = list(input_tensors)
         if output_inplace_input is not None:
             original_input = env[output_inplace_input]
             if not isinstance(original_input, torch.Tensor):

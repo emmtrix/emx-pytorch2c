@@ -31,6 +31,10 @@ def add_broadcast_fn(a, b):
     return a + b
 
 
+def add_strided_fn(a, b):
+    return a + b
+
+
 def sub_chain_fn(a, b, c):
     return (a - b) - c
 
@@ -109,6 +113,21 @@ def test_codegen_generic_handles_add_broadcast():
     compiled = torch.compile(add_broadcast_fn, backend=codegen_generic_backend)
     result = compiled(a, b)
     torch.testing.assert_close(result, add_broadcast_fn(a, b))
+
+
+def test_codegen_generic_handles_strided_inputs():
+    base = torch.randn(2, 3, dtype=torch.float32)
+    a = base.t()
+    b = torch.randn(2, 3, dtype=torch.float32).t()
+    source = get_generic_source(torch.fx.symbolic_trace(add_strided_fn), (a, b))
+    assert "((float*)a)" in source
+    assert "((float*)b)" in source
+    _assert_codegen_source_matches(
+        "add_strided.c", get_generic_source, add_strided_fn, (a, b)
+    )
+    compiled = torch.compile(add_strided_fn, backend=codegen_generic_backend)
+    result = compiled(a, b)
+    torch.testing.assert_close(result, add_strided_fn(a, b))
 
 
 def test_codegen_generic_handles_atan():

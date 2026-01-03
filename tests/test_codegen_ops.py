@@ -213,15 +213,13 @@ CODEGEN_OP_TEST_CONFIG = {
         "sample_filter": _broadcastable_sample_filter,
     },
     "matmul": {
-        "allow_noncontiguous": False,
+        "allow_noncontiguous": True,
         "requires_same_shape": False,
-        "requires_contiguous": True,
         "sample_filter": _matmul_sample_filter,
     },
     "bmm": {
-        "allow_noncontiguous": False,
+        "allow_noncontiguous": True,
         "requires_same_shape": False,
-        "requires_contiguous": True,
         "sample_filter": _bmm_sample_filter,
     },
 }
