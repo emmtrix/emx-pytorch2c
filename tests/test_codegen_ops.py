@@ -109,7 +109,9 @@ def _iter_supported_samples(op, device, dtype, constraints):
     for sample in op.sample_inputs(device, dtype):
         if sample.kwargs:
             continue
-        if any(not isinstance(arg, torch.Tensor) for arg in sample.args):
+        if not constraints["allow_non_tensor_args"] and any(
+            not isinstance(arg, torch.Tensor) for arg in sample.args
+        ):
             continue
         if not _sample_matches_constraints(sample, dtype, constraints):
             continue
@@ -203,6 +205,7 @@ CODEGEN_OP_NAMES = {
     "sub",
     "tan",
     "tanh",
+    "transpose",
     "trunc",
     "xlogy",
 }
@@ -222,10 +225,14 @@ CODEGEN_OP_TEST_CONFIG = {
         "requires_same_shape": False,
         "sample_filter": _bmm_sample_filter,
     },
+    "transpose": {
+        "allow_non_tensor_args": True,
+    },
 }
 DEFAULT_CONSTRAINTS = {
     "allowed_dtypes": (torch.float32,),
     "allow_noncontiguous": True,
+    "allow_non_tensor_args": False,
     "max_ndim": 8,
     "requires_same_shape": True,
     "requires_contiguous": False,
