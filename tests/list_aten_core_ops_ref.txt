@@ -1717,9 +1717,9 @@ zfill                                    -     -
 
 Summary
 total aten ops: 1714
-supported by cref only: 5
+supported by cref only: 7
 supported by codegen only: 6
 supported by both: 73
-unsupported by either: 1630
+unsupported by either: 1628
 supported by codegen: 79 / 1714 (4.6 %)
-supported by c-ref: 78 / 1714 (4.6 %)
+supported by c-ref: 80 / 1714 (4.7 %)
