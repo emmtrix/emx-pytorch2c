@@ -85,6 +85,7 @@ setup(
                 "csrc/ops_matmul.c",
                 "csrc/ops_conv2d.c",
                 "csrc/ops_broadcast_in_dim.c",
+                "csrc/ops_lstm.c",
                 "csrc/ops_unary.c",
                 "csrc/ops_utils.c",
                 "csrc/c_ref_backend_module.c",

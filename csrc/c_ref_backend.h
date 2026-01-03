@@ -116,13 +116,23 @@ typedef enum RefOpKind {
     REF_OP_CLAMP_MIN = 74,
     REF_OP_CLAMP_MAX = 75,
     REF_OP_SILU = 76,
-    REF_OP_CBRT = 77
+    REF_OP_CBRT = 77,
+    REF_OP_LSTM = 78
 } RefOpKind;
 
 typedef struct RefBroadcastInDimParams {
     int32_t n_dims;
     int32_t *broadcast_dimensions;
 } RefBroadcastInDimParams;
+
+typedef struct RefLstmParams {
+    int32_t has_biases;
+    int32_t num_layers;
+    int32_t train;
+    int32_t bidirectional;
+    int32_t batch_first;
+    float dropout;
+} RefLstmParams;
 
 REF_BACKEND_API int ref_run_op(
     int32_t op_kind,

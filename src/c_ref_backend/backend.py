@@ -1,5 +1,5 @@
 import operator
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Tuple
 
 import torch
 import torch.fx
@@ -43,6 +43,7 @@ from .cffi_bindings import (
     run_log10,
     run_log2,
     run_logaddexp,
+    run_lstm,
     run_matmul,
     run_maximum,
     run_minimum,
@@ -603,6 +604,63 @@ def _run_broadcast_in_dim(
     return out
 
 
+def _run_lstm(
+    input_tensor: torch.Tensor,
+    hx: Tuple[torch.Tensor, torch.Tensor],
+    params: Tuple[torch.Tensor, ...],
+    has_biases: bool,
+    num_layers: int,
+    dropout: float,
+    train: bool,
+    bidirectional: bool,
+    batch_first: bool,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if batch_first:
+        batch = input_tensor.shape[0]
+        seq_len = input_tensor.shape[1]
+    else:
+        seq_len = input_tensor.shape[0]
+        batch = input_tensor.shape[1]
+    hidden_size = params[1].shape[1]
+    if batch_first:
+        out_shape = (batch, seq_len, hidden_size)
+    else:
+        out_shape = (seq_len, batch, hidden_size)
+    out = torch.empty(
+        out_shape,
+        dtype=input_tensor.dtype,
+        device=input_tensor.device,
+        memory_format=torch.contiguous_format,
+    )
+    h_n = torch.empty(
+        (1, batch, hidden_size),
+        dtype=input_tensor.dtype,
+        device=input_tensor.device,
+        memory_format=torch.contiguous_format,
+    )
+    c_n = torch.empty(
+        (1, batch, hidden_size),
+        dtype=input_tensor.dtype,
+        device=input_tensor.device,
+        memory_format=torch.contiguous_format,
+    )
+    run_lstm(
+        input_tensor,
+        hx,
+        params,
+        has_biases,
+        num_layers,
+        dropout,
+        train,
+        bidirectional,
+        batch_first,
+        out,
+        h_n,
+        c_n,
+    )
+    return out, h_n, c_n
+
+
 def _run_expand(a: torch.Tensor, shape: List[int]) -> torch.Tensor:
     out_rank = len(shape)
     in_rank = a.ndim
@@ -617,6 +675,14 @@ def _run_expand(a: torch.Tensor, shape: List[int]) -> torch.Tensor:
             dim = a.shape[idx - leading]
         resolved_shape.append(int(dim))
     return a.expand(*resolved_shape)
+
+
+def _run_unbind(a: torch.Tensor, dim: int = 0) -> Tuple[torch.Tensor, ...]:
+    return torch.unbind(a, dim)
+
+
+def _run_getitem(value: object, index: object) -> object:
+    return value[index]
 
 
 def _compile_graph(
@@ -851,10 +917,14 @@ def _compile_graph(
         torch.square: ("square", _run_square),
         torch.ops.aten.square.default: ("square", _run_square),
         torch.ops.aten.square: ("square", _run_square),
+        torch.unbind: ("unbind", _run_unbind),
+        torch.ops.aten.unbind.int: ("unbind", _run_unbind),
+        operator.getitem: ("getitem", _run_getitem),
         torch.ops.aten.convolution.default: ("conv2d", _run_conv2d),
         torch.ops.aten.convolution: ("conv2d", _run_conv2d),
         torch.ops.aten.conv2d.default: ("conv2d", _run_conv2d),
         torch.ops.aten.conv2d: ("conv2d", _run_conv2d),
+        torch.ops.aten.lstm.input: ("lstm", _run_lstm),
         operator.matmul: ("matmul", _run_matmul),
         torch.matmul: ("matmul", _run_matmul),
         torch.ops.aten.mm.default: ("matmul", _run_matmul),
@@ -978,6 +1048,74 @@ def _compile_graph(
                     result = op_fn(
                         env[input_arg.name], list(shape), list(broadcast_dimensions)
                     )
+                elif op_name == "lstm":
+                    if node.kwargs:
+                        raise RefBackendError("lstm expects positional arguments only")
+                    if len(node.args) != 9:
+                        raise RefBackendError(
+                            "lstm expects input, hx, params, and lstm arguments"
+                        )
+                    (
+                        input_arg,
+                        hx,
+                        params,
+                        has_biases,
+                        num_layers,
+                        dropout,
+                        train,
+                        bidirectional,
+                        batch_first,
+                    ) = node.args
+                    if not isinstance(input_arg, torch.fx.Node):
+                        raise RefBackendError("lstm expects tensor input only")
+                    if not isinstance(hx, (list, tuple)) or len(hx) != 2:
+                        raise RefBackendError("lstm expects hx to be a tuple of (h0, c0)")
+                    if not isinstance(params, (list, tuple)):
+                        raise RefBackendError("lstm expects params to be a tuple of tensors")
+                    if any(isinstance(arg, torch.fx.Node) for arg in (has_biases, num_layers, dropout, train, bidirectional, batch_first)):
+                        raise RefBackendError("lstm expects constant lstm arguments")
+                    if any(not isinstance(item, torch.fx.Node) for item in hx):
+                        raise RefBackendError("lstm expects tensor hx values")
+                    if any(not isinstance(item, torch.fx.Node) for item in params):
+                        raise RefBackendError("lstm expects tensor params")
+                    hx_tensors = (env[hx[0].name], env[hx[1].name])
+                    param_tensors = tuple(env[item.name] for item in params)
+                    result = op_fn(
+                        env[input_arg.name],
+                        hx_tensors,
+                        param_tensors,
+                        bool(has_biases),
+                        int(num_layers),
+                        float(dropout),
+                        bool(train),
+                        bool(bidirectional),
+                        bool(batch_first),
+                    )
+                elif op_name == "unbind":
+                    if node.kwargs:
+                        raise RefBackendError("unbind expects positional arguments only")
+                    if len(node.args) not in (1, 2):
+                        raise RefBackendError("unbind expects tensor and optional dim")
+                    input_arg = node.args[0]
+                    dim = node.args[1] if len(node.args) == 2 else 0
+                    if not isinstance(input_arg, torch.fx.Node):
+                        raise RefBackendError("unbind expects tensor input only")
+                    if isinstance(dim, torch.fx.Node):
+                        raise RefBackendError("unbind expects constant dim")
+                    result = op_fn(env[input_arg.name], int(dim))
+                elif op_name == "getitem":
+                    if node.kwargs:
+                        raise RefBackendError("getitem expects positional arguments only")
+                    if len(node.args) != 2:
+                        raise RefBackendError("getitem expects value and index")
+                    value_arg, index = node.args
+                    if isinstance(index, torch.fx.Node):
+                        raise RefBackendError("getitem expects constant index")
+                    if isinstance(value_arg, torch.fx.Node):
+                        value = env[value_arg.name]
+                    else:
+                        value = value_arg
+                    result = op_fn(value, index)
                 elif op_name == "expand":
                     if node.kwargs:
                         raise RefBackendError("expand expects positional arguments only")

@@ -93,6 +93,7 @@ class RefOpKind:
     REF_OP_CLAMP_MAX = 75
     REF_OP_SILU = 76
     REF_OP_CBRT = 77
+    REF_OP_LSTM = 78
 
 
 class RefTensorView(ctypes.Structure):
@@ -131,6 +132,17 @@ class RefConv2dParams(ctypes.Structure):
         ("dilation_h", ctypes.c_int64),
         ("dilation_w", ctypes.c_int64),
         ("groups", ctypes.c_int64),
+    ]
+
+
+class RefLstmParams(ctypes.Structure):
+    _fields_ = [
+        ("has_biases", ctypes.c_int32),
+        ("num_layers", ctypes.c_int32),
+        ("train", ctypes.c_int32),
+        ("bidirectional", ctypes.c_int32),
+        ("batch_first", ctypes.c_int32),
+        ("dropout", ctypes.c_float),
     ]
 
 
@@ -734,3 +746,127 @@ def run_broadcast_in_dim(
     )
     _ = (buffers, dims, params)
     _get_library().run_op(RefOpKind.REF_OP_BROADCAST_IN_DIM, call)
+
+
+def run_lstm(
+    input_tensor: torch.Tensor,
+    hx: Tuple[torch.Tensor, torch.Tensor],
+    params: Tuple[torch.Tensor, ...],
+    has_biases: bool,
+    num_layers: int,
+    dropout: float,
+    train: bool,
+    bidirectional: bool,
+    batch_first: bool,
+    out: torch.Tensor,
+    h_n: torch.Tensor,
+    c_n: torch.Tensor,
+) -> None:
+    if (
+        input_tensor.dtype is not torch.float32
+        or h_n.dtype is not torch.float32
+        or c_n.dtype is not torch.float32
+        or out.dtype is not torch.float32
+    ):
+        raise RefBackendError("lstm supports only torch.float32 tensors")
+    if len(hx) != 2:
+        raise RefBackendError("lstm expects hx to be a tuple of (h0, c0)")
+    if len(params) != 4:
+        raise RefBackendError("lstm expects params to be (weight_ih, weight_hh, bias_ih, bias_hh)")
+    h0, c0 = hx
+    weight_ih, weight_hh, bias_ih, bias_hh = params
+    if (
+        h0.dtype is not torch.float32
+        or c0.dtype is not torch.float32
+        or weight_ih.dtype is not torch.float32
+        or weight_hh.dtype is not torch.float32
+        or bias_ih.dtype is not torch.float32
+        or bias_hh.dtype is not torch.float32
+    ):
+        raise RefBackendError("lstm supports only torch.float32 tensors")
+    if input_tensor.ndim != 3:
+        raise RefBackendError("lstm requires input to be 3D")
+    if h0.ndim != 3 or c0.ndim != 3:
+        raise RefBackendError("lstm requires h0 and c0 to be 3D")
+    if weight_ih.ndim != 2 or weight_hh.ndim != 2:
+        raise RefBackendError("lstm requires weight_ih and weight_hh to be 2D")
+    if bias_ih.ndim != 1 or bias_hh.ndim != 1:
+        raise RefBackendError("lstm requires bias_ih and bias_hh to be 1D")
+    if not has_biases:
+        raise RefBackendError("lstm supports only has_biases=True")
+    if num_layers != 1:
+        raise RefBackendError("lstm supports only num_layers=1")
+    if dropout != 0.0:
+        raise RefBackendError("lstm supports only dropout=0")
+    if train:
+        raise RefBackendError("lstm supports only train=False")
+    if bidirectional:
+        raise RefBackendError("lstm supports only bidirectional=False")
+
+    if batch_first:
+        batch = input_tensor.shape[0]
+        seq_len = input_tensor.shape[1]
+    else:
+        seq_len = input_tensor.shape[0]
+        batch = input_tensor.shape[1]
+    input_size = input_tensor.shape[2]
+    hidden_size = weight_hh.shape[1]
+    gate_size = 4 * hidden_size
+
+    if weight_ih.shape[0] != gate_size or weight_hh.shape[0] != gate_size:
+        raise RefBackendError(
+            "lstm requires weight_ih and weight_hh to have 4 * hidden_size rows"
+        )
+    if weight_ih.shape[1] != input_size:
+        raise RefBackendError("lstm requires input_size to match weight_ih")
+    if weight_hh.shape[1] != hidden_size:
+        raise RefBackendError("lstm requires hidden_size to match weight_hh")
+    if bias_ih.numel() != gate_size or bias_hh.numel() != gate_size:
+        raise RefBackendError(
+            "lstm requires bias_ih and bias_hh to have 4 * hidden_size elements"
+        )
+    if h0.shape != (1, batch, hidden_size) or c0.shape != (1, batch, hidden_size):
+        raise RefBackendError("lstm requires h0 and c0 shape (1, batch, hidden_size)")
+    if batch_first:
+        expected_out = (batch, seq_len, hidden_size)
+        if out.shape != expected_out:
+            raise RefBackendError(
+                "lstm requires output shape (batch, seq_len, hidden_size)"
+            )
+    else:
+        expected_out = (seq_len, batch, hidden_size)
+        if out.shape != expected_out:
+            raise RefBackendError(
+                "lstm requires output shape (seq_len, batch, hidden_size)"
+            )
+    if h_n.shape != (1, batch, hidden_size) or c_n.shape != (1, batch, hidden_size):
+        raise RefBackendError("lstm requires h_n and c_n shape (1, batch, hidden_size)")
+    if (
+        not input_tensor.is_contiguous()
+        or not h0.is_contiguous()
+        or not c0.is_contiguous()
+        or not weight_ih.is_contiguous()
+        or not weight_hh.is_contiguous()
+        or not bias_ih.is_contiguous()
+        or not bias_hh.is_contiguous()
+        or not out.is_contiguous()
+        or not h_n.is_contiguous()
+        or not c_n.is_contiguous()
+    ):
+        raise RefBackendError("lstm requires contiguous tensors")
+
+    params_struct = RefLstmParams(
+        has_biases=1,
+        num_layers=num_layers,
+        train=1 if train else 0,
+        bidirectional=1 if bidirectional else 0,
+        batch_first=1 if batch_first else 0,
+        dropout=dropout,
+    )
+    call, buffers = _build_call(
+        (input_tensor, h0, c0, weight_ih, weight_hh, bias_ih, bias_hh),
+        (out, h_n, c_n),
+        params=ctypes.cast(ctypes.pointer(params_struct), ctypes.c_void_p),
+    )
+    _ = (buffers, params_struct)
+    _get_library().run_op(RefOpKind.REF_OP_LSTM, call)

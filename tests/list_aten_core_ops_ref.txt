@@ -1135,7 +1135,7 @@ logit_backward                           -     -
 logspace                                 -     -      
 logsumexp                                -     -      
 lower                                    -     -      
-lstm                                     -     -      
+lstm                                     yes   -      
 lstm_cell                                -     -      
 lstm_mps_backward                        -     -      
 lstrip                                   -     -      
@@ -1654,7 +1654,7 @@ true_divide_                             -     -
 trunc                                    yes   yes    
 trunc_                                   -     -      
 type_as                                  -     -      
-unbind                                   -     -      
+unbind                                   yes   -      
 unbind_copy                              -     -      
 unflatten                                -     -      
 unflatten_dense_tensors                  -     -      
@@ -1717,9 +1717,9 @@ zfill                                    -     -
 
 Summary
 total aten ops: 1714
-supported by cref only: 4
+supported by cref only: 6
 supported by codegen only: 6
 supported by both: 74
-unsupported by either: 1630
+unsupported by either: 1628
 supported by codegen: 80 / 1714 (4.7 %)
-supported by c-ref: 78 / 1714 (4.6 %)
+supported by c-ref: 80 / 1714 (4.7 %)
