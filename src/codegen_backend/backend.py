@@ -1280,6 +1280,108 @@ def _format_output_access(
     return f"((float*){name})[{index_expr}]"
 
 
+def emit_signature(
+    node_index: int,
+    op_spec: _OpSpec,
+    output_shape: Sequence[int],
+    input_shapes: Sequence[Sequence[int]],
+) -> str:
+    out_suffix = _format_array_suffix(output_shape)
+    if op_spec.kind == "binary":
+        a_shape, b_shape = input_shapes
+        a_suffix = _format_array_suffix(a_shape)
+        b_suffix = _format_array_suffix(b_shape)
+        return (
+            f"void node{node_index}_{op_spec.name}_f32(const float a{a_suffix}, "
+            f"const float b{b_suffix}, float out{out_suffix}) {{"
+        )
+    a_suffix = _format_array_suffix(input_shapes[0])
+    return (
+        f"void node{node_index}_{op_spec.name}_f32(const float a{a_suffix}, "
+        f"float out{out_suffix}) {{"
+    )
+
+
+def emit_loops(output_shape: Sequence[int]) -> Tuple[List[str], str]:
+    lines: List[str] = []
+    indent = "    "
+    if output_shape:
+        for dim, size in enumerate(output_shape):
+            lines.append(
+                f"{indent}for (int64_t i{dim} = 0; i{dim} < {size}; ++i{dim}) {{"
+            )
+            indent += "    "
+    return lines, indent
+
+
+def emit_output_access(
+    output_shape: Sequence[int], output_strides: Sequence[int]
+) -> str:
+    output_is_contiguous = _is_contiguous(output_shape, output_strides)
+    if output_is_contiguous:
+        output_access = (
+            "".join(f"[i{dim}]" for dim in range(len(output_shape))) or "[0]"
+        )
+        return f"out{output_access}"
+    return _format_output_access("out", output_shape, output_strides)
+
+
+def emit_input_access(
+    name: str,
+    input_shape: Sequence[int],
+    input_strides: Sequence[int],
+    output_shape: Sequence[int],
+    *,
+    broadcast_contiguous: bool,
+) -> str:
+    if _is_contiguous(input_shape, input_strides):
+        if broadcast_contiguous:
+            return f"{name}{_broadcast_index_expr(input_shape, output_shape)}"
+        return (
+            f"{name}{''.join(f'[i{dim}]' for dim in range(len(output_shape))) or '[0]'}"
+        )
+    return _format_strided_access(name, input_shape, input_strides, output_shape)
+
+
+def emit_body(
+    op_spec: _OpSpec,
+    output_access: str,
+    input_shapes: Sequence[Sequence[int]],
+    input_strides: Sequence[Sequence[int]],
+    output_shape: Sequence[int],
+    indent: str,
+) -> List[str]:
+    scalar_fn = f"ref_scalar_f32_{op_spec.name}"
+    if op_spec.kind == "binary":
+        a_shape, b_shape = input_shapes
+        a_strides, b_strides = input_strides
+        a_index_expr = emit_input_access(
+            "a", a_shape, a_strides, output_shape, broadcast_contiguous=True
+        )
+        b_index_expr = emit_input_access(
+            "b", b_shape, b_strides, output_shape, broadcast_contiguous=True
+        )
+        return [
+            f"{indent}{output_access} = {scalar_fn}({a_index_expr}, {b_index_expr});"
+        ]
+    a_shape = input_shapes[0]
+    a_strides = input_strides[0]
+    input_access = emit_input_access(
+        "a", a_shape, a_strides, output_shape, broadcast_contiguous=False
+    )
+    return [f"{indent}{output_access} = {scalar_fn}({input_access});"]
+
+
+def emit_footer(output_shape: Sequence[int], indent: str) -> List[str]:
+    lines: List[str] = []
+    if output_shape:
+        for _ in range(len(output_shape)):
+            indent = indent[:-4]
+            lines.append(f"{indent}}}")
+    lines.append("}")
+    return lines
+
+
 def _write_elementwise_kernel(
     node_index: int,
     op_spec: _OpSpec,
@@ -1288,72 +1390,21 @@ def _write_elementwise_kernel(
     input_strides: Sequence[Sequence[int]],
     output_strides: Sequence[int],
 ) -> List[str]:
-    out_suffix = _format_array_suffix(output_shape)
-    if op_spec.kind == "binary":
-        a_shape, b_shape = input_shapes
-        a_strides, b_strides = input_strides
-        a_suffix = _format_array_suffix(a_shape)
-        b_suffix = _format_array_suffix(b_shape)
-        signature = (
-            f"void node{node_index}_{op_spec.name}_f32(const float a{a_suffix}, "
-            f"const float b{b_suffix}, float out{out_suffix}) {{"
+    lines = [emit_signature(node_index, op_spec, output_shape, input_shapes)]
+    loop_lines, indent = emit_loops(output_shape)
+    lines.extend(loop_lines)
+    output_access = emit_output_access(output_shape, output_strides)
+    lines.extend(
+        emit_body(
+            op_spec,
+            output_access,
+            input_shapes,
+            input_strides,
+            output_shape,
+            indent,
         )
-    else:
-        a_suffix = _format_array_suffix(input_shapes[0])
-        signature = (
-            f"void node{node_index}_{op_spec.name}_f32(const float a{a_suffix}, "
-            f"float out{out_suffix}) {{"
-        )
-    lines = [signature]
-    indent = "    "
-    if output_shape:
-        for dim, size in enumerate(output_shape):
-            lines.append(
-                f"{indent}for (int64_t i{dim} = 0; i{dim} < {size}; ++i{dim}) {{"
-            )
-            indent += "    "
-    output_is_contiguous = _is_contiguous(output_shape, output_strides)
-    if output_is_contiguous:
-        output_access = (
-            "".join(f"[i{dim}]" for dim in range(len(output_shape))) or "[0]"
-        )
-        output_access = f"out{output_access}"
-    else:
-        output_access = _format_output_access("out", output_shape, output_strides)
-    scalar_fn = f"ref_scalar_f32_{op_spec.name}"
-    if op_spec.kind == "binary":
-        a_is_contiguous = _is_contiguous(a_shape, a_strides)
-        b_is_contiguous = _is_contiguous(b_shape, b_strides)
-        if a_is_contiguous:
-            a_index_expr = f"a{_broadcast_index_expr(a_shape, output_shape)}"
-        else:
-            a_index_expr = _format_strided_access(
-                "a", a_shape, a_strides, output_shape
-            )
-        if b_is_contiguous:
-            b_index_expr = f"b{_broadcast_index_expr(b_shape, output_shape)}"
-        else:
-            b_index_expr = _format_strided_access(
-                "b", b_shape, b_strides, output_shape
-            )
-        lines.append(
-            f"{indent}{output_access} = {scalar_fn}({a_index_expr}, {b_index_expr});"
-        )
-    else:
-        a_shape = input_shapes[0]
-        a_strides = input_strides[0]
-        if _is_contiguous(a_shape, a_strides):
-            input_access = f"a{''.join(f'[i{dim}]' for dim in range(len(output_shape))) or '[0]'}"
-        else:
-            input_access = _format_strided_access(
-                "a", a_shape, a_strides, output_shape
-            )
-        lines.append(f"{indent}{output_access} = {scalar_fn}({input_access});")
-    if output_shape:
-        for _ in range(len(output_shape)):
-            indent = indent[:-4]
-            lines.append(f"{indent}}}")
-    lines.append("}")
+    )
+    lines.extend(emit_footer(output_shape, indent))
     return lines
 
 
