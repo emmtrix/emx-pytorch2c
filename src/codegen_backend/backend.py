@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Sequence, Tuple
 
 import torch
+from importlib import resources
+from jinja2 import Environment, FileSystemLoader
 import torch.fx
 from torch.fx.immutable_collections import immutable_list
 
@@ -1160,6 +1162,14 @@ def _write_matmul_kernel(
     a_strides: Sequence[int],
     b_strides: Sequence[int],
 ) -> List[str]:
+    template_env = Environment(
+        loader=FileSystemLoader(
+            resources.files("codegen_backend") / "templates"
+        ),
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
+    matmul_template = template_env.get_template("matmul_kernel.c.j2")
     a_is_contiguous = _is_contiguous(a_shape, a_strides)
     b_is_contiguous = _is_contiguous(b_shape, b_strides)
     def strided_access(
@@ -1185,41 +1195,43 @@ def _write_matmul_kernel(
         a_suffix = _format_array_suffix((m, k))
         b_suffix = _format_array_suffix((k, n))
         out_suffix = _format_array_suffix((m, n))
-        lines = [
-            f"void node{node_index}_{op_spec.name}_f32(const float a{a_suffix}, const float b{b_suffix}, float out{out_suffix}) {{",
-            f"    for (int64_t i = 0; i < {m}; ++i) {{",
-            f"        for (int64_t j = 0; j < {n}; ++j) {{",
-            "            float acc = 0.0f;",
-            f"            for (int64_t t = 0; t < {k}; ++t) {{",
-            f"                acc += {strided_access('a', ('i', 't'), a_shape, a_strides, a_is_contiguous)} * {strided_access('b', ('t', 'j'), b_shape, b_strides, b_is_contiguous)};",
-            "            }",
-            "            out[i][j] = acc;",
-            "        }",
-            "    }",
-            "}",
-        ]
-        return lines
+        rendered = matmul_template.render(
+            signature=(
+                f"void node{node_index}_{op_spec.name}_f32(const float a{a_suffix}, "
+                f"const float b{b_suffix}, float out{out_suffix}) {{"
+            ),
+            batch=None,
+            m=m,
+            n=n,
+            k=k,
+            a_access=strided_access("a", ("i", "t"), a_shape, a_strides, a_is_contiguous),
+            b_access=strided_access("b", ("t", "j"), b_shape, b_strides, b_is_contiguous),
+            out_access="out[i][j]",
+        )
+        return rendered.strip().splitlines()
     batch, m, k = a_shape
     _, _, n = b_shape
     a_suffix = _format_array_suffix((batch, m, k))
     b_suffix = _format_array_suffix((batch, k, n))
     out_suffix = _format_array_suffix((batch, m, n))
-    lines = [
-        f"void node{node_index}_{op_spec.name}_f32(const float a{a_suffix}, const float b{b_suffix}, float out{out_suffix}) {{",
-        f"    for (int64_t b_idx = 0; b_idx < {batch}; ++b_idx) {{",
-        f"        for (int64_t i = 0; i < {m}; ++i) {{",
-        f"            for (int64_t j = 0; j < {n}; ++j) {{",
-        "                float acc = 0.0f;",
-        f"                for (int64_t t = 0; t < {k}; ++t) {{",
-        f"                    acc += {strided_access('a', ('b_idx', 'i', 't'), a_shape, a_strides, a_is_contiguous)} * {strided_access('b', ('b_idx', 't', 'j'), b_shape, b_strides, b_is_contiguous)};",
-        "                }",
-        "                out[b_idx][i][j] = acc;",
-        "            }",
-        "        }",
-        "    }",
-        "}",
-    ]
-    return lines
+    rendered = matmul_template.render(
+        signature=(
+            f"void node{node_index}_{op_spec.name}_f32(const float a{a_suffix}, "
+            f"const float b{b_suffix}, float out{out_suffix}) {{"
+        ),
+        batch=batch,
+        m=m,
+        n=n,
+        k=k,
+        a_access=strided_access(
+            "a", ("b_idx", "i", "t"), a_shape, a_strides, a_is_contiguous
+        ),
+        b_access=strided_access(
+            "b", ("b_idx", "t", "j"), b_shape, b_strides, b_is_contiguous
+        ),
+        out_access="out[b_idx][i][j]",
+    )
+    return rendered.strip().splitlines()
 
 
 def _write_generic_source(graph: _GenericGraph) -> str:
