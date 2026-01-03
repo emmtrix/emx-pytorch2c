@@ -30,6 +30,15 @@ def _ops_from_backend_source(path: Path) -> Set[str]:
     return set(pattern.findall(path.read_text(encoding="utf-8")))
 
 
+def _op_names_from_overloads(overloads: Iterable[object]) -> Set[str]:
+    names: set[str] = set()
+    for overload in overloads:
+        schema_name = getattr(getattr(overload, "_schema", None), "name", "")
+        if schema_name.startswith("aten::"):
+            names.add(schema_name.split("::", 1)[1])
+    return names
+
+
 def _ops_from_codegen_tests(path: Path) -> Set[str]:
     if not path.exists():
         return set()
@@ -37,6 +46,11 @@ def _ops_from_codegen_tests(path: Path) -> Set[str]:
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
+    if hasattr(module, "CODEGEN_ATEN_OPS"):
+        ops = _op_names_from_overloads(module.CODEGEN_ATEN_OPS)
+        if hasattr(module, "INPLACE_ATEN_OPS"):
+            ops |= _op_names_from_overloads(module.INPLACE_ATEN_OPS)
+        return ops
     return set(getattr(module, "CODEGEN_OP_NAMES", []))
 
 
