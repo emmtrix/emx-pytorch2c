@@ -5,10 +5,8 @@ import pytest
 import torch
 from codegen_backend import codegen_generic_backend
 from codegen_backend.backend import (
-    SUPPORTED_OPS,
     _emit_strided_access,
     _format_strided_access,
-    _write_elementwise_kernel,
     get_generic_source,
 )
 REFERENCE_DIR = Path(__file__).resolve().parent / "codegen_refs"
@@ -178,44 +176,11 @@ def test_emit_strided_access_expressions():
 
 
 def test_elementwise_kernel_source_matches_expected():
-    unary_lines = _write_elementwise_kernel(
-        1,
-        SUPPORTED_OPS["atan"],
-        (2, 3),
-        [(2, 3)],
-        [(3, 1)],
-        (3, 1),
+    a = torch.randn(2, 3, dtype=torch.float32)
+    b = torch.randn(2, 3, dtype=torch.float32)
+    _assert_codegen_source_matches(
+        "atan_single.c", get_generic_source, atan_fn, (a,)
     )
-    expected_unary = "\n".join(
-        [
-            "void node1_atan_f32(const float a[2][3], float out[2][3]) {",
-            "    for (int64_t i0 = 0; i0 < 2; ++i0) {",
-            "        for (int64_t i1 = 0; i1 < 3; ++i1) {",
-            "            out[i0][i1] = ref_scalar_f32_atan(a[i0][i1]);",
-            "        }",
-            "    }",
-            "}",
-        ]
+    _assert_codegen_source_matches(
+        "add_single.c", get_generic_source, add_broadcast_fn, (a, b)
     )
-    assert "\n".join(unary_lines) == expected_unary
-
-    binary_lines = _write_elementwise_kernel(
-        2,
-        SUPPORTED_OPS["add"],
-        (2, 3),
-        [(2, 3), (2, 3)],
-        [(3, 1), (3, 1)],
-        (3, 1),
-    )
-    expected_binary = "\n".join(
-        [
-            "void node2_add_f32(const float a[2][3], const float b[2][3], float out[2][3]) {",
-            "    for (int64_t i0 = 0; i0 < 2; ++i0) {",
-            "        for (int64_t i1 = 0; i1 < 3; ++i1) {",
-            "            out[i0][i1] = ref_scalar_f32_add(a[i0][i1], b[i0][i1]);",
-            "        }",
-            "    }",
-            "}",
-        ]
-    )
-    assert "\n".join(binary_lines) == expected_binary
