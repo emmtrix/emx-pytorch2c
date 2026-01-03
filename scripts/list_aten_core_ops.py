@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
+import importlib.util
 import re
 import sys
 from pathlib import Path
@@ -17,13 +18,26 @@ def _aten_ops_from_schemas() -> Set[str]:
     for schema in torch._C._jit_get_all_schemas():
         if not schema.name.startswith("aten::"):
             continue
-        ops.add(schema.name.split("::", 1)[1])
+        op_name = schema.name.split("::", 1)[1]
+        if op_name.endswith("Implicit"):
+            continue
+        ops.add(op_name)
     return ops
 
 
 def _ops_from_backend_source(path: Path) -> Set[str]:
     pattern = re.compile(r"torch\.ops\.aten\.([A-Za-z0-9_]+)")
     return set(pattern.findall(path.read_text(encoding="utf-8")))
+
+
+def _ops_from_codegen_tests(path: Path) -> Set[str]:
+    if not path.exists():
+        return set()
+    spec = importlib.util.spec_from_file_location("test_codegen_ops", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return set(getattr(module, "CODEGEN_OP_NAMES", []))
 
 
 def _format_row(op_name: str, cref_supported: bool, codegen_supported: bool) -> str:
@@ -55,7 +69,9 @@ def _summarize_ops(
 def main() -> None:
     aten_ops = sorted(_aten_ops_from_schemas())
     cref_ops = _ops_from_backend_source(REPO_ROOT / "src/c_ref_backend/backend.py")
-    codegen_ops = _ops_from_backend_source(REPO_ROOT / "src/codegen_backend/backend.py")
+    codegen_ops = _ops_from_codegen_tests(
+        REPO_ROOT / "tests" / "test_codegen_ops.py"
+    )
 
     print(f"{'aten op':40} {'cref':5} {'codegen':7}")
     print("-" * 56)
