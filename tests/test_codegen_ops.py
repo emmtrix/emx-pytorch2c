@@ -132,118 +132,152 @@ def _iter_supported_samples(op, device, dtype, constraints):
                     yield updated
 
 
-CODEGEN_OP_NAMES = {
-    "abs",
-    "acos",
-    "acosh",
-    "add",
-    "add_",
-    "angle",
-    "asin",
-    "asinh",
-    "atan",
-    "atan2",
-    "atanh",
-    "bmm",
-    "cbrt",
-    "ceil",
-    "clamp_max",
-    "clamp_min",
-    "conj",
-    "conj_physical",
-    "copysign",
-    "cos",
-    "cosh",
-    "deg2rad",
-    "digamma",
-    "div",
-    "div_",
-    "erf",
-    "erfc",
-    "erfinv",
-    "exp",
-    "exp2",
-    "expm1",
-    "floor",
-    "floor_divide",
-    "fmax",
-    "fmin",
-    "fmod",
-    "frac",
-    "heaviside",
-    "hypot",
-    "i0",
-    "ldexp",
-    "lgamma",
-    "log",
-    "log10",
-    "log1p",
-    "log2",
-    "logaddexp",
-    "logit",
-    "matmul",
-    "maximum",
-    "minimum",
-    "mul",
-    "mul_",
-    "nan_to_num",
-    "neg",
-    "nextafter",
-    "positive",
-    "pow",
-    "rad2deg",
-    "real",
-    "reciprocal",
-    "relu",
-    "remainder",
-    "round",
-    "rsqrt",
-    "sgn",
-    "sigmoid",
-    "silu",
-    "sign",
-    "sin",
-    "sinc",
-    "sinh",
-    "sqrt",
-    "square",
-    "sub",
-    "sub_",
-    "tan",
-    "tanh",
-    "transpose",
-    "trunc",
-    "xlogy",
+CODEGEN_ATEN_OPS = [
+    torch.ops.aten.abs.default,
+    torch.ops.aten.acos.default,
+    torch.ops.aten.acosh.default,
+    torch.ops.aten.add.Tensor,
+    torch.ops.aten.angle.default,
+    torch.ops.aten.asin.default,
+    torch.ops.aten.asinh.default,
+    torch.ops.aten.atan.default,
+    torch.ops.aten.atan2.default,
+    torch.ops.aten.atanh.default,
+    torch.ops.aten.bmm.default,
+    torch.ops.aten.ceil.default,
+    torch.ops.aten.clamp_max.Tensor,
+    torch.ops.aten.clamp_min.Tensor,
+    torch.ops.aten.conj.default,
+    torch.ops.aten.conj_physical.default,
+    torch.ops.aten.copysign.Tensor,
+    torch.ops.aten.cos.default,
+    torch.ops.aten.cosh.default,
+    torch.ops.aten.deg2rad.default,
+    torch.ops.aten.digamma.default,
+    torch.ops.aten.div.Tensor,
+    torch.ops.aten.erf.default,
+    torch.ops.aten.erfc.default,
+    torch.ops.aten.erfinv.default,
+    torch.ops.aten.exp.default,
+    torch.ops.aten.exp2.default,
+    torch.ops.aten.expm1.default,
+    torch.ops.aten.floor.default,
+    torch.ops.aten.floor_divide.default,
+    torch.ops.aten.fmax.default,
+    torch.ops.aten.fmin.default,
+    torch.ops.aten.fmod.Tensor,
+    torch.ops.aten.frac.default,
+    torch.ops.aten.heaviside.default,
+    torch.ops.aten.hypot.default,
+    torch.ops.aten.i0.default,
+    torch.ops.aten.ldexp.Tensor,
+    torch.ops.aten.lgamma.default,
+    torch.ops.aten.log.default,
+    torch.ops.aten.log10.default,
+    torch.ops.aten.log1p.default,
+    torch.ops.aten.log2.default,
+    torch.ops.aten.logaddexp.default,
+    torch.ops.aten.logit.default,
+    torch.ops.aten.matmul.default,
+    torch.ops.aten.maximum.default,
+    torch.ops.aten.minimum.default,
+    torch.ops.aten.mul.Tensor,
+    torch.ops.aten.nan_to_num.default,
+    torch.ops.aten.neg.default,
+    torch.ops.aten.nextafter.default,
+    torch.ops.aten.positive.default,
+    torch.ops.aten.pow.Tensor_Tensor,
+    torch.ops.aten.rad2deg.default,
+    torch.ops.aten.real.default,
+    torch.ops.aten.reciprocal.default,
+    torch.ops.aten.relu.default,
+    torch.ops.aten.remainder.Tensor,
+    torch.ops.aten.round.default,
+    torch.ops.aten.rsqrt.default,
+    torch.ops.aten.sgn.default,
+    torch.ops.aten.sigmoid.default,
+    torch.ops.aten.sign.default,
+    torch.ops.aten.sin.default,
+    torch.ops.aten.sinc.default,
+    torch.ops.aten.sinh.default,
+    torch.ops.aten.sqrt.default,
+    torch.ops.aten.square.default,
+    torch.ops.aten.sub.Tensor,
+    torch.ops.aten.tan.default,
+    torch.ops.aten.tanh.default,
+    torch.ops.aten.transpose.int,
+    torch.ops.aten.trunc.default,
+    torch.ops.aten.xlogy.Tensor,
+]
+INPLACE_ATEN_OPS = [
+    torch.ops.aten.add_.Tensor,
+    torch.ops.aten.div_.Tensor,
+    torch.ops.aten.mul_.Tensor,
+    torch.ops.aten.sub_.Tensor,
+]
+
+
+def _lookup_opinfo(aten_name, variant_test_name):
+    matches = [
+        op
+        for op in op_db
+        if op.aten_name == aten_name and op.variant_test_name == variant_test_name
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"Expected exactly one OpInfo entry for {aten_name} "
+            f"variant '{variant_test_name}'; found {len(matches)}"
+        )
+    return matches[0]
+
+
+CODEGEN_OPINFO_OVERRIDES = {
+    torch.ops.aten.div.Tensor: _lookup_opinfo("div", "no_rounding_mode"),
+    torch.ops.aten.round.default: _lookup_opinfo("round", ""),
 }
-CODEGEN_INPLACE_OPS = (
-    "add_",
-    "div_",
-    "mul_",
-    "sub_",
-)
-INPLACE_ATEN_TARGETS = {
-    "add_": torch.ops.aten.add_.Tensor,
-    "div_": torch.ops.aten.div_.Tensor,
-    "mul_": torch.ops.aten.mul_.Tensor,
-    "sub_": torch.ops.aten.sub_.Tensor,
-}
-CODEGEN_OPS_UNDER_TEST = [op for op in op_db if op.name in CODEGEN_OP_NAMES]
+
+
+def _find_opinfo_for_overload(aten_overload):
+    if aten_overload in CODEGEN_OPINFO_OVERRIDES:
+        return CODEGEN_OPINFO_OVERRIDES[aten_overload]
+    base_name = aten_overload._schema.name.split("::")[-1]
+    packet = getattr(torch.ops.aten, base_name, None)
+    if packet is None or aten_overload.overloadpacket is not packet:
+        raise RuntimeError(
+            f"Unsupported overload packet for {aten_overload}: expected aten.{base_name}"
+        )
+    candidates = [op for op in op_db if op.aten_name == base_name]
+    if not candidates:
+        candidates = [op for op in op_db if op.name == base_name]
+    if len(candidates) != 1:
+        raise RuntimeError(
+            f"Expected exactly one OpInfo entry for {aten_overload}; "
+            f"found {len(candidates)}"
+        )
+    return candidates[0]
+
+
+CODEGEN_OPS_UNDER_TEST = [
+    (aten_overload, _find_opinfo_for_overload(aten_overload))
+    for aten_overload in CODEGEN_ATEN_OPS
+]
+CODEGEN_OPINFO_LIST = [opinfo for _, opinfo in CODEGEN_OPS_UNDER_TEST]
 CODEGEN_OP_TEST_CONFIG = {
-    "add": {
+    torch.ops.aten.add.Tensor: {
         "requires_same_shape": False,
         "sample_filter": _broadcastable_sample_filter,
     },
-    "matmul": {
+    torch.ops.aten.matmul.default: {
         "allow_noncontiguous": True,
         "requires_same_shape": False,
         "sample_filter": _matmul_sample_filter,
     },
-    "bmm": {
+    torch.ops.aten.bmm.default: {
         "allow_noncontiguous": True,
         "requires_same_shape": False,
         "sample_filter": _bmm_sample_filter,
     },
-    "transpose": {
+    torch.ops.aten.transpose.int: {
         "allow_non_tensor_args": True,
     },
 }
@@ -258,40 +292,48 @@ DEFAULT_CONSTRAINTS = {
 }
 
 
-def _constraints_for_codegen(op):
+def _constraints_for_codegen(aten_overload):
     constraints = DEFAULT_CONSTRAINTS.copy()
-    constraints.update(CODEGEN_OP_TEST_CONFIG.get(op.name, {}))
+    constraints.update(CODEGEN_OP_TEST_CONFIG.get(aten_overload, {}))
     return constraints
 
 
-def _compile_codegen_op(op):
+def _compile_codegen_op(aten_overload):
     def compiled_fn(*args: torch.Tensor) -> torch.Tensor:
-        return op(*args)
+        return aten_overload(*args)
 
     return torch.compile(compiled_fn, backend=codegen_generic_backend)
 
 
-def _compile_codegen_inplace_op(op_name):
-    target = INPLACE_ATEN_TARGETS[op_name]
-
+def _compile_codegen_inplace_op(aten_overload):
     def compiled_fn(lhs: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
-        return target(lhs, rhs)
+        return aten_overload(lhs, rhs)
 
     return torch.compile(compiled_fn, backend=codegen_generic_backend)
 
 
 class TestCodegenOpInfo(TestCase):
-    @ops(CODEGEN_OPS_UNDER_TEST)
+    @ops(CODEGEN_OPINFO_LIST)
     def test_codegen_backend_matches_eager(self, device, dtype, op):
-        constraints = _constraints_for_codegen(op)
+        aten_overload = next(
+            (
+                overload
+                for overload, opinfo in CODEGEN_OPS_UNDER_TEST
+                if opinfo is op
+            ),
+            None,
+        )
+        if aten_overload is None:
+            raise RuntimeError(f"Missing overload mapping for OpInfo {op.name}")
+        constraints = _constraints_for_codegen(aten_overload)
         allowed_dtypes = constraints["allowed_dtypes"]
         if allowed_dtypes is not None and dtype not in allowed_dtypes:
             pytest.skip("dtype not supported by test constraints")
-        compiled = _compile_codegen_op(op)
+        compiled = _compile_codegen_op(aten_overload)
         for sample in _iter_supported_samples(op, device, dtype, constraints):
             inputs = (sample.input, *sample.args)
             result = compiled(*inputs)
-            torch.testing.assert_close(result, op(*inputs))
+            torch.testing.assert_close(result, aten_overload(*inputs))
 
 
 class TestCodegenInplaceOps(TestCase):
@@ -302,14 +344,14 @@ class TestCodegenInplaceOps(TestCase):
             ((2, 3), (2, 3)),
         )
 
-        for op_name in CODEGEN_INPLACE_OPS:
-            compiled = _compile_codegen_inplace_op(op_name)
+        for aten_overload in INPLACE_ATEN_OPS:
+            compiled = _compile_codegen_inplace_op(aten_overload)
             for lhs_shape, rhs_shape in sample_shapes:
                 lhs = torch.randn(lhs_shape, device=device, dtype=dtype)
                 rhs = torch.randn(rhs_shape, device=device, dtype=dtype)
 
                 expected = lhs.clone()
-                expected_result = getattr(expected, op_name)(rhs)
+                expected_result = aten_overload(expected, rhs)
 
                 compiled_lhs = lhs.clone()
                 compiled_result = compiled(compiled_lhs, rhs)
