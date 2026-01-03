@@ -499,13 +499,13 @@ _weight_norm_interface_backward          -     -
 _wrapped_linear_prepack                  -     -      
 _wrapped_quantized_linear_prepacked      -     -      
 abs                                      yes   yes    
-abs_                                     -     -      
+abs_                                     -     yes    
 absolute                                 -     -      
 absolute_                                -     -      
 acos                                     yes   yes    
-acos_                                    -     -      
+acos_                                    -     yes    
 acosh                                    yes   yes    
-acosh_                                   -     -      
+acosh_                                   -     yes    
 adaptive_avg_pool1d                      -     -      
 adaptive_avg_pool2d                      -     -      
 adaptive_avg_pool3d                      -     -      
@@ -572,15 +572,15 @@ as_strided_copy                          -     -
 as_strided_scatter                       -     -      
 as_tensor                                -     -      
 asin                                     yes   yes    
-asin_                                    -     -      
+asin_                                    -     yes    
 asinh                                    yes   yes    
-asinh_                                   -     -      
+asinh_                                   -     yes    
 atan                                     yes   yes    
 atan2                                    yes   yes    
-atan2_                                   -     -      
-atan_                                    -     -      
+atan2_                                   -     yes    
+atan_                                    -     yes    
 atanh                                    yes   yes    
-atanh_                                   -     -      
+atanh_                                   -     yes    
 atleast_1d                               -     -      
 atleast_2d                               -     -      
 atleast_3d                               -     -      
@@ -639,7 +639,7 @@ ccol_indices                             -     -
 ccol_indices_copy                        -     -      
 cdist                                    -     -      
 ceil                                     yes   yes    
-ceil_                                    -     -      
+ceil_                                    -     yes    
 celu                                     -     -      
 celu_                                    -     -      
 center                                   -     -      
@@ -655,9 +655,9 @@ chunk                                    -     -
 clamp                                    -     -      
 clamp_                                   -     -      
 clamp_max                                yes   yes    
-clamp_max_                               -     -      
+clamp_max_                               -     yes    
 clamp_min                                yes   yes    
-clamp_min_                               -     -      
+clamp_min_                               -     yes    
 clear                                    -     -      
 clip                                     -     -      
 clip_                                    -     -      
@@ -674,7 +674,7 @@ concatenate                              -     -
 confirmed_by_owner                       -     -      
 conj                                     yes   yes    
 conj_physical                            yes   yes    
-conj_physical_                           -     -      
+conj_physical_                           -     yes    
 constant_pad_nd                          -     -      
 contiguous                               -     -      
 conv1d                                   -     -      
@@ -695,12 +695,12 @@ copy_                                    -     -
 copy_sparse_to_sparse                    -     -      
 copy_sparse_to_sparse_                   -     -      
 copysign                                 yes   yes    
-copysign_                                -     -      
+copysign_                                -     yes    
 corrcoef                                 -     -      
 cos                                      yes   yes    
-cos_                                     -     -      
+cos_                                     -     yes    
 cosh                                     yes   yes    
-cosh_                                    -     -      
+cosh_                                    -     yes    
 cosine_embedding_loss                    -     -      
 cosine_similarity                        -     -      
 count                                    -     -      
@@ -735,7 +735,7 @@ cumsum_                                  -     -
 cumulative_trapezoid                     -     -      
 data                                     -     -      
 deg2rad                                  yes   yes    
-deg2rad_                                 -     -      
+deg2rad_                                 -     yes    
 degrees                                  -     -      
 dense_dim                                -     -      
 dequantize                               -     -      
@@ -754,7 +754,7 @@ diagonal_scatter                         -     -
 dict                                     -     -      
 diff                                     -     -      
 digamma                                  yes   yes    
-digamma_                                 -     -      
+digamma_                                 -     yes    
 dim                                      -     -      
 dist                                     -     -      
 dist_backward                            -     -      
@@ -790,21 +790,21 @@ eq                                       -     -
 eq_                                      -     -      
 equal                                    -     -      
 erf                                      yes   yes    
-erf_                                     -     -      
+erf_                                     -     yes    
 erfc                                     yes   yes    
-erfc_                                    -     -      
+erfc_                                    -     yes    
 erfinv                                   yes   yes    
-erfinv_                                  -     -      
+erfinv_                                  -     yes    
 exp                                      yes   yes    
 exp2                                     yes   yes    
-exp2_                                    -     -      
-exp_                                     -     -      
+exp2_                                    -     yes    
+exp_                                     -     yes    
 expand                                   yes   -      
 expand_as                                -     -      
 expand_copy                              -     -      
 expandtabs                               -     -      
 expm1                                    yes   yes    
-expm1_                                   -     -      
+expm1_                                   -     yes    
 exponential                              -     -      
 exponential_                             -     -      
 extend                                   -     -      
@@ -864,17 +864,17 @@ flipud                                   -     -
 float_power                              -     -      
 float_power_                             -     -      
 floor                                    yes   yes    
-floor_                                   -     -      
+floor_                                   -     yes    
 floor_divide                             yes   yes    
-floor_divide_                            -     -      
+floor_divide_                            -     yes    
 floordiv                                 -     -      
 fmax                                     yes   yes    
 fmin                                     yes   yes    
 fmod                                     yes   yes    
-fmod_                                    -     -      
+fmod_                                    -     yes    
 format                                   -     -      
 frac                                     yes   yes    
-frac_                                    -     -      
+frac_                                    -     yes    
 fractional_max_pool2d                    -     -      
 fractional_max_pool2d_backward           -     -      
 fractional_max_pool3d                    -     -      
@@ -940,7 +940,7 @@ has_torch_function                       -     -
 hash                                     -     -      
 hash_tensor                              -     -      
 heaviside                                yes   yes    
-heaviside_                               -     -      
+heaviside_                               -     yes    
 hex                                      -     -      
 hinge_embedding_loss                     -     -      
 histc                                    -     -      
@@ -952,9 +952,9 @@ hstack                                   -     -
 huber_loss                               -     -      
 huber_loss_backward                      -     -      
 hypot                                    yes   yes    
-hypot_                                   -     -      
+hypot_                                   -     yes    
 i0                                       yes   yes    
-i0_                                      -     -      
+i0_                                      -     yes    
 igamma                                   -     -      
 igamma_                                  -     -      
 igammac                                  -     -      
@@ -1038,7 +1038,7 @@ layer_norm                               -     -
 lcm                                      -     -      
 lcm_                                     -     -      
 ldexp                                    yes   yes    
-ldexp_                                   -     -      
+ldexp_                                   -     yes    
 le                                       -     -      
 le_                                      -     -      
 leaky_relu                               -     -      
@@ -1052,7 +1052,7 @@ less_                                    -     -
 less_equal                               -     -      
 less_equal_                              -     -      
 lgamma                                   yes   yes    
-lgamma_                                  -     -      
+lgamma_                                  -     yes    
 lift                                     -     -      
 lift_fresh                               -     -      
 lift_fresh_copy                          -     -      
@@ -1105,12 +1105,12 @@ ljust                                    -     -
 local_value                              -     -      
 log                                      yes   yes    
 log10                                    yes   yes    
-log10_                                   -     -      
+log10_                                   -     yes    
 log1p                                    yes   yes    
-log1p_                                   -     -      
+log1p_                                   -     yes    
 log2                                     yes   yes    
-log2_                                    -     -      
-log_                                     -     -      
+log2_                                    -     yes    
+log_                                     -     yes    
 log_normal                               -     -      
 log_normal_                              -     -      
 log_sigmoid                              -     -      
@@ -1130,7 +1130,7 @@ logical_or_                              -     -
 logical_xor                              -     -      
 logical_xor_                             -     -      
 logit                                    yes   yes    
-logit_                                   -     -      
+logit_                                   -     yes    
 logit_backward                           -     -      
 logspace                                 -     -      
 logsumexp                                -     -      
@@ -1230,7 +1230,7 @@ mv                                       -     -
 mvlgamma                                 -     -      
 mvlgamma_                                -     -      
 nan_to_num                               yes   yes    
-nan_to_num_                              -     -      
+nan_to_num_                              -     yes    
 nanmean                                  -     -      
 nanmedian                                -     -      
 nanquantile                              -     -      
@@ -1250,7 +1250,7 @@ native_norm                              -     -
 ne                                       -     -      
 ne_                                      -     -      
 neg                                      yes   yes    
-neg_                                     -     -      
+neg_                                     -     yes    
 negative                                 -     -      
 negative_                                -     -      
 nested_to_padded_tensor                  -     -      
@@ -1260,7 +1260,7 @@ new_full                                 -     -
 new_ones                                 -     -      
 new_zeros                                -     -      
 nextafter                                yes   yes    
-nextafter_                               -     -      
+nextafter_                               -     yes    
 nll_loss                                 -     -      
 nll_loss2d                               -     -      
 nll_loss2d_backward                      -     -      
@@ -1313,7 +1313,7 @@ pop                                      -     -
 popitem                                  -     -      
 positive                                 yes   yes    
 pow                                      yes   yes    
-pow_                                     -     -      
+pow_                                     -     yes    
 prelu                                    -     -      
 prod                                     -     -      
 promote_types                            -     -      
@@ -1341,7 +1341,7 @@ quantized_max_pool3d                     -     -
 quantized_rnn_relu_cell                  -     -      
 quantized_rnn_tanh_cell                  -     -      
 rad2deg                                  yes   yes    
-rad2deg_                                 -     -      
+rad2deg_                                 -     yes    
 radians                                  -     -      
 rand                                     -     -      
 rand_like                                -     -      
@@ -1356,7 +1356,7 @@ range                                    -     -
 ravel                                    -     -      
 real                                     yes   yes    
 reciprocal                               yes   yes    
-reciprocal_                              -     -      
+reciprocal_                              -     yes    
 record_stream                            -     -      
 refine_names                             -     -      
 reflection_pad1d                         -     -      
@@ -1368,9 +1368,9 @@ reflection_pad3d_backward                -     -
 relu                                     yes   yes    
 relu6                                    -     -      
 relu6_                                   -     -      
-relu_                                    -     -      
+relu_                                    -     yes    
 remainder                                yes   yes    
-remainder_                               -     -      
+remainder_                               -     yes    
 remove                                   -     -      
 rename                                   -     -      
 rename_                                  -     -      
@@ -1411,7 +1411,7 @@ rnn_tanh_cell                            -     -
 roll                                     -     -      
 rot90                                    -     -      
 round                                    yes   yes    
-round_                                   -     -      
+round_                                   -     yes    
 row_indices                              -     -      
 row_indices_copy                         -     -      
 row_stack                                -     -      
@@ -1424,7 +1424,7 @@ rrelu_with_noise_backward                -     -
 rrelu_with_noise_functional              -     -      
 rsplit                                   -     -      
 rsqrt                                    yes   yes    
-rsqrt_                                   -     -      
+rsqrt_                                   -     yes    
 rstrip                                   -     -      
 rsub                                     -     -      
 save                                     -     -      
@@ -1451,22 +1451,22 @@ set_data                                 -     -
 set_grad_enabled                         -     -      
 setdefault                               -     -      
 sgn                                      yes   yes    
-sgn_                                     -     -      
+sgn_                                     -     yes    
 sigmoid                                  yes   yes    
-sigmoid_                                 -     -      
+sigmoid_                                 -     yes    
 sigmoid_backward                         -     -      
 sign                                     yes   yes    
-sign_                                    -     -      
+sign_                                    -     yes    
 signbit                                  -     -      
 silu                                     yes   -      
-silu_                                    -     -      
+silu_                                    -     yes    
 silu_backward                            -     -      
 sin                                      yes   yes    
-sin_                                     -     -      
+sin_                                     -     yes    
 sinc                                     yes   yes    
-sinc_                                    -     -      
+sinc_                                    -     yes    
 sinh                                     yes   yes    
-sinh_                                    -     -      
+sinh_                                    -     yes    
 size                                     -     -      
 slice                                    -     -      
 slice_backward                           -     -      
@@ -1567,9 +1567,9 @@ split_with_sizes                         -     -
 split_with_sizes_copy                    -     -      
 splitlines                               -     -      
 sqrt                                     yes   yes    
-sqrt_                                    -     -      
+sqrt_                                    -     yes    
 square                                   yes   yes    
-square_                                  -     -      
+square_                                  -     yes    
 squeeze                                  -     -      
 squeeze_                                 -     -      
 squeeze_copy                             -     -      
@@ -1608,9 +1608,9 @@ t_copy                                   -     -
 take                                     -     -      
 take_along_dim                           -     -      
 tan                                      yes   yes    
-tan_                                     -     -      
+tan_                                     -     yes    
 tanh                                     yes   yes    
-tanh_                                    -     -      
+tanh_                                    -     yes    
 tanh_backward                            -     -      
 tensor                                   -     -      
 tensor_split                             -     -      
@@ -1652,7 +1652,7 @@ triu_indices                             -     -
 true_divide                              -     -      
 true_divide_                             -     -      
 trunc                                    yes   yes    
-trunc_                                   -     -      
+trunc_                                   -     yes    
 type_as                                  -     -      
 unbind                                   yes   -      
 unbind_copy                              -     -      
@@ -1708,7 +1708,7 @@ wait                                     -     -
 warn                                     -     -      
 where                                    -     -      
 xlogy                                    yes   yes    
-xlogy_                                   -     -      
+xlogy_                                   -     yes    
 zero                                     -     -      
 zero_                                    -     -      
 zeros                                    -     -      
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 7
-supported by codegen only: 7
+supported by codegen only: 67
 supported by both: 73
-unsupported by either: 1627
-supported by codegen: 80 / 1714 (4.7 %)
+unsupported by either: 1567
+supported by codegen: 140 / 1714 (8.2 %)
 supported by c-ref: 80 / 1714 (4.7 %)
