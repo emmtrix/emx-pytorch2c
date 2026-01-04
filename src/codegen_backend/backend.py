@@ -1122,6 +1122,16 @@ SUPPORTED_OPS = {
             torch.ops.aten.mean,
         },
     ),
+    "std": _OpSpec(
+        name="std",
+        kind="reduction",
+        symbol=None,
+        supported_targets={
+            torch.std,
+            torch.ops.aten.std.default,
+            torch.ops.aten.std,
+        },
+    ),
     "any": _OpSpec(
         name="any",
         kind="reduction",
@@ -1215,6 +1225,7 @@ class _OpNode:
     inplace_input: int | None = None
     reduction_dims: Tuple[int, ...] | None = None
     keepdim: bool = False
+    std_unbiased: bool | None = None
 
 
 @dataclass
@@ -1690,6 +1701,83 @@ _REDUCTION_CONFIG = {
 }
 
 
+def _write_std_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    input_shape: Sequence[int],
+    input_strides: Sequence[int],
+    output_shape: Sequence[int],
+    output_strides: Sequence[int],
+    reduction_dims: Tuple[int, ...],
+    keepdim: bool,
+    dtype: _CodegenDType,
+    *,
+    unbiased: bool,
+) -> List[str]:
+    std_template = _get_template_env().get_template("std_kernel.c.j2")
+    a_is_contiguous = _is_contiguous(input_shape, input_strides)
+    input_rank = len(input_shape)
+    output_rank = len(output_shape)
+    reduction_set = set(reduction_dims)
+    signature = (
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"const {dtype.c_type} a{_format_array_suffix(input_shape)}, "
+        f"{dtype.c_type} out{_format_array_suffix(output_shape)}) {{"
+    )
+    output_access = emit_output_access(
+        output_shape, output_strides, c_type=dtype.c_type
+    )
+    if input_rank == 0:
+        input_access = "a[0]"
+    else:
+        if keepdim:
+            input_indices = [
+                f"r{dim}" if dim in reduction_set else f"i{dim}"
+                for dim in range(input_rank)
+            ]
+        else:
+            dim_to_output: Dict[int, int] = {}
+            output_idx = 0
+            for dim in range(input_rank):
+                if dim in reduction_set:
+                    continue
+                dim_to_output[dim] = output_idx
+                output_idx += 1
+            input_indices = [
+                f"r{dim}" if dim in reduction_set else f"i{dim_to_output[dim]}"
+                for dim in range(input_rank)
+            ]
+        input_access = _emit_strided_access(
+            "a",
+            input_indices,
+            input_strides,
+            contig=a_is_contiguous,
+            sizes=input_shape,
+            c_type=dtype.c_type,
+        )
+    reduction_count = 1
+    for dim in reduction_dims:
+        reduction_count *= input_shape[dim]
+    rendered = std_template.render(
+        signature=signature,
+        input_rank=input_rank,
+        output_rank=output_rank,
+        output_dims=[
+            {"dim": dim, "size": size} for dim, size in enumerate(output_shape)
+        ],
+        reduction_dims=[
+            {"dim": dim, "size": input_shape[dim]} for dim in reduction_dims
+        ],
+        input_access=input_access,
+        output_access=output_access,
+        acc_type=dtype.c_type,
+        reduction_count=reduction_count,
+        unbiased=int(unbiased),
+        sqrt_fn=f"{dtype.scalar_prefix}sqrt",
+    )
+    return rendered.strip().splitlines()
+
+
 def _write_reduction_kernel(
     node_index: int,
     op_spec: _OpSpec,
@@ -1805,17 +1893,31 @@ def _write_generic_source(graph: _GenericGraph) -> str:
             )
         elif op_node.spec.kind == "reduction":
             input_node = op_node.inputs[0]
-            kernel_lines = _write_reduction_kernel(
-                index,
-                op_node.spec,
-                graph.shapes[input_node],
-                graph.strides[input_node],
-                op_node.output_shape,
-                graph.strides[op_node.node],
-                op_node.reduction_dims or (),
-                op_node.keepdim,
-                graph.dtype,
-            )
+            if op_node.spec.name == "std":
+                kernel_lines = _write_std_kernel(
+                    index,
+                    op_node.spec,
+                    graph.shapes[input_node],
+                    graph.strides[input_node],
+                    op_node.output_shape,
+                    graph.strides[op_node.node],
+                    op_node.reduction_dims or (),
+                    op_node.keepdim,
+                    graph.dtype,
+                    unbiased=bool(op_node.std_unbiased),
+                )
+            else:
+                kernel_lines = _write_reduction_kernel(
+                    index,
+                    op_node.spec,
+                    graph.shapes[input_node],
+                    graph.strides[input_node],
+                    op_node.output_shape,
+                    graph.strides[op_node.node],
+                    op_node.reduction_dims or (),
+                    op_node.keepdim,
+                    graph.dtype,
+                )
         else:
             lhs, rhs = op_node.inputs
             lhs_shape = graph.shapes[lhs]
@@ -2011,11 +2113,39 @@ def _infer_reduction_output_shape(
 
 def _parse_reduction_args(
     op_name: str, node: torch.fx.Node, input_shape: Sequence[int]
-) -> Tuple[Tuple[int, ...], bool, bool]:
+) -> Tuple[Tuple[int, ...], bool, bool, bool | None]:
     if not node.args:
         raise RefBackendError(f"codegen {op_name} expects one input")
     if len(node.args) > 4:
         raise RefBackendError(f"codegen {op_name} expects at most four inputs")
+    if op_name == "std":
+        unbiased = True
+        if len(node.args) > 2:
+            raise RefBackendError(
+                "codegen std expects at most two inputs (self, unbiased)"
+            )
+        if len(node.args) > 1:
+            unbiased = node.args[1]
+        if node.kwargs:
+            if "unbiased" in node.kwargs:
+                if len(node.args) > 1:
+                    raise RefBackendError(
+                        "codegen std expects unbiased to be specified once"
+                    )
+                unbiased = node.kwargs["unbiased"]
+            extra = set(node.kwargs) - {"unbiased"}
+            if extra:
+                raise RefBackendError(
+                    f"codegen std got unexpected kwargs: {sorted(extra)}"
+                )
+        if isinstance(unbiased, torch.fx.Node):
+            raise RefBackendError("codegen std expects unbiased to be a bool")
+        if not isinstance(unbiased, bool):
+            raise RefBackendError("codegen std expects unbiased to be a bool")
+        reduction_dims = tuple(range(len(input_shape)))
+        keepdim = False
+        reduce_all = True
+        return reduction_dims, keepdim, reduce_all, unbiased
     dim = node.args[1] if len(node.args) > 1 else None
     keepdim = node.args[2] if len(node.args) > 2 else False
     dtype = node.args[3] if len(node.args) > 3 else None
@@ -2058,7 +2188,7 @@ def _parse_reduction_args(
             )
     reduction_dims = _normalize_reduction_dims(op_name, dim, len(input_shape))
     reduce_all = dim is None
-    return reduction_dims, keepdim, reduce_all
+    return reduction_dims, keepdim, reduce_all, None
 
 
 def _analyze_generic_graph(
@@ -2089,7 +2219,7 @@ def _analyze_generic_graph(
             continue
         if node.op in {"call_function", "call_method"}:
             if node.op == "call_method":
-                if node.target not in {"sum", "prod", "mean", "any", "all"}:
+                if node.target not in {"sum", "prod", "mean", "std", "any", "all"}:
                     raise RefBackendError(f"Unsupported call_method: {node.target}")
                 op_spec = SUPPORTED_OPS[node.target]
                 inplace_input = None
@@ -2102,6 +2232,7 @@ def _analyze_generic_graph(
             reduction_dims: Tuple[int, ...] | None = None
             keepdim = False
             reduce_all = False
+            std_unbiased = None
             if op_spec.kind == "reduction":
                 if len(node.args) < 1:
                     raise RefBackendError(
@@ -2138,9 +2269,14 @@ def _analyze_generic_graph(
                 input_nodes.append(arg)
                 input_shapes.append(shapes[arg])
             if op_spec.kind == "reduction":
-                reduction_dims, keepdim, reduce_all = _parse_reduction_args(
-                    op_spec.name, node, input_shapes[0]
-                )
+                (
+                    reduction_dims,
+                    keepdim,
+                    reduce_all,
+                    std_unbiased,
+                ) = _parse_reduction_args(op_spec.name, node, input_shapes[0])
+                if op_spec.name == "std" and dtype_info.torch_dtype is not torch.float32:
+                    raise RefBackendError("codegen std supports only torch.float32")
                 output_shape = _infer_reduction_output_shape(
                     input_shapes[0],
                     reduction_dims,
@@ -2163,6 +2299,7 @@ def _analyze_generic_graph(
                     inplace_input=inplace_input,
                     reduction_dims=reduction_dims,
                     keepdim=keepdim,
+                    std_unbiased=std_unbiased,
                 )
             )
             continue
