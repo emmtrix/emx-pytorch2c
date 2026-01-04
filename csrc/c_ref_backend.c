@@ -90,6 +90,8 @@ int ref_run_bmm(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_broadcast_in_dim(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_conv2d(const RefOpCall *call, char *err_msg, size_t err_cap);
 int ref_run_lstm(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_amax(const RefOpCall *call, char *err_msg, size_t err_cap);
+int ref_run_amin(const RefOpCall *call, char *err_msg, size_t err_cap);
 
 REF_BACKEND_API int ref_run_op(
     int32_t op_kind,
@@ -259,6 +261,10 @@ REF_BACKEND_API int ref_run_op(
             return ref_run_conv2d(call, err_msg, err_cap);
         case REF_OP_LSTM:
             return ref_run_lstm(call, err_msg, err_cap);
+        case REF_OP_AMAX:
+            return ref_run_amax(call, err_msg, err_cap);
+        case REF_OP_AMIN:
+            return ref_run_amin(call, err_msg, err_cap);
         default:
             write_error(err_msg, err_cap, "Unsupported op kind");
             return 2;

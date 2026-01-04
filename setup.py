@@ -13,6 +13,8 @@ setup(
                 "csrc/ops_div.c",
                 "csrc/ops_maximum.c",
                 "csrc/ops_minimum.c",
+                "csrc/ops_amax.c",
+                "csrc/ops_amin.c",
                 "csrc/ops_atan2.c",
                 "csrc/ops_pow.c",
                 "csrc/ops_remainder.c",
