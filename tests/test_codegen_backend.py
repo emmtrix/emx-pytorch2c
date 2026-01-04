@@ -59,23 +59,23 @@ def inplace_fn(a):
     return torch.mul(b, a)
 
 
-def sum_global_fn(a):
+def reduction_global_fn(a):
     return a.sum()
 
 
-def sum_dim_fn(a):
+def reduction_dim_fn(a):
     return a.sum(dim=1)
 
 
-def sum_keepdim_fn(a):
+def reduction_keepdim_fn(a):
     return a.sum(dim=1, keepdim=True)
 
 
-def sum_strided_fn(a):
+def reduction_strided_fn(a):
     return a.sum(dim=0)
 
 
-def sum_broadcast_fn(a, b):
+def reduction_broadcast_fn(a, b):
     return (a + b).sum(dim=1)
 
 
@@ -195,56 +195,58 @@ def test_emit_strided_access_expressions():
     )
 
 
-def test_codegen_generic_handles_sum_global():
+def test_codegen_generic_handles_reduction_global():
     a = torch.randn(2, 3, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "sum_global.c", get_generic_source, sum_global_fn, (a,)
+        "sum_global.c", get_generic_source, reduction_global_fn, (a,)
     )
-    compiled = torch.compile(sum_global_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(reduction_global_fn, backend=codegen_generic_backend)
     result = compiled(a)
-    torch.testing.assert_close(result, sum_global_fn(a))
+    torch.testing.assert_close(result, reduction_global_fn(a))
 
 
-def test_codegen_generic_handles_sum_dim():
+def test_codegen_generic_handles_reduction_dim():
     a = torch.randn(2, 3, 4, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "sum_dim.c", get_generic_source, sum_dim_fn, (a,)
+        "sum_dim.c", get_generic_source, reduction_dim_fn, (a,)
     )
-    compiled = torch.compile(sum_dim_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(reduction_dim_fn, backend=codegen_generic_backend)
     result = compiled(a)
-    torch.testing.assert_close(result, sum_dim_fn(a))
+    torch.testing.assert_close(result, reduction_dim_fn(a))
 
 
-def test_codegen_generic_handles_sum_keepdim():
+def test_codegen_generic_handles_reduction_keepdim():
     a = torch.randn(2, 3, 4, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "sum_keepdim.c", get_generic_source, sum_keepdim_fn, (a,)
+        "sum_keepdim.c", get_generic_source, reduction_keepdim_fn, (a,)
     )
-    compiled = torch.compile(sum_keepdim_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(reduction_keepdim_fn, backend=codegen_generic_backend)
     result = compiled(a)
-    torch.testing.assert_close(result, sum_keepdim_fn(a))
+    torch.testing.assert_close(result, reduction_keepdim_fn(a))
 
 
-def test_codegen_generic_handles_sum_strided():
+def test_codegen_generic_handles_reduction_strided():
     base = torch.randn(3, 4, dtype=torch.float32)
     a = base.t()
     _assert_codegen_source_matches(
-        "sum_strided.c", get_generic_source, sum_strided_fn, (a,)
+        "sum_strided.c", get_generic_source, reduction_strided_fn, (a,)
     )
-    compiled = torch.compile(sum_strided_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(reduction_strided_fn, backend=codegen_generic_backend)
     result = compiled(a)
-    torch.testing.assert_close(result, sum_strided_fn(a))
+    torch.testing.assert_close(result, reduction_strided_fn(a))
 
 
-def test_codegen_generic_handles_sum_broadcast_producer():
+def test_codegen_generic_handles_reduction_broadcast_producer():
     a = torch.randn(2, 3, 4, dtype=torch.float32)
     b = torch.randn(1, 4, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "sum_broadcast.c", get_generic_source, sum_broadcast_fn, (a, b)
+        "sum_broadcast.c", get_generic_source, reduction_broadcast_fn, (a, b)
     )
-    compiled = torch.compile(sum_broadcast_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(
+        reduction_broadcast_fn, backend=codegen_generic_backend
+    )
     result = compiled(a, b)
-    torch.testing.assert_close(result, sum_broadcast_fn(a, b))
+    torch.testing.assert_close(result, reduction_broadcast_fn(a, b))
 
 
 def test_elementwise_kernel_source_matches_expected():
