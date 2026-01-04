@@ -228,6 +228,50 @@ SUPPORTED_OPS = {
             torch.ops.aten.logical_or_,
         ),
     ),
+    "logical_and": _binary_spec(
+        "logical_and",
+        (
+            torch.logical_and,
+            torch.ops.aten.logical_and.default,
+            torch.ops.aten.logical_and,
+            torch.ops.aten.logical_and_.default,
+            torch.ops.aten.logical_and_,
+        ),
+        None,
+        inplace_targets=(
+            torch.ops.aten.logical_and_.default,
+            torch.ops.aten.logical_and_,
+        ),
+    ),
+    "logical_xor": _binary_spec(
+        "logical_xor",
+        (
+            torch.logical_xor,
+            torch.ops.aten.logical_xor.default,
+            torch.ops.aten.logical_xor,
+            torch.ops.aten.logical_xor_.default,
+            torch.ops.aten.logical_xor_,
+        ),
+        None,
+        inplace_targets=(
+            torch.ops.aten.logical_xor_.default,
+            torch.ops.aten.logical_xor_,
+        ),
+    ),
+    "logical_not": _unary_spec(
+        "logical_not",
+        (
+            torch.logical_not,
+            torch.ops.aten.logical_not.default,
+            torch.ops.aten.logical_not,
+            torch.ops.aten.logical_not_.default,
+            torch.ops.aten.logical_not_,
+        ),
+        inplace_targets=(
+            torch.ops.aten.logical_not_.default,
+            torch.ops.aten.logical_not_,
+        ),
+    ),
     "bitwise_left_shift": _binary_spec(
         "bitwise_left_shift",
         (

@@ -33,6 +33,18 @@ static inline bool ref_scalar_bool_logical_or(bool a, bool b) {
     return a || b;
 }
 
+static inline bool ref_scalar_bool_logical_and(bool a, bool b) {
+    return a && b;
+}
+
+static inline bool ref_scalar_bool_logical_xor(bool a, bool b) {
+    return a != b;
+}
+
+static inline bool ref_scalar_bool_logical_not(bool a) {
+    return !a;
+}
+
 #define REF_BOOL_UNARY(name)                                       \
     static inline bool ref_scalar_bool_##name(bool a) {            \
         return ref_scalar_bool_from_f32(                           \
