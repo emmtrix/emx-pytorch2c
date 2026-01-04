@@ -343,6 +343,34 @@ CODEGEN_OP_TEST_CONFIG = {
         "allow_non_tensor_args": True,
     },
 }
+INT32_ELEMENTWISE_ATEN_OPS = {
+    torch.ops.aten.abs.default,
+    torch.ops.aten.add.Tensor,
+    torch.ops.aten.ceil.default,
+    torch.ops.aten.clamp_max.Tensor,
+    torch.ops.aten.clamp_min.Tensor,
+    torch.ops.aten.conj.default,
+    torch.ops.aten.conj_physical.default,
+    torch.ops.aten.fmax.default,
+    torch.ops.aten.fmin.default,
+    torch.ops.aten.fmod.Tensor,
+    torch.ops.aten.floor.default,
+    torch.ops.aten.floor_divide.default,
+    torch.ops.aten.maximum.default,
+    torch.ops.aten.minimum.default,
+    torch.ops.aten.mul.Tensor,
+    torch.ops.aten.neg.default,
+    torch.ops.aten.positive.default,
+    torch.ops.aten.real.default,
+    torch.ops.aten.relu.default,
+    torch.ops.aten.remainder.Tensor,
+    torch.ops.aten.round.default,
+    torch.ops.aten.sgn.default,
+    torch.ops.aten.sign.default,
+    torch.ops.aten.square.default,
+    torch.ops.aten.sub.Tensor,
+    torch.ops.aten.trunc.default,
+}
 DEFAULT_CONSTRAINTS = {
     "allowed_dtypes": (torch.float32,),
     "allow_noncontiguous": True,
@@ -357,6 +385,8 @@ DEFAULT_CONSTRAINTS = {
 def _constraints_for_codegen(aten_overload):
     constraints = DEFAULT_CONSTRAINTS.copy()
     constraints.update(CODEGEN_OP_TEST_CONFIG.get(aten_overload, {}))
+    if aten_overload in INT32_ELEMENTWISE_ATEN_OPS:
+        constraints["allowed_dtypes"] = (torch.float32, torch.int32)
     return constraints
 
 
