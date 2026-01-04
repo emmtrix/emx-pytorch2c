@@ -52,6 +52,37 @@ _CODEGEN_DTYPES = {
     ),
 }
 
+_INT32_ELEMENTWISE_OPS = frozenset(
+    {
+        "abs",
+        "add",
+        "ceil",
+        "clamp_max",
+        "clamp_min",
+        "conj",
+        "conj_physical",
+        "fmax",
+        "fmin",
+        "fmod",
+        "floor",
+        "floor_divide",
+        "maximum",
+        "minimum",
+        "mul",
+        "neg",
+        "positive",
+        "real",
+        "relu",
+        "remainder",
+        "round",
+        "sgn",
+        "sign",
+        "square",
+        "sub",
+        "trunc",
+    }
+)
+
 
 def _binary_spec(
     name: str,
@@ -2078,11 +2109,11 @@ def _analyze_generic_graph(
         unsupported = {
             op_node.spec.name
             for op_node in op_nodes
-            if op_node.spec.name != "mul"
+            if op_node.spec.name not in _INT32_ELEMENTWISE_OPS
         }
         if unsupported:
             raise RefBackendError(
-                "codegen backend supports torch.int32 only for mul graphs"
+                "codegen backend supports torch.int32 only for elementwise ops"
             )
 
     return _GenericGraph(
