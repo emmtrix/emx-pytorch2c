@@ -64,6 +64,18 @@ static inline float ref_scalar_f32_logical_or(float a, float b) {
     return (a != 0.0f || b != 0.0f) ? 1.0f : 0.0f;
 }
 
+static inline float ref_scalar_f32_logical_and(float a, float b) {
+    return (a != 0.0f && b != 0.0f) ? 1.0f : 0.0f;
+}
+
+static inline float ref_scalar_f32_logical_xor(float a, float b) {
+    return ((a != 0.0f) != (b != 0.0f)) ? 1.0f : 0.0f;
+}
+
+static inline float ref_scalar_f32_logical_not(float a) {
+    return a == 0.0f ? 1.0f : 0.0f;
+}
+
 static inline float ref_scalar_f32_fmax(float a, float b) {
     return fmaxf(a, b);
 }

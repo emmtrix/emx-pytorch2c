@@ -1121,14 +1121,14 @@ logaddexp                                yes   yes
 logaddexp2                               -     -      
 logcumsumexp                             -     -      
 logdet                                   -     -      
-logical_and                              -     -      
-logical_and_                             -     -      
-logical_not                              -     -      
-logical_not_                             -     -      
+logical_and                              -     yes    
+logical_and_                             -     yes    
+logical_not                              -     yes    
+logical_not_                             -     yes    
 logical_or                               -     yes    
 logical_or_                              -     yes    
-logical_xor                              -     -      
-logical_xor_                             -     -      
+logical_xor                              -     yes    
+logical_xor_                             -     yes    
 logit                                    yes   yes    
 logit_                                   -     yes    
 logit_backward                           -     -      
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 8
-supported by codegen only: 102
+supported by codegen only: 111
 supported by both: 74
-unsupported by either: 1530
-supported by codegen: 176 / 1714 (10.3 %)
+unsupported by either: 1521
+supported by codegen: 185 / 1714 (10.8 %)
 supported by c-ref: 82 / 1714 (4.8 %)
