@@ -930,8 +930,8 @@ hardshrink_backward                      -     -
 hardsigmoid                              -     -      
 hardsigmoid_                             -     -      
 hardsigmoid_backward                     -     -      
-hardswish                                -     -      
-hardswish_                               -     -      
+hardswish                                -     yes    
+hardswish_                               -     yes    
 hardswish_backward                       -     -      
 hardtanh                                 -     -      
 hardtanh_                                -     -      
