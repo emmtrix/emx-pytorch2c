@@ -168,6 +168,17 @@ SUPPORTED_OPS = {
             torch.ops.aten.div_,
         ),
     ),
+    "le": _binary_spec(
+        "le",
+        (
+            operator.le,
+            torch.le,
+            torch.ops.aten.le.Tensor,
+            torch.ops.aten.le.default,
+            torch.ops.aten.le,
+        ),
+        None,
+    ),
     "maximum": _binary_spec(
         "maximum",
         (

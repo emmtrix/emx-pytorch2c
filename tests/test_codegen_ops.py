@@ -161,6 +161,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.hypot.default,
     torch.ops.aten.i0.default,
     torch.ops.aten.ldexp.Tensor,
+    torch.ops.aten.le.Tensor,
     torch.ops.aten.lgamma.default,
     torch.ops.aten.log.default,
     torch.ops.aten.log10.default,

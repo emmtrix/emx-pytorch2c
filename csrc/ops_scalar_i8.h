@@ -47,6 +47,10 @@ static inline int8_t ref_scalar_i8_minimum(int8_t a, int8_t b) {
     return a < b ? a : b;
 }
 
+static inline int8_t ref_scalar_i8_le(int8_t a, int8_t b) {
+    return a <= b ? (int8_t)1 : (int8_t)0;
+}
+
 static inline int8_t ref_scalar_i8_fmax(int8_t a, int8_t b) {
     return a > b ? a : b;
 }

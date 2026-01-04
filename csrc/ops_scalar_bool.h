@@ -37,6 +37,9 @@ REF_BOOL_BINARY(mul)
 REF_BOOL_BINARY(div)
 REF_BOOL_BINARY(maximum)
 REF_BOOL_BINARY(minimum)
+static inline bool ref_scalar_bool_le(bool a, bool b) {
+    return a <= b;
+}
 REF_BOOL_BINARY(fmax)
 REF_BOOL_BINARY(fmin)
 REF_BOOL_BINARY(copysign)
