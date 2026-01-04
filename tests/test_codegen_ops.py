@@ -340,7 +340,6 @@ CODEGEN_OP_TEST_CONFIG = {
         "sample_filter": _bmm_sample_filter,
     },
     torch.ops.aten.std.default: {
-        "allowed_dtypes": (torch.float32, torch.bool),
         "allow_non_tensor_args": True,
     },
     torch.ops.aten.transpose.int: {

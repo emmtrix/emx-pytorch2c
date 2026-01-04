@@ -1767,7 +1767,7 @@ def _write_std_kernel(
         reduction_count *= input_shape[dim]
     acc_type = dtype.c_type
     sqrt_fn = f"{dtype.scalar_prefix}sqrt"
-    if dtype.torch_dtype is torch.bool:
+    if dtype.torch_dtype is torch.bool or dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES:
         acc_type = "float"
         sqrt_fn = "ref_scalar_f32_sqrt"
     rendered = std_template.render(
@@ -2302,13 +2302,6 @@ def _analyze_generic_graph(
                     reduce_all,
                     std_unbiased,
                 ) = _parse_reduction_args(op_spec.name, node, input_shapes[0])
-                if op_spec.name == "std" and dtype_info.torch_dtype not in (
-                    torch.float32,
-                    torch.bool,
-                ):
-                    raise RefBackendError(
-                        "codegen std supports only torch.float32 or torch.bool"
-                    )
                 output_shape = _infer_reduction_output_shape(
                     input_shapes[0],
                     reduction_dims,
