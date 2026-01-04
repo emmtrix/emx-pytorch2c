@@ -1005,6 +1005,12 @@ SUPPORTED_OPS = {
             F.mish,
             torch.ops.aten.mish.default,
             torch.ops.aten.mish,
+            torch.ops.aten.mish_.default,
+            torch.ops.aten.mish_,
+        ),
+        inplace_targets=(
+            torch.ops.aten.mish_.default,
+            torch.ops.aten.mish_,
         ),
     ),
     "silu": _unary_spec(
@@ -1415,6 +1421,26 @@ SUPPORTED_OPS = {
             torch.ops.aten.square_,
         ),
     ),
+    "argmax": _OpSpec(
+        name="argmax",
+        kind="arg_reduction",
+        symbol=None,
+        supported_targets={
+            torch.argmax,
+            torch.ops.aten.argmax.default,
+            torch.ops.aten.argmax,
+        },
+    ),
+    "argmin": _OpSpec(
+        name="argmin",
+        kind="arg_reduction",
+        symbol=None,
+        supported_targets={
+            torch.argmin,
+            torch.ops.aten.argmin.default,
+            torch.ops.aten.argmin,
+        },
+    ),
     "sum": _OpSpec(
         name="sum",
         kind="reduction",
@@ -1471,6 +1497,26 @@ SUPPORTED_OPS = {
             torch.ops.aten.all,
         },
     ),
+    "amax": _OpSpec(
+        name="amax",
+        kind="reduction",
+        symbol=None,
+        supported_targets={
+            torch.amax,
+            torch.ops.aten.amax.default,
+            torch.ops.aten.amax,
+        },
+    ),
+    "amin": _OpSpec(
+        name="amin",
+        kind="reduction",
+        symbol=None,
+        supported_targets={
+            torch.amin,
+            torch.ops.aten.amin.default,
+            torch.ops.aten.amin,
+        },
+    ),
     "cat": _OpSpec(
         name="cat",
         kind="concat",
@@ -1480,6 +1526,23 @@ SUPPORTED_OPS = {
             torch.ops.aten.cat.default,
             torch.ops.aten.cat,
         },
+    ),
+    "addmm": _OpSpec(
+        name="addmm",
+        kind="addmm",
+        symbol=None,
+        supported_targets={
+            torch.addmm,
+            torch.ops.aten.addmm.default,
+            torch.ops.aten.addmm,
+            torch.ops.aten.addmm_.default,
+            torch.ops.aten.addmm_,
+        },
+        inplace_targets={
+            torch.ops.aten.addmm_.default,
+            torch.ops.aten.addmm_,
+        },
+        inplace_arg_index=0,
     ),
     "matmul": _OpSpec(
         name="matmul",
@@ -1565,12 +1628,15 @@ class _OpNode:
     inplace_input: int | None = None
     reduction_dims: Tuple[int, ...] | None = None
     keepdim: bool = False
+    reduce_all: bool = False
     std_unbiased: bool | None = None
     concat_dim: int | None = None
     conv2d_stride: Tuple[int, int] | None = None
     conv2d_padding: Tuple[int, int] | None = None
     conv2d_dilation: Tuple[int, int] | None = None
     conv2d_groups: int | None = None
+    addmm_alpha: float | None = None
+    addmm_beta: float | None = None
 
 
 @dataclass
@@ -1773,6 +1839,31 @@ def _input_c_type(dtype: torch.dtype, graph_dtype: _CodegenDType) -> str:
     raise RefBackendError(
         "codegen backend supports only torch.float32, torch.int8, torch.int32, or torch.bool tensors"
     )
+
+
+def _dtype_to_c_type(dtype: torch.dtype, graph_dtype: _CodegenDType) -> str:
+    if dtype is graph_dtype.torch_dtype:
+        return graph_dtype.c_type
+    if dtype is torch.bool:
+        return "uint8_t"
+    if dtype is torch.int8:
+        return "int8_t"
+    if dtype is torch.int32:
+        return "int32_t"
+    if dtype is torch.float32:
+        return "float"
+    if dtype is torch.int64:
+        return "int64_t"
+    raise RefBackendError(
+        "codegen backend supports only torch.float32, torch.int8, torch.int32, torch.int64, or torch.bool tensors"
+    )
+
+def _format_scalar_literal(value: float, dtype: _CodegenDType) -> str:
+    if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES:
+        return str(int(value))
+    if dtype.torch_dtype is torch.float32:
+        return f"{float(value)}f"
+    raise RefBackendError("codegen addmm supports only floating point tensors")
 
 
 def emit_signature(
@@ -2118,6 +2209,85 @@ def _write_matmul_kernel(
     return rendered.strip().splitlines()
 
 
+def _write_addmm_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    input_shape: Sequence[int],
+    mat1_shape: Sequence[int],
+    mat2_shape: Sequence[int],
+    input_strides: Sequence[int],
+    mat1_strides: Sequence[int],
+    mat2_strides: Sequence[int],
+    output_strides: Sequence[int],
+    dtype: _CodegenDType,
+    *,
+    alpha: float,
+    beta: float,
+) -> List[str]:
+    addmm_template = _get_template_env().get_template("addmm_kernel.c.j2")
+    input_is_contiguous = _is_contiguous(input_shape, input_strides)
+    mat1_is_contiguous = _is_contiguous(mat1_shape, mat1_strides)
+    mat2_is_contiguous = _is_contiguous(mat2_shape, mat2_strides)
+    output_is_contiguous = _is_contiguous(input_shape, output_strides)
+    acc_type = dtype.c_type
+    acc_init = "0" if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES else "0.0f"
+    m, k = mat1_shape
+    _, n = mat2_shape
+    input_suffix = _format_array_suffix(input_shape)
+    mat1_suffix = _format_array_suffix(mat1_shape)
+    mat2_suffix = _format_array_suffix(mat2_shape)
+    out_suffix = _format_array_suffix(input_shape)
+    rendered = addmm_template.render(
+        signature=(
+            f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+            f"const {dtype.c_type} input{input_suffix}, "
+            f"const {dtype.c_type} mat1{mat1_suffix}, "
+            f"const {dtype.c_type} mat2{mat2_suffix}, "
+            f"{dtype.c_type} out{out_suffix}) {{"
+        ),
+        m=m,
+        n=n,
+        k=k,
+        acc_type=acc_type,
+        acc_init=acc_init,
+        input_access=_emit_strided_access(
+            "input",
+            ("i", "j"),
+            input_strides,
+            input_is_contiguous,
+            sizes=input_shape,
+            c_type=dtype.c_type,
+        ),
+        mat1_access=_emit_strided_access(
+            "mat1",
+            ("i", "t"),
+            mat1_strides,
+            mat1_is_contiguous,
+            sizes=mat1_shape,
+            c_type=dtype.c_type,
+        ),
+        mat2_access=_emit_strided_access(
+            "mat2",
+            ("t", "j"),
+            mat2_strides,
+            mat2_is_contiguous,
+            sizes=mat2_shape,
+            c_type=dtype.c_type,
+        ),
+        out_access=_emit_strided_access(
+            "out",
+            ("i", "j"),
+            output_strides,
+            output_is_contiguous,
+            sizes=input_shape,
+            c_type=dtype.c_type,
+        ),
+        alpha=_format_scalar_literal(alpha, dtype),
+        beta=_format_scalar_literal(beta, dtype),
+    )
+    return rendered.strip().splitlines()
+
+
 _REDUCTION_CONFIG = {
     "sum": {
         "init_value": 0,
@@ -2145,6 +2315,31 @@ _REDUCTION_CONFIG = {
         "reduce_op": "&=",
         "post_op": None,
         "bool_reduction": True,
+    },
+    "amax": {
+        "init_value": 0,
+        "reduce_op": None,
+        "post_op": None,
+    },
+    "amin": {
+        "init_value": 0,
+        "reduce_op": None,
+        "post_op": None,
+    },
+}
+
+_MINMAX_INIT_VALUES = {
+    torch.float32: {
+        "amax": "-INFINITY",
+        "amin": "INFINITY",
+    },
+    torch.int8: {
+        "amax": "INT8_MIN",
+        "amin": "INT8_MAX",
+    },
+    torch.int32: {
+        "amax": "INT32_MIN",
+        "amin": "INT32_MAX",
     },
 }
 
@@ -2252,6 +2447,20 @@ def _write_reduction_kernel(
                 "post_op": None,
                 "bool_reduction": True,
             }
+        elif op_spec.name == "amax":
+            config = {
+                "init_value": 0,
+                "reduce_op": "|=",
+                "post_op": None,
+                "bool_reduction": True,
+            }
+        elif op_spec.name == "amin":
+            config = {
+                "init_value": 1,
+                "reduce_op": "&=",
+                "post_op": None,
+                "bool_reduction": True,
+            }
         elif op_spec.name == "prod":
             config = {
                 "init_value": 1,
@@ -2299,25 +2508,47 @@ def _write_reduction_kernel(
             sizes=input_shape,
             c_type=dtype.c_type,
         )
+    reduce_expr = None
+    if op_spec.name in {"amax", "amin"} and dtype.torch_dtype is not torch.bool:
+        compare_op = ">" if op_spec.name == "amax" else "<"
+        init_value_config = _MINMAX_INIT_VALUES[dtype.torch_dtype][op_spec.name]
+        config = {
+            "init_value": init_value_config,
+            "post_op": None,
+        }
+        if dtype.torch_dtype is torch.float32:
+            isnan_fn = f"{dtype.scalar_prefix}isnan"
+            reduce_expr = (
+                f"acc = {isnan_fn}({input_access}) ? {input_access} : "
+                f"({isnan_fn}(acc) ? acc : ({input_access} {compare_op} acc ? {input_access} : acc))"
+            )
+        else:
+            reduce_expr = (
+                f"acc = ({input_access} {compare_op} acc ? {input_access} : acc)"
+            )
     reduction_count = 1
     for dim in reduction_dims:
         reduction_count *= input_shape[dim]
     bool_reduction = config.get("bool_reduction", False)
     acc_type = "int32_t" if bool_reduction else dtype.c_type
-    if bool_reduction or dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES:
-        init_value = str(config["init_value"])
+    init_value_config = config["init_value"]
+    if isinstance(init_value_config, str):
+        init_value = init_value_config
+    elif bool_reduction or dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES:
+        init_value = str(init_value_config)
     else:
-        init_value = f"{config['init_value']}.0f"
+        init_value = f"{init_value_config}.0f"
     post_op = None
     if config["post_op"] == "mean":
         if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES:
             post_op = f"acc /= {reduction_count};"
         else:
             post_op = f"acc /= (float){reduction_count};"
-    if bool_reduction:
-        reduce_expr = f"acc {config['reduce_op']} ({input_access} != 0)"
-    else:
-        reduce_expr = f"acc {config['reduce_op']} {input_access}"
+    if reduce_expr is None:
+        if bool_reduction:
+            reduce_expr = f"acc {config['reduce_op']} ({input_access} != 0)"
+        else:
+            reduce_expr = f"acc {config['reduce_op']} {input_access}"
     rendered = reduction_template.render(
         signature=signature,
         input_rank=input_rank,
@@ -2335,6 +2566,132 @@ def _write_reduction_kernel(
         post_op=post_op,
     )
     return rendered.strip().splitlines()
+
+
+def _write_argminmax_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    input_shape: Sequence[int],
+    input_strides: Sequence[int],
+    output_shape: Sequence[int],
+    output_strides: Sequence[int],
+    reduction_dims: Tuple[int, ...],
+    keepdim: bool,
+    reduce_all: bool,
+    dtype: _CodegenDType,
+) -> List[str]:
+    input_c_type = _input_c_type(dtype.torch_dtype, dtype)
+    signature = (
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"const {input_c_type} a{_format_array_suffix(input_shape)}, "
+        f"int64_t out{_format_array_suffix(output_shape)}) {{"
+    )
+    lines = [signature]
+    loop_lines, indent = emit_loops(output_shape)
+    lines.extend(loop_lines)
+    output_access = emit_output_access(
+        output_shape, output_strides, c_type="int64_t"
+    )
+    if not input_shape:
+        lines.append(f"{indent}{output_access} = 0;")
+        lines.extend(emit_footer(output_shape, indent))
+        return lines
+    a_is_contiguous = _is_contiguous(input_shape, input_strides)
+    compare_op = ">" if op_spec.name == "argmax" else "<"
+
+    def linear_index_expr() -> str:
+        expr = f"r0" if input_shape else "0"
+        for dim in range(1, len(input_shape)):
+            expr = f"({expr} * {input_shape[dim]} + r{dim})"
+        return expr
+
+    if reduce_all:
+        lines.append(f"{indent}bool has_value = false;")
+        lines.append(f"{indent}{input_c_type} best_value = 0;")
+        lines.append(f"{indent}int64_t best_index = 0;")
+        reduction_indent = indent
+        for dim, size in enumerate(input_shape):
+            lines.append(
+                f"{reduction_indent}for (int64_t r{dim} = 0; r{dim} < {size}; ++r{dim}) {{"
+            )
+            reduction_indent += "    "
+        input_access = _emit_strided_access(
+            "a",
+            [f"r{dim}" for dim in range(len(input_shape))],
+            input_strides,
+            contig=a_is_contiguous,
+            sizes=input_shape,
+            c_type=input_c_type,
+        )
+        lines.append(f"{reduction_indent}int64_t linear_index = {linear_index_expr()};")
+        lines.append(f"{reduction_indent}{input_c_type} value = {input_access};")
+        lines.append(f"{reduction_indent}if (!has_value) {{")
+        lines.append(f"{reduction_indent}    best_value = value;")
+        lines.append(f"{reduction_indent}    best_index = linear_index;")
+        lines.append(f"{reduction_indent}    has_value = true;")
+        lines.append(
+            f"{reduction_indent}}} else if (value {compare_op} best_value) {{"
+        )
+        lines.append(f"{reduction_indent}    best_value = value;")
+        lines.append(f"{reduction_indent}    best_index = linear_index;")
+        lines.append(f"{reduction_indent}}}")
+        for _ in range(len(input_shape)):
+            reduction_indent = reduction_indent[:-4]
+            lines.append(f"{reduction_indent}}}")
+        lines.append(f"{indent}{output_access} = best_index;")
+        lines.extend(emit_footer(output_shape, indent))
+        return lines
+
+    reduction_dim = reduction_dims[0]
+    dim_to_output: Dict[int, int] = {}
+    output_idx = 0
+    for dim in range(len(input_shape)):
+        if dim == reduction_dim:
+            continue
+        dim_to_output[dim] = output_idx
+        output_idx += 1
+    init_indices = []
+    loop_indices = []
+    for dim in range(len(input_shape)):
+        if dim == reduction_dim:
+            init_indices.append("0")
+            loop_indices.append(f"r{dim}")
+        else:
+            idx = f"i{dim}" if keepdim else f"i{dim_to_output[dim]}"
+            init_indices.append(idx)
+            loop_indices.append(idx)
+    init_access = _emit_strided_access(
+        "a",
+        init_indices,
+        input_strides,
+        contig=a_is_contiguous,
+        sizes=input_shape,
+        c_type=input_c_type,
+    )
+    loop_access = _emit_strided_access(
+        "a",
+        loop_indices,
+        input_strides,
+        contig=a_is_contiguous,
+        sizes=input_shape,
+        c_type=input_c_type,
+    )
+    lines.append(f"{indent}{input_c_type} best_value = {init_access};")
+    lines.append(f"{indent}int64_t best_index = 0;")
+    lines.append(
+        f"{indent}for (int64_t r{reduction_dim} = 1; r{reduction_dim} < {input_shape[reduction_dim]}; ++r{reduction_dim}) {{"
+    )
+    lines.append(f"{indent}    {input_c_type} value = {loop_access};")
+    lines.append(
+        f"{indent}    if (value {compare_op} best_value) {{"
+    )
+    lines.append(f"{indent}        best_value = value;")
+    lines.append(f"{indent}        best_index = r{reduction_dim};")
+    lines.append(f"{indent}    }}")
+    lines.append(f"{indent}}}")
+    lines.append(f"{indent}{output_access} = best_index;")
+    lines.extend(emit_footer(output_shape, indent))
+    return lines
 
 
 def _write_concat_kernel(
@@ -2495,6 +2852,20 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                     op_node.keepdim,
                     graph.dtype,
                 )
+        elif op_node.spec.kind == "arg_reduction":
+            input_node = op_node.inputs[0]
+            kernel_lines = _write_argminmax_kernel(
+                index,
+                op_node.spec,
+                graph.shapes[input_node],
+                graph.strides[input_node],
+                op_node.output_shape,
+                graph.strides[op_node.node],
+                op_node.reduction_dims or (),
+                op_node.keepdim,
+                op_node.reduce_all,
+                graph.dtype,
+            )
         elif op_node.spec.kind == "concat":
             input_shapes = [graph.shapes[arg] for arg in op_node.inputs]
             input_strides = [graph.strides[arg] for arg in op_node.inputs]
@@ -2521,6 +2892,21 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 op_node.conv2d_dilation or (1, 1),
                 op_node.conv2d_groups or 1,
                 graph.dtype,
+        elif op_node.spec.kind == "addmm":
+            input_node, mat1_node, mat2_node = op_node.inputs
+            kernel_lines = _write_addmm_kernel(
+                index,
+                op_node.spec,
+                graph.shapes[input_node],
+                graph.shapes[mat1_node],
+                graph.shapes[mat2_node],
+                graph.strides[input_node],
+                graph.strides[mat1_node],
+                graph.strides[mat2_node],
+                graph.strides[op_node.node],
+                graph.dtype,
+                alpha=op_node.addmm_alpha if op_node.addmm_alpha is not None else 1.0,
+                beta=op_node.addmm_beta if op_node.addmm_beta is not None else 1.0,
             )
         else:
             lhs, rhs = op_node.inputs
@@ -2548,9 +2934,11 @@ def _write_generic_source(graph: _GenericGraph) -> str:
         ]
     )
     input_args = f"{input_args}, " if input_args else ""
+    output_dtype = graph.dtypes[graph.output_value]
+    output_c_type = _dtype_to_c_type(output_dtype, graph.dtype)
     signature = (
         f"void ref_codegen_main_{graph.dtype.suffix}("
-        f"{input_args}{graph.dtype.c_type} out{_format_array_suffix(graph.shapes[graph.output_value])}) {{"
+        f"{input_args}{output_c_type} out{_format_array_suffix(graph.shapes[graph.output_value])}) {{"
     )
     name_map: Dict[torch.fx.Node, str] = {}
     for idx, placeholder in enumerate(placeholders):
@@ -2570,8 +2958,10 @@ def _write_generic_source(graph: _GenericGraph) -> str:
         temp_name = f"tmp_{temp_index}"
         temp_index += 1
         name_map[op_node.node] = temp_name
+        temp_dtype = graph.dtypes[op_node.node]
+        temp_c_type = _dtype_to_c_type(temp_dtype, graph.dtype)
         temp_decls.append(
-            f"{graph.dtype.c_type} {temp_name}{_format_array_suffix(op_node.output_shape)};"
+            f"{temp_c_type} {temp_name}{_format_array_suffix(op_node.output_shape)};"
         )
     call_lines: List[str] = []
     for index, op_node in enumerate(op_nodes, start=1):
@@ -2661,6 +3051,18 @@ def _infer_output_shape(
         raise RefBackendError("codegen cat expects a tensor list input")
     if op_spec.kind == "conv2d":
         raise RefBackendError("codegen conv2d expects convolution arguments")
+    if op_spec.kind == "addmm":
+        input_shape, mat1_shape, mat2_shape = input_shapes
+        if len(input_shape) != 2 or len(mat1_shape) != 2 or len(mat2_shape) != 2:
+            raise RefBackendError("codegen addmm expects 2D inputs")
+        if mat1_shape[1] != mat2_shape[0]:
+            raise RefBackendError("codegen addmm requires inner dimensions to match")
+        expected_shape = (mat1_shape[0], mat2_shape[1])
+        if input_shape != expected_shape:
+            raise RefBackendError(
+                "codegen addmm expects input shape to match matmul output"
+            )
+        return expected_shape
     a_shape, b_shape = input_shapes
     if op_spec.name == "matmul":
         if len(a_shape) == 1 and len(b_shape) == 1:
@@ -2821,6 +3223,95 @@ def _parse_reduction_args(
     return reduction_dims, keepdim, reduce_all, None
 
 
+def _parse_argminmax_args(
+    op_name: str, node: torch.fx.Node, input_shape: Sequence[int]
+) -> Tuple[Tuple[int, ...], bool, bool]:
+    if not node.args:
+        raise RefBackendError(f"codegen {op_name} expects one input")
+    if len(node.args) > 3:
+        raise RefBackendError(f"codegen {op_name} expects at most three inputs")
+    dim = node.args[1] if len(node.args) > 1 else None
+    keepdim = node.args[2] if len(node.args) > 2 else False
+    if node.kwargs:
+        if "dim" in node.kwargs:
+            if dim is not None:
+                raise RefBackendError(
+                    f"codegen {op_name} expects dim to be specified once"
+                )
+            dim = node.kwargs["dim"]
+        if "keepdim" in node.kwargs:
+            if len(node.args) > 2:
+                raise RefBackendError(
+                    f"codegen {op_name} expects keepdim to be specified once"
+                )
+            keepdim = node.kwargs["keepdim"]
+        extra = set(node.kwargs) - {"dim", "keepdim"}
+        if extra:
+            raise RefBackendError(
+                f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
+            )
+    if isinstance(keepdim, torch.fx.Node):
+        raise RefBackendError(f"codegen {op_name} expects keepdim to be a bool")
+    if not isinstance(keepdim, bool):
+        raise RefBackendError(f"codegen {op_name} expects keepdim to be a bool")
+    if dim is None:
+        reduction_dims = tuple(range(len(input_shape)))
+        reduce_all = True
+        return reduction_dims, keepdim, reduce_all
+    if isinstance(dim, torch.fx.Node):
+        raise RefBackendError(f"codegen {op_name} expects dim to be an int")
+    if isinstance(dim, (tuple, list)):
+        raise RefBackendError(f"codegen {op_name} expects dim to be an int")
+    try:
+        dim_value = operator.index(dim)
+    except TypeError as exc:
+        raise RefBackendError(f"codegen {op_name} expects dim to be an int") from exc
+    if dim_value < 0:
+        dim_value += len(input_shape)
+    if dim_value < 0 or dim_value >= len(input_shape):
+        raise RefBackendError(f"codegen {op_name} dim is out of range")
+    return (dim_value,), keepdim, False
+def _parse_addmm_scalar(name: str, value: object | None) -> float:
+    if value is None:
+        return 1.0
+    if isinstance(value, torch.fx.Node):
+        raise RefBackendError(f"codegen addmm expects {name} to be a number")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise RefBackendError(f"codegen addmm expects {name} to be a number")
+    return float(value)
+
+
+def _parse_addmm_args(
+    node: torch.fx.Node,
+) -> Tuple[Sequence[torch.fx.Node], float, float]:
+    if len(node.args) < 3:
+        raise RefBackendError("codegen addmm expects at least three inputs")
+    if len(node.args) > 5:
+        raise RefBackendError("codegen addmm expects at most five inputs")
+    input_node, mat1_node, mat2_node = node.args[:3]
+    beta = node.args[3] if len(node.args) > 3 else None
+    alpha = node.args[4] if len(node.args) > 4 else None
+    if node.kwargs:
+        if "beta" in node.kwargs:
+            if beta is not None:
+                raise RefBackendError("codegen addmm expects beta to be specified once")
+            beta = node.kwargs["beta"]
+        if "alpha" in node.kwargs:
+            if alpha is not None:
+                raise RefBackendError("codegen addmm expects alpha to be specified once")
+            alpha = node.kwargs["alpha"]
+        extra = set(node.kwargs) - {"beta", "alpha"}
+        if extra:
+            raise RefBackendError(
+                f"codegen addmm got unexpected kwargs: {sorted(extra)}"
+            )
+    return (
+        (input_node, mat1_node, mat2_node),
+        _parse_addmm_scalar("alpha", alpha),
+        _parse_addmm_scalar("beta", beta),
+    )
+
+
 def _parse_concat_args(
     node: torch.fx.Node,
 ) -> Tuple[Sequence[torch.fx.Node], int]:
@@ -2978,7 +3469,16 @@ def _analyze_generic_graph(
             continue
         if node.op in {"call_function", "call_method"}:
             if node.op == "call_method":
-                if node.target not in {"sum", "prod", "mean", "std", "any", "all"}:
+                if node.target not in {
+                    "sum",
+                    "prod",
+                    "mean",
+                    "std",
+                    "any",
+                    "all",
+                    "argmax",
+                    "argmin",
+                }:
                     raise RefBackendError(f"Unsupported call_method: {node.target}")
                 op_spec = SUPPORTED_OPS[node.target]
                 inplace_input = None
@@ -3126,6 +3626,31 @@ def _analyze_generic_graph(
                 shapes[node] = output_shape
                 dtypes[node] = dtype_info.torch_dtype
                 strides[node] = _contiguous_strides(output_shape)
+            if op_spec.kind == "addmm":
+                input_nodes, alpha, beta = _parse_addmm_args(node)
+                input_shapes = []
+                for arg in input_nodes:
+                    if not isinstance(arg, torch.fx.Node):
+                        raise RefBackendError("codegen addmm expects tensor inputs only")
+                    if arg not in shapes:
+                        raise RefBackendError("codegen addmm expects tensor inputs only")
+                    input_shapes.append(shapes[arg])
+                input_dtypes = [dtypes[arg] for arg in input_nodes]
+                if dtype_info.torch_dtype is not torch.float32:
+                    raise RefBackendError(
+                        "codegen addmm supports only torch.float32 tensors"
+                    )
+                if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
+                    raise RefBackendError(
+                        "codegen addmm expects inputs to share the graph dtype"
+                    )
+                output_shape = _infer_output_shape(op_spec, input_shapes)
+                shapes[node] = output_shape
+                dtypes[node] = dtype_info.torch_dtype
+                if inplace_input is not None:
+                    strides[node] = strides[input_nodes[inplace_input]]
+                else:
+                    strides[node] = _contiguous_strides(output_shape)
                 op_nodes.append(
                     _OpNode(
                         node=node,
@@ -3137,6 +3662,11 @@ def _analyze_generic_graph(
                         conv2d_padding=padding_pair,
                         conv2d_dilation=dilation_pair,
                         conv2d_groups=groups,
+                        inputs=tuple(input_nodes),
+                        output_shape=output_shape,
+                        inplace_input=inplace_input,
+                        addmm_alpha=alpha,
+                        addmm_beta=beta,
                     )
                 )
                 continue
@@ -3144,7 +3674,7 @@ def _analyze_generic_graph(
             keepdim = False
             reduce_all = False
             std_unbiased = None
-            if op_spec.kind == "reduction":
+            if op_spec.kind in {"reduction", "arg_reduction"}:
                 if len(node.args) < 1:
                     raise RefBackendError(
                         f"codegen {op_spec.name} expects one input"
@@ -3177,7 +3707,7 @@ def _analyze_generic_graph(
             input_nodes: List[torch.fx.Node] = []
             input_shapes: List[Tuple[int, ...]] = []
             args_to_check = node.args
-            if op_spec.kind == "reduction":
+            if op_spec.kind in {"reduction", "arg_reduction"}:
                 args_to_check = node.args[:1]
             for arg in args_to_check:
                 if not isinstance(arg, torch.fx.Node):
@@ -3231,10 +3761,36 @@ def _analyze_generic_graph(
                     keepdim,
                     reduce_all=reduce_all,
                 )
+            elif op_spec.kind == "arg_reduction":
+                (
+                    reduction_dims,
+                    keepdim,
+                    reduce_all,
+                ) = _parse_argminmax_args(op_spec.name, node, input_shapes[0])
+                reduction_count = 1
+                if reduce_all:
+                    for size in input_shapes[0]:
+                        reduction_count *= size
+                else:
+                    for dim in reduction_dims:
+                        reduction_count *= input_shapes[0][dim]
+                if reduction_count == 0:
+                    raise RefBackendError(
+                        f"codegen {op_spec.name} expects a non-empty reduction dimension"
+                    )
+                output_shape = _infer_reduction_output_shape(
+                    input_shapes[0],
+                    reduction_dims,
+                    keepdim,
+                    reduce_all=reduce_all,
+                )
             else:
                 output_shape = _infer_output_shape(op_spec, input_shapes)
             shapes[node] = output_shape
-            dtypes[node] = dtype_info.torch_dtype
+            if op_spec.kind == "arg_reduction":
+                dtypes[node] = torch.int64
+            else:
+                dtypes[node] = dtype_info.torch_dtype
             if inplace_input is not None:
                 strides[node] = strides[input_nodes[inplace_input]]
             else:
@@ -3248,6 +3804,7 @@ def _analyze_generic_graph(
                     inplace_input=inplace_input,
                     reduction_dims=reduction_dims,
                     keepdim=keepdim,
+                    reduce_all=reduce_all,
                     std_unbiased=std_unbiased,
                 )
             )
@@ -3442,9 +3999,10 @@ def _compile_graph(
                 original_input.copy_(inplace_out)
             env[output_value] = original_input
         else:
+            output_dtype = graph.dtypes[output_value]
             out = torch.empty(
                 lib.output_shape,
-                dtype=graph.dtype.torch_dtype,
+                dtype=output_dtype,
                 device=contiguous_inputs[0].device,
             )
             lib.run(contiguous_inputs, out)

@@ -87,6 +87,10 @@ def reduction_broadcast_fn(a, b):
     return (a + b).sum(dim=1)
 
 
+def argmax_dim_fn(a):
+    return torch.ops.aten.argmax.default(a, 1, False)
+
+
 def where_fn(condition, a, b):
     return torch.where(condition, a, b)
 
@@ -318,6 +322,16 @@ def test_codegen_generic_handles_reduction_broadcast_producer():
     )
     result = compiled(a, b)
     torch.testing.assert_close(result, reduction_broadcast_fn(a, b))
+
+
+def test_codegen_generic_handles_argmax_dim():
+    a = torch.randn(2, 3, dtype=torch.float32)
+    _assert_codegen_source_matches(
+        "argmax_dim.c", get_generic_source, argmax_dim_fn, (a,)
+    )
+    compiled = torch.compile(argmax_dim_fn, backend=codegen_generic_backend)
+    result = compiled(a)
+    torch.testing.assert_close(result, argmax_dim_fn(a))
 
 
 def test_elementwise_kernel_source_matches_expected():
