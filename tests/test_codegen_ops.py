@@ -541,6 +541,7 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.argmin.default: {
         "allow_non_tensor_args": True,
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
+    },
     torch.ops.aten.mish_.default: {
         "allowed_dtypes": (torch.float32,),
     },
@@ -572,6 +573,7 @@ CODEGEN_OP_TEST_CONFIG = {
         "requires_same_shape": False,
         "requires_contiguous": True,
         "sample_filter": _conv2d_sample_filter,
+    },
     torch.ops.aten.addmm.default: {
         "allowed_dtypes": (torch.float32,),
         "allow_non_tensor_args": True,

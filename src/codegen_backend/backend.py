@@ -2892,6 +2892,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 op_node.conv2d_dilation or (1, 1),
                 op_node.conv2d_groups or 1,
                 graph.dtype,
+            )
         elif op_node.spec.kind == "addmm":
             input_node, mat1_node, mat2_node = op_node.inputs
             kernel_lines = _write_addmm_kernel(
@@ -3626,7 +3627,21 @@ def _analyze_generic_graph(
                 shapes[node] = output_shape
                 dtypes[node] = dtype_info.torch_dtype
                 strides[node] = _contiguous_strides(output_shape)
-            if op_spec.kind == "addmm":
+                op_nodes.append(
+                    _OpNode(
+                        node=node,
+                        spec=op_spec,
+                        inputs=(input_arg, weight_arg),
+                        output_shape=output_shape,
+                        inplace_input=None,
+                        conv2d_stride=stride_pair,
+                        conv2d_padding=padding_pair,
+                        conv2d_dilation=dilation_pair,
+                        conv2d_groups=groups,
+                    )
+                )
+                continue
+            elif op_spec.kind == "addmm":
                 input_nodes, alpha, beta = _parse_addmm_args(node)
                 input_shapes = []
                 for arg in input_nodes:
@@ -3655,13 +3670,6 @@ def _analyze_generic_graph(
                     _OpNode(
                         node=node,
                         spec=op_spec,
-                        inputs=(input_arg, weight_arg),
-                        output_shape=output_shape,
-                        inplace_input=None,
-                        conv2d_stride=stride_pair,
-                        conv2d_padding=padding_pair,
-                        conv2d_dilation=dilation_pair,
-                        conv2d_groups=groups,
                         inputs=tuple(input_nodes),
                         output_shape=output_shape,
                         inplace_input=inplace_input,
