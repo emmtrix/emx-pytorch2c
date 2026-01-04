@@ -1113,6 +1113,26 @@ SUPPORTED_OPS = {
             torch.ops.aten.mean,
         },
     ),
+    "any": _OpSpec(
+        name="any",
+        kind="reduction",
+        symbol=None,
+        supported_targets={
+            torch.any,
+            torch.ops.aten.any.default,
+            torch.ops.aten.any,
+        },
+    ),
+    "all": _OpSpec(
+        name="all",
+        kind="reduction",
+        symbol=None,
+        supported_targets={
+            torch.all,
+            torch.ops.aten.all.default,
+            torch.ops.aten.all,
+        },
+    ),
     "matmul": _OpSpec(
         name="matmul",
         kind="matmul",
@@ -1646,6 +1666,18 @@ _REDUCTION_CONFIG = {
         "reduce_op": "+=",
         "post_op": "mean",
     },
+    "any": {
+        "init_value": 0,
+        "reduce_op": "|=",
+        "post_op": None,
+        "bool_reduction": True,
+    },
+    "all": {
+        "init_value": 1,
+        "reduce_op": "&=",
+        "post_op": None,
+        "bool_reduction": True,
+    },
 }
 
 
@@ -1705,8 +1737,9 @@ def _write_reduction_kernel(
     reduction_count = 1
     for dim in reduction_dims:
         reduction_count *= input_shape[dim]
-    acc_type = dtype.c_type
-    if dtype.torch_dtype is torch.int32:
+    bool_reduction = config.get("bool_reduction", False)
+    acc_type = "int32_t" if bool_reduction else dtype.c_type
+    if bool_reduction or dtype.torch_dtype is torch.int32:
         init_value = str(config["init_value"])
     else:
         init_value = f"{config['init_value']}.0f"
@@ -1716,6 +1749,10 @@ def _write_reduction_kernel(
             post_op = f"acc /= {reduction_count};"
         else:
             post_op = f"acc /= (float){reduction_count};"
+    if bool_reduction:
+        reduce_expr = f"acc {config['reduce_op']} ({input_access} != 0)"
+    else:
+        reduce_expr = f"acc {config['reduce_op']} {input_access}"
     rendered = reduction_template.render(
         signature=signature,
         input_rank=input_rank,
@@ -1726,11 +1763,10 @@ def _write_reduction_kernel(
         reduction_dims=[
             {"dim": dim, "size": input_shape[dim]} for dim in reduction_dims
         ],
-        input_access=input_access,
+        reduce_expr=reduce_expr,
         output_access=output_access,
         acc_type=acc_type,
         init_value=init_value,
-        reduce_op=config["reduce_op"],
         post_op=post_op,
     )
     return rendered.strip().splitlines()
@@ -2044,7 +2080,7 @@ def _analyze_generic_graph(
             continue
         if node.op in {"call_function", "call_method"}:
             if node.op == "call_method":
-                if node.target not in {"sum", "prod", "mean"}:
+                if node.target not in {"sum", "prod", "mean", "any", "all"}:
                     raise RefBackendError(f"Unsupported call_method: {node.target}")
                 op_spec = SUPPORTED_OPS[node.target]
                 inplace_input = None
