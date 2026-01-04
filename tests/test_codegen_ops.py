@@ -231,6 +231,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.ge.Tensor,
     torch.ops.aten.eq.Tensor,
     torch.ops.aten.ne.Tensor,
+    torch.ops.aten.logical_or.default,
     torch.ops.aten.lgamma.default,
     torch.ops.aten.log.default,
     torch.ops.aten.log10.default,
@@ -330,6 +331,7 @@ INPLACE_ATEN_OPS = [
     torch.ops.aten.log1p_.default,
     torch.ops.aten.log2_.default,
     torch.ops.aten.logit_.default,
+    torch.ops.aten.logical_or_.default,
     torch.ops.aten.mul_.Tensor,
     torch.ops.aten.nan_to_num_.default,
     torch.ops.aten.neg_.default,
@@ -421,6 +423,9 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.bitwise_right_shift_.Tensor: {
         "allowed_dtypes": (torch.int8, torch.int32),
+    },
+    torch.ops.aten.logical_or.default: {
+        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
     },
     torch.ops.aten.where.self: {
         "requires_same_shape": False,

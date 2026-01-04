@@ -95,6 +95,10 @@ static inline int8_t ref_scalar_i8_ne(int8_t a, int8_t b) {
     return a != b ? (int8_t)1 : (int8_t)0;
 }
 
+static inline int8_t ref_scalar_i8_logical_or(int8_t a, int8_t b) {
+    return (a != 0 || b != 0) ? (int8_t)1 : (int8_t)0;
+}
+
 static inline int8_t ref_scalar_i8_fmax(int8_t a, int8_t b) {
     return a > b ? a : b;
 }

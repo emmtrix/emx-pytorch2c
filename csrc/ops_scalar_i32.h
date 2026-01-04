@@ -101,6 +101,10 @@ static inline int32_t ref_scalar_i32_ne(int32_t a, int32_t b) {
     return a != b ? 1 : 0;
 }
 
+static inline int32_t ref_scalar_i32_logical_or(int32_t a, int32_t b) {
+    return (a != 0 || b != 0) ? 1 : 0;
+}
+
 static inline int32_t ref_scalar_i32_fmax(int32_t a, int32_t b) {
     return a > b ? a : b;
 }

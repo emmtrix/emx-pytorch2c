@@ -213,6 +213,21 @@ SUPPORTED_OPS = {
             torch.ops.aten.bitwise_xor_,
         ),
     ),
+    "logical_or": _binary_spec(
+        "logical_or",
+        (
+            torch.logical_or,
+            torch.ops.aten.logical_or.default,
+            torch.ops.aten.logical_or,
+            torch.ops.aten.logical_or_.default,
+            torch.ops.aten.logical_or_,
+        ),
+        None,
+        inplace_targets=(
+            torch.ops.aten.logical_or_.default,
+            torch.ops.aten.logical_or_,
+        ),
+    ),
     "bitwise_left_shift": _binary_spec(
         "bitwise_left_shift",
         (

@@ -29,6 +29,10 @@ static inline bool ref_scalar_bool_bitwise_not(bool a) {
     return !a;
 }
 
+static inline bool ref_scalar_bool_logical_or(bool a, bool b) {
+    return a || b;
+}
+
 #define REF_BOOL_UNARY(name)                                       \
     static inline bool ref_scalar_bool_##name(bool a) {            \
         return ref_scalar_bool_from_f32(                           \
