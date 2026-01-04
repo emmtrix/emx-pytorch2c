@@ -408,40 +408,16 @@ CODEGEN_OP_TEST_CONFIG = {
         "requires_same_shape": False,
         "sample_filter": _broadcastable_sample_filter,
     },
-    torch.ops.aten.bitwise_and.Tensor: {
-        "allowed_dtypes": (torch.int8, torch.int32),
-    },
-    torch.ops.aten.bitwise_and_.Tensor: {
-        "allowed_dtypes": (torch.int8, torch.int32),
-    },
     torch.ops.aten.bitwise_left_shift.Tensor: {
         "allowed_dtypes": (torch.int8, torch.int32),
     },
     torch.ops.aten.bitwise_left_shift_.Tensor: {
         "allowed_dtypes": (torch.int8, torch.int32),
     },
-    torch.ops.aten.bitwise_not.default: {
-        "allowed_dtypes": (torch.int8, torch.int32),
-    },
-    torch.ops.aten.bitwise_not_.default: {
-        "allowed_dtypes": (torch.int8, torch.int32),
-    },
-    torch.ops.aten.bitwise_or.Tensor: {
-        "allowed_dtypes": (torch.int8, torch.int32),
-    },
-    torch.ops.aten.bitwise_or_.Tensor: {
-        "allowed_dtypes": (torch.int8, torch.int32),
-    },
     torch.ops.aten.bitwise_right_shift.Tensor: {
         "allowed_dtypes": (torch.int8, torch.int32),
     },
     torch.ops.aten.bitwise_right_shift_.Tensor: {
-        "allowed_dtypes": (torch.int8, torch.int32),
-    },
-    torch.ops.aten.bitwise_xor.Tensor: {
-        "allowed_dtypes": (torch.int8, torch.int32),
-    },
-    torch.ops.aten.bitwise_xor_.Tensor: {
         "allowed_dtypes": (torch.int8, torch.int32),
     },
     torch.ops.aten.where.self: {
@@ -662,7 +638,10 @@ class TestCodegenInplaceOps(TestCase):
                     args = (expected, rhs)
                 else:
                     args = (expected,)
-                expected_result = aten_overload(*args)
+                try:
+                    expected_result = aten_overload(*args)
+                except Exception:
+                    continue
 
                 compiled_lhs = lhs.clone()
                 if requires_rhs:

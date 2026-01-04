@@ -75,6 +75,12 @@ _BITWISE_OPS = {
     "bitwise_right_shift",
     "bitwise_not",
 }
+_BITWISE_BOOL_OPS = {
+    "bitwise_and",
+    "bitwise_or",
+    "bitwise_xor",
+    "bitwise_not",
+}
 
 def _binary_spec(
     name: str,
@@ -2772,13 +2778,18 @@ def _analyze_generic_graph(
                 input_nodes.append(arg)
                 input_shapes.append(shapes[arg])
             input_dtypes = [dtypes[arg] for arg in input_nodes]
-            if (
-                op_spec.name in _BITWISE_OPS
-                and dtype_info.torch_dtype not in _INTEGER_CODEGEN_DTYPES
-            ):
-                raise RefBackendError(
-                    f"codegen {op_spec.name} expects integer tensors"
-                )
+            if op_spec.name in _BITWISE_OPS:
+                if dtype_info.torch_dtype in _INTEGER_CODEGEN_DTYPES:
+                    pass
+                elif (
+                    dtype_info.torch_dtype is torch.bool
+                    and op_spec.name in _BITWISE_BOOL_OPS
+                ):
+                    pass
+                else:
+                    raise RefBackendError(
+                        f"codegen {op_spec.name} expects integer tensors"
+                    )
             if op_spec.kind == "where":
                 if input_dtypes[0] is not torch.bool:
                     raise RefBackendError(
