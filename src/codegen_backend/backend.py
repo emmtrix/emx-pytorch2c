@@ -1069,6 +1069,14 @@ SUPPORTED_OPS = {
             torch.ops.aten.sum.default,
         },
     ),
+    "prod": _OpSpec(
+        name="prod",
+        kind="reduction",
+        symbol=None,
+        supported_targets={
+            torch.ops.aten.prod.default,
+        },
+    ),
     "matmul": _OpSpec(
         name="matmul",
         kind="matmul",
@@ -1479,7 +1487,19 @@ def _write_matmul_kernel(
     return rendered.strip().splitlines()
 
 
-def _write_sum_kernel(
+_REDUCTION_CONFIG = {
+    "sum": {
+        "init_value": "0.0f",
+        "reduce_op": "+=",
+    },
+    "prod": {
+        "init_value": "1.0f",
+        "reduce_op": "*=",
+    },
+}
+
+
+def _write_reduction_kernel(
     node_index: int,
     op_spec: _OpSpec,
     input_shape: Sequence[int],
@@ -1489,7 +1509,8 @@ def _write_sum_kernel(
     reduction_dims: Tuple[int, ...],
     keepdim: bool,
 ) -> List[str]:
-    sum_template = _get_template_env().get_template("sum_kernel.c.j2")
+    reduction_template = _get_template_env().get_template("sum_kernel.c.j2")
+    config = _REDUCTION_CONFIG[op_spec.name]
     a_is_contiguous = _is_contiguous(input_shape, input_strides)
     input_rank = len(input_shape)
     output_rank = len(output_shape)
@@ -1527,7 +1548,7 @@ def _write_sum_kernel(
             contig=a_is_contiguous,
             sizes=input_shape,
         )
-    rendered = sum_template.render(
+    rendered = reduction_template.render(
         signature=signature,
         input_rank=input_rank,
         output_rank=output_rank,
@@ -1539,6 +1560,8 @@ def _write_sum_kernel(
         ],
         input_access=input_access,
         output_access=output_access,
+        init_value=config["init_value"],
+        reduce_op=config["reduce_op"],
     )
     return rendered.strip().splitlines()
 
@@ -1566,7 +1589,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
             )
         elif op_node.spec.kind == "reduction":
             input_node = op_node.inputs[0]
-            kernel_lines = _write_sum_kernel(
+            kernel_lines = _write_reduction_kernel(
                 index,
                 op_node.spec,
                 graph.shapes[input_node],
@@ -1687,12 +1710,14 @@ def _infer_output_shape(
 
 
 def _normalize_reduction_dims(
-    dim: object | None, rank: int
+    op_name: str, dim: object | None, rank: int
 ) -> Tuple[int, ...]:
     if dim is None:
         return tuple(range(rank))
     if isinstance(dim, torch.fx.Node):
-        raise RefBackendError("codegen sum expects dim to be an int or tuple of ints")
+        raise RefBackendError(
+            f"codegen {op_name} expects dim to be an int or tuple of ints"
+        )
     if isinstance(dim, (tuple, list)):
         dims = dim
     else:
@@ -1702,18 +1727,18 @@ def _normalize_reduction_dims(
     for item in dims:
         if isinstance(item, torch.fx.Node):
             raise RefBackendError(
-                "codegen sum expects dim to be an int or tuple of ints"
+                f"codegen {op_name} expects dim to be an int or tuple of ints"
             )
         try:
             dim_value = operator.index(item)
         except TypeError as exc:
             raise RefBackendError(
-                "codegen sum expects dim to be an int or tuple of ints"
+                f"codegen {op_name} expects dim to be an int or tuple of ints"
             ) from exc
         if dim_value < 0:
             dim_value += rank
         if dim_value < 0 or dim_value >= rank:
-            raise RefBackendError("codegen sum dim is out of range")
+            raise RefBackendError(f"codegen {op_name} dim is out of range")
         if dim_value in seen:
             continue
         seen.add(dim_value)
@@ -1721,7 +1746,7 @@ def _normalize_reduction_dims(
     return tuple(sorted(normalized))
 
 
-def _infer_sum_output_shape(
+def _infer_reduction_output_shape(
     input_shape: Sequence[int],
     reduction_dims: Tuple[int, ...],
     keepdim: bool,
@@ -1742,46 +1767,54 @@ def _infer_sum_output_shape(
     )
 
 
-def _parse_sum_args(
-    node: torch.fx.Node, input_shape: Sequence[int]
+def _parse_reduction_args(
+    op_name: str, node: torch.fx.Node, input_shape: Sequence[int]
 ) -> Tuple[Tuple[int, ...], bool, bool]:
     if not node.args:
-        raise RefBackendError("codegen sum expects one input")
+        raise RefBackendError(f"codegen {op_name} expects one input")
     if len(node.args) > 4:
-        raise RefBackendError("codegen sum expects at most four inputs")
+        raise RefBackendError(f"codegen {op_name} expects at most four inputs")
     dim = node.args[1] if len(node.args) > 1 else None
     keepdim = node.args[2] if len(node.args) > 2 else False
     dtype = node.args[3] if len(node.args) > 3 else None
     if node.kwargs:
         if "dim" in node.kwargs:
             if dim is not None:
-                raise RefBackendError("codegen sum expects dim to be specified once")
+                raise RefBackendError(
+                    f"codegen {op_name} expects dim to be specified once"
+                )
             dim = node.kwargs["dim"]
         if "keepdim" in node.kwargs:
             if len(node.args) > 2:
                 raise RefBackendError(
-                    "codegen sum expects keepdim to be specified once"
+                    f"codegen {op_name} expects keepdim to be specified once"
                 )
             keepdim = node.kwargs["keepdim"]
         if "dtype" in node.kwargs:
             if dtype is not None:
-                raise RefBackendError("codegen sum expects dtype to be specified once")
+                raise RefBackendError(
+                    f"codegen {op_name} expects dtype to be specified once"
+                )
             dtype = node.kwargs["dtype"]
         extra = set(node.kwargs) - {"dim", "keepdim", "dtype"}
         if extra:
             raise RefBackendError(
-                f"codegen sum got unexpected kwargs: {sorted(extra)}"
+                f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
             )
     if isinstance(keepdim, torch.fx.Node):
-        raise RefBackendError("codegen sum expects keepdim to be a bool")
+        raise RefBackendError(f"codegen {op_name} expects keepdim to be a bool")
     if not isinstance(keepdim, bool):
-        raise RefBackendError("codegen sum expects keepdim to be a bool")
+        raise RefBackendError(f"codegen {op_name} expects keepdim to be a bool")
     if dtype is not None:
         if isinstance(dtype, torch.fx.Node):
-            raise RefBackendError("codegen sum expects dtype to be torch.float32")
+            raise RefBackendError(
+                f"codegen {op_name} expects dtype to be torch.float32"
+            )
         if dtype is not torch.float32:
-            raise RefBackendError("codegen sum expects dtype to be torch.float32")
-    reduction_dims = _normalize_reduction_dims(dim, len(input_shape))
+            raise RefBackendError(
+                f"codegen {op_name} expects dtype to be torch.float32"
+            )
+    reduction_dims = _normalize_reduction_dims(op_name, dim, len(input_shape))
     reduce_all = dim is None
     return reduction_dims, keepdim, reduce_all
 
@@ -1814,9 +1847,9 @@ def _analyze_generic_graph(
             continue
         if node.op in {"call_function", "call_method"}:
             if node.op == "call_method":
-                if node.target != "sum":
+                if node.target not in {"sum", "prod"}:
                     raise RefBackendError(f"Unsupported call_method: {node.target}")
-                op_spec = SUPPORTED_OPS["sum"]
+                op_spec = SUPPORTED_OPS[node.target]
                 inplace_input = None
             else:
                 target_info = TARGET_REGISTRY.get(node.target)
@@ -1828,10 +1861,6 @@ def _analyze_generic_graph(
             keepdim = False
             reduce_all = False
             if op_spec.kind == "reduction":
-                if op_spec.name != "sum":
-                    raise RefBackendError(
-                        f"codegen backend does not support {op_spec.name}"
-                    )
                 if len(node.args) < 1:
                     raise RefBackendError(
                         f"codegen {op_spec.name} expects one input"
@@ -1867,10 +1896,10 @@ def _analyze_generic_graph(
                 input_nodes.append(arg)
                 input_shapes.append(shapes[arg])
             if op_spec.kind == "reduction":
-                reduction_dims, keepdim, reduce_all = _parse_sum_args(
-                    node, input_shapes[0]
+                reduction_dims, keepdim, reduce_all = _parse_reduction_args(
+                    op_spec.name, node, input_shapes[0]
                 )
-                output_shape = _infer_sum_output_shape(
+                output_shape = _infer_reduction_output_shape(
                     input_shapes[0],
                     reduction_dims,
                     keepdim,
@@ -2010,6 +2039,12 @@ def _compile_graph(
     ] = {
         (lib.input_shapes, lib.input_strides): lib,
     }
+
+    def _recompile(new_inputs: Sequence[object]) -> None:
+        nonlocal graph, lib, output_inplace_input
+        graph = _analyze_generic_graph(gm, new_inputs)
+        lib = _compile_generic_library(graph)
+        output_inplace_input = graph.output_inplace_input
 
     def resolve_output(value: object, env: Dict[torch.fx.Node, object]) -> object:
         if isinstance(value, torch.fx.Node):

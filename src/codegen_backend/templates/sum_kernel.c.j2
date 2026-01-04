@@ -2,14 +2,14 @@
 {% for dim in output_dims %}
     for (int64_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
 {% endfor %}
-    float acc = 0.0f;
+    float acc = {{ init_value }};
 {% if input_rank == 0 %}
-    acc += {{ input_access }};
+    acc {{ reduce_op }} {{ input_access }};
 {% else %}
 {% for dim in reduction_dims %}
     for (int64_t r{{ dim.dim }} = 0; r{{ dim.dim }} < {{ dim.size }}; ++r{{ dim.dim }}) {
 {% endfor %}
-        acc += {{ input_access }};
+        acc {{ reduce_op }} {{ input_access }};
 {% for dim in reduction_dims | reverse %}
     }
 {% endfor %}

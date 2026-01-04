@@ -1315,7 +1315,7 @@ positive                                 yes   yes
 pow                                      yes   yes    
 pow_                                     -     yes    
 prelu                                    -     -      
-prod                                     -     -      
+prod                                     -     yes    
 promote_types                            -     -      
 put                                      -     -      
 put_                                     -     -      
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 7
-supported by codegen only: 67
+supported by codegen only: 68
 supported by both: 73
-unsupported by either: 1567
-supported by codegen: 140 / 1714 (8.2 %)
+unsupported by either: 1566
+supported by codegen: 141 / 1714 (8.2 %)
 supported by c-ref: 80 / 1714 (4.7 %)

@@ -187,6 +187,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.nextafter.default,
     torch.ops.aten.positive.default,
     torch.ops.aten.pow.Tensor_Tensor,
+    torch.ops.aten.prod.default,
     torch.ops.aten.rad2deg.default,
     torch.ops.aten.real.default,
     torch.ops.aten.reciprocal.default,
@@ -490,6 +491,21 @@ class TestCodegenReductionOps(TestCase):
             compiled = _compile_codegen_op(torch.ops.aten.sum.default)
             result = compiled(tensor)
             expected = torch.ops.aten.sum.default(tensor)
+            assert result.shape == torch.Size([])
+            torch.testing.assert_close(result, expected)
+
+    def test_codegen_prod_default_cases(self):
+        cases = [
+            torch.randn(2, 3, dtype=torch.float32),
+            torch.randn(4, dtype=torch.float32),
+            torch.tensor(3.5, dtype=torch.float32),
+            torch.randn(0, 3, dtype=torch.float32),
+            torch.randn(2, 3, dtype=torch.float32).t(),
+        ]
+        for tensor in cases:
+            compiled = _compile_codegen_op(torch.ops.aten.prod.default)
+            result = compiled(tensor)
+            expected = torch.ops.aten.prod.default(tensor)
             assert result.shape == torch.Size([])
             torch.testing.assert_close(result, expected)
 
