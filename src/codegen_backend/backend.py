@@ -1217,12 +1217,44 @@ SUPPORTED_OPS = {
             torch.ops.aten.i0_,
         ),
     ),
+    "isfinite": _unary_spec(
+        "isfinite",
+        (
+            torch.isfinite,
+            torch.ops.aten.isfinite.default,
+            torch.ops.aten.isfinite,
+        ),
+    ),
     "isinf": _unary_spec(
         "isinf",
         (
             torch.isinf,
             torch.ops.aten.isinf.default,
             torch.ops.aten.isinf,
+        ),
+    ),
+    "isnan": _unary_spec(
+        "isnan",
+        (
+            torch.isnan,
+            torch.ops.aten.isnan.default,
+            torch.ops.aten.isnan,
+        ),
+    ),
+    "isneginf": _unary_spec(
+        "isneginf",
+        (
+            torch.isneginf,
+            torch.ops.aten.isneginf.default,
+            torch.ops.aten.isneginf,
+        ),
+    ),
+    "isposinf": _unary_spec(
+        "isposinf",
+        (
+            torch.isposinf,
+            torch.ops.aten.isposinf.default,
+            torch.ops.aten.isposinf,
         ),
     ),
     "lgamma": _unary_spec(
@@ -1251,14 +1283,6 @@ SUPPORTED_OPS = {
         inplace_targets=(
             torch.ops.aten.logit_.default,
             torch.ops.aten.logit_,
-        ),
-    ),
-    "isfinite": _unary_spec(
-        "isfinite",
-        (
-            torch.isfinite,
-            torch.ops.aten.isfinite.default,
-            torch.ops.aten.isfinite,
         ),
     ),
     "nan_to_num": _unary_spec(

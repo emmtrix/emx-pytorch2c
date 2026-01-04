@@ -1015,10 +1015,10 @@ isidentifier                             -     -
 isin                                     -     -      
 isinf                                    -     yes    
 islower                                  -     -      
-isnan                                    -     -      
-isneginf                                 -     -      
+isnan                                    -     yes    
+isneginf                                 -     yes    
 isnumeric                                -     -      
-isposinf                                 -     -      
+isposinf                                 -     yes    
 isprintable                              -     -      
 isreal                                   -     -      
 isspace                                  -     -      
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 8
-supported by codegen only: 102
+supported by codegen only: 109
 supported by both: 74
-unsupported by either: 1530
-supported by codegen: 176 / 1714 (10.3 %)
+unsupported by either: 1523
+supported by codegen: 183 / 1714 (10.7 %)
 supported by c-ref: 82 / 1714 (4.8 %)
