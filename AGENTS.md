@@ -42,6 +42,10 @@ When adding a new operator, follow the same structure as the existing `add`/`mat
 - **Tests**: add coverage in `tests/` for correct results and error handling
   (e.g. non-contiguous tensors, shape mismatches).
 
+Note: C ref backend uses handwritten C under `csrc/` (e.g. `csrc/ops_<op>.c` + registration in `csrc/c_ref_backend.c`) for reference semantics.
+Codegen backend registers ops in `src/codegen_backend/backend.py` (`SUPPORTED_OPS`) and may require updating Jinja templates under `src/codegen_backend/templates/*.c.j2`.
+Rule of thumb: pick C ref for correctness/reference behavior, codegen for generated kernel support.
+
 ### Codegen backend: adding a new operator
 
 - Register the op in `src/codegen_backend/backend.py` by adding it to `SUPPORTED_OPS` via `_binary_spec`, `_unary_spec`, or a custom `_OpSpec`.
