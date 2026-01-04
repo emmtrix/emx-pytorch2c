@@ -786,7 +786,7 @@ empty_permuted                           -     -
 empty_quantized                          -     -      
 empty_strided                            -     -      
 endswith                                 -     -      
-eq                                       -     -      
+eq                                       -     yes    
 eq_                                      -     -      
 equal                                    -     -      
 erf                                      yes   yes    
@@ -890,7 +890,7 @@ gather                                   -     -
 gather_backward                          -     -      
 gcd                                      -     -      
 gcd_                                     -     -      
-ge                                       -     -      
+ge                                       -     yes    
 ge_                                      -     -      
 gelu                                     -     -      
 gelu_                                    -     -      
@@ -921,7 +921,7 @@ grid_sampler_3d_backward                 -     -
 group_norm                               -     -      
 gru                                      -     -      
 gru_cell                                 -     -      
-gt                                       -     -      
+gt                                       -     yes    
 gt_                                      -     -      
 hamming_window                           -     -      
 hann_window                              -     -      
@@ -1139,7 +1139,7 @@ lstm                                     yes   -
 lstm_cell                                -     -      
 lstm_mps_backward                        -     -      
 lstrip                                   -     -      
-lt                                       -     -      
+lt                                       -     yes    
 lt_                                      -     -      
 lu_solve                                 -     -      
 lu_unpack                                -     -      
@@ -1247,7 +1247,7 @@ native_group_norm_backward               -     -
 native_layer_norm                        -     -      
 native_layer_norm_backward               -     -      
 native_norm                              -     -      
-ne                                       -     -      
+ne                                       -     yes    
 ne_                                      -     -      
 neg                                      yes   yes    
 neg_                                     -     yes    

@@ -271,6 +271,17 @@ SUPPORTED_OPS = {
             torch.ops.aten.div_,
         ),
     ),
+    "lt": _binary_spec(
+        "lt",
+        (
+            operator.lt,
+            torch.lt,
+            torch.ops.aten.lt.Tensor,
+            torch.ops.aten.lt.default,
+            torch.ops.aten.lt,
+        ),
+        None,
+    ),
     "le": _binary_spec(
         "le",
         (
@@ -279,6 +290,50 @@ SUPPORTED_OPS = {
             torch.ops.aten.le.Tensor,
             torch.ops.aten.le.default,
             torch.ops.aten.le,
+        ),
+        None,
+    ),
+    "gt": _binary_spec(
+        "gt",
+        (
+            operator.gt,
+            torch.gt,
+            torch.ops.aten.gt.Tensor,
+            torch.ops.aten.gt.default,
+            torch.ops.aten.gt,
+        ),
+        None,
+    ),
+    "ge": _binary_spec(
+        "ge",
+        (
+            operator.ge,
+            torch.ge,
+            torch.ops.aten.ge.Tensor,
+            torch.ops.aten.ge.default,
+            torch.ops.aten.ge,
+        ),
+        None,
+    ),
+    "eq": _binary_spec(
+        "eq",
+        (
+            operator.eq,
+            torch.eq,
+            torch.ops.aten.eq.Tensor,
+            torch.ops.aten.eq.default,
+            torch.ops.aten.eq,
+        ),
+        None,
+    ),
+    "ne": _binary_spec(
+        "ne",
+        (
+            operator.ne,
+            torch.ne,
+            torch.ops.aten.ne.Tensor,
+            torch.ops.aten.ne.default,
+            torch.ops.aten.ne,
         ),
         None,
     ),

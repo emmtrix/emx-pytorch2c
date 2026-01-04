@@ -81,6 +81,26 @@ static inline int32_t ref_scalar_i32_le(int32_t a, int32_t b) {
     return a <= b ? 1 : 0;
 }
 
+static inline int32_t ref_scalar_i32_lt(int32_t a, int32_t b) {
+    return a < b ? 1 : 0;
+}
+
+static inline int32_t ref_scalar_i32_ge(int32_t a, int32_t b) {
+    return a >= b ? 1 : 0;
+}
+
+static inline int32_t ref_scalar_i32_gt(int32_t a, int32_t b) {
+    return a > b ? 1 : 0;
+}
+
+static inline int32_t ref_scalar_i32_eq(int32_t a, int32_t b) {
+    return a == b ? 1 : 0;
+}
+
+static inline int32_t ref_scalar_i32_ne(int32_t a, int32_t b) {
+    return a != b ? 1 : 0;
+}
+
 static inline int32_t ref_scalar_i32_fmax(int32_t a, int32_t b) {
     return a > b ? a : b;
 }

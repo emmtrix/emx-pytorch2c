@@ -40,6 +40,26 @@ static inline float ref_scalar_f32_le(float a, float b) {
     return a <= b ? 1.0f : 0.0f;
 }
 
+static inline float ref_scalar_f32_lt(float a, float b) {
+    return a < b ? 1.0f : 0.0f;
+}
+
+static inline float ref_scalar_f32_ge(float a, float b) {
+    return a >= b ? 1.0f : 0.0f;
+}
+
+static inline float ref_scalar_f32_gt(float a, float b) {
+    return a > b ? 1.0f : 0.0f;
+}
+
+static inline float ref_scalar_f32_eq(float a, float b) {
+    return a == b ? 1.0f : 0.0f;
+}
+
+static inline float ref_scalar_f32_ne(float a, float b) {
+    return a != b ? 1.0f : 0.0f;
+}
+
 static inline float ref_scalar_f32_fmax(float a, float b) {
     return fmaxf(a, b);
 }
