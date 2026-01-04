@@ -785,6 +785,14 @@ SUPPORTED_OPS = {
             torch.ops.aten.sigmoid_,
         ),
     ),
+    "mish": _unary_spec(
+        "mish",
+        (
+            F.mish,
+            torch.ops.aten.mish.default,
+            torch.ops.aten.mish,
+        ),
+    ),
     "silu": _unary_spec(
         "silu",
         (

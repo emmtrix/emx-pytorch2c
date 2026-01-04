@@ -257,6 +257,18 @@ static inline float ref_scalar_f32_silu(float a) {
     return a / (1.0f + expf(-a));
 }
 
+static inline float ref_scalar_f32_mish(float a) {
+    if (a > 20.0f) {
+        return a;
+    }
+    if (a < -20.0f) {
+        float exp_a = expf(a);
+        return a * exp_a;
+    }
+    float softplus = log1pf(expf(a));
+    return a * tanhf(softplus);
+  }
+  
 static inline float ref_scalar_f32_hardswish(float a) {
     float shifted = a + 3.0f;
     float clamped = fminf(6.0f, fmaxf(0.0f, shifted));
