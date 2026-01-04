@@ -36,6 +36,26 @@ static inline int8_t ref_scalar_i8_bitwise_and(int8_t a, int8_t b) {
     return (int8_t)(a & b);
 }
 
+static inline int8_t ref_scalar_i8_bitwise_or(int8_t a, int8_t b) {
+    return (int8_t)(a | b);
+}
+
+static inline int8_t ref_scalar_i8_bitwise_xor(int8_t a, int8_t b) {
+    return (int8_t)(a ^ b);
+}
+
+static inline int8_t ref_scalar_i8_bitwise_left_shift(int8_t a, int8_t b) {
+    return (int8_t)(a << b);
+}
+
+static inline int8_t ref_scalar_i8_bitwise_right_shift(int8_t a, int8_t b) {
+    return (int8_t)(a >> b);
+}
+
+static inline int8_t ref_scalar_i8_bitwise_not(int8_t a) {
+    return (int8_t)(~a);
+}
+
 static inline int8_t ref_scalar_i8_div(int8_t a, int8_t b) {
     if (b == 0) {
         return 0;

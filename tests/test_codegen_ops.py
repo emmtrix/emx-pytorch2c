@@ -134,6 +134,11 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.atan2.default,
     torch.ops.aten.atanh.default,
     torch.ops.aten.bitwise_and.Tensor,
+    torch.ops.aten.bitwise_left_shift.Tensor,
+    torch.ops.aten.bitwise_not.default,
+    torch.ops.aten.bitwise_or.Tensor,
+    torch.ops.aten.bitwise_right_shift.Tensor,
+    torch.ops.aten.bitwise_xor.Tensor,
     torch.ops.aten.bmm.default,
     torch.ops.aten.ceil.default,
     torch.ops.aten.clamp_max.Tensor,
@@ -225,6 +230,12 @@ INPLACE_ATEN_OPS = [
     torch.ops.aten.atan_.default,
     torch.ops.aten.atan2_.default,
     torch.ops.aten.atanh_.default,
+    torch.ops.aten.bitwise_and_.Tensor,
+    torch.ops.aten.bitwise_left_shift_.Tensor,
+    torch.ops.aten.bitwise_not_.default,
+    torch.ops.aten.bitwise_or_.Tensor,
+    torch.ops.aten.bitwise_right_shift_.Tensor,
+    torch.ops.aten.bitwise_xor_.Tensor,
     torch.ops.aten.ceil_.default,
     torch.ops.aten.clamp_max_.Tensor,
     torch.ops.aten.clamp_min_.Tensor,
@@ -334,6 +345,42 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.add.Tensor: {
         "requires_same_shape": False,
         "sample_filter": _broadcastable_sample_filter,
+    },
+    torch.ops.aten.bitwise_and.Tensor: {
+        "allowed_dtypes": (torch.int8, torch.int32),
+    },
+    torch.ops.aten.bitwise_and_.Tensor: {
+        "allowed_dtypes": (torch.int8, torch.int32),
+    },
+    torch.ops.aten.bitwise_left_shift.Tensor: {
+        "allowed_dtypes": (torch.int8, torch.int32),
+    },
+    torch.ops.aten.bitwise_left_shift_.Tensor: {
+        "allowed_dtypes": (torch.int8, torch.int32),
+    },
+    torch.ops.aten.bitwise_not.default: {
+        "allowed_dtypes": (torch.int8, torch.int32),
+    },
+    torch.ops.aten.bitwise_not_.default: {
+        "allowed_dtypes": (torch.int8, torch.int32),
+    },
+    torch.ops.aten.bitwise_or.Tensor: {
+        "allowed_dtypes": (torch.int8, torch.int32),
+    },
+    torch.ops.aten.bitwise_or_.Tensor: {
+        "allowed_dtypes": (torch.int8, torch.int32),
+    },
+    torch.ops.aten.bitwise_right_shift.Tensor: {
+        "allowed_dtypes": (torch.int8, torch.int32),
+    },
+    torch.ops.aten.bitwise_right_shift_.Tensor: {
+        "allowed_dtypes": (torch.int8, torch.int32),
+    },
+    torch.ops.aten.bitwise_xor.Tensor: {
+        "allowed_dtypes": (torch.int8, torch.int32),
+    },
+    torch.ops.aten.bitwise_xor_.Tensor: {
+        "allowed_dtypes": (torch.int8, torch.int32),
     },
     torch.ops.aten.where.self: {
         "requires_same_shape": False,
@@ -480,12 +527,18 @@ class TestCodegenOpInfo(TestCase):
 class TestCodegenInplaceOps(TestCase):
     def test_codegen_backend_inplace_ops(self):
         device = torch.device("cpu")
-        dtype = torch.float32
         sample_shapes = (
             ((2, 3), (2, 3)),
         )
 
         for aten_overload in INPLACE_ATEN_OPS:
+            constraints = _constraints_for_codegen(aten_overload)
+            allowed_dtypes = constraints["allowed_dtypes"]
+            dtype = (
+                torch.float32
+                if torch.float32 in allowed_dtypes
+                else allowed_dtypes[0]
+            )
             required_args = [
                 arg
                 for arg in aten_overload._schema.arguments
@@ -494,8 +547,28 @@ class TestCodegenInplaceOps(TestCase):
             requires_rhs = len(required_args) > 1
             compiled = _compile_codegen_inplace_op(aten_overload)
             for lhs_shape, rhs_shape in sample_shapes:
-                lhs = torch.randn(lhs_shape, device=device, dtype=dtype)
-                rhs = torch.randn(rhs_shape, device=device, dtype=dtype)
+                op_name = aten_overload._schema.name.split("::")[-1]
+                if dtype in (torch.int8, torch.int32):
+                    if op_name in {"bitwise_left_shift_", "bitwise_right_shift_"}:
+                        low, high = 0, 3
+                    else:
+                        low, high = -5, 5
+                    lhs = torch.randint(
+                        low, high, lhs_shape, device=device, dtype=dtype
+                    )
+                    rhs = torch.randint(
+                        low, high, rhs_shape, device=device, dtype=dtype
+                    )
+                elif dtype is torch.bool:
+                    lhs = torch.randint(
+                        0, 2, lhs_shape, device=device, dtype=dtype
+                    )
+                    rhs = torch.randint(
+                        0, 2, rhs_shape, device=device, dtype=dtype
+                    )
+                else:
+                    lhs = torch.randn(lhs_shape, device=device, dtype=dtype)
+                    rhs = torch.randn(rhs_shape, device=device, dtype=dtype)
                 lhs, rhs = _sanitize_inplace_inputs(aten_overload, lhs, rhs)
 
                 expected = lhs.clone()

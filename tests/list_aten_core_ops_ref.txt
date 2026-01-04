@@ -612,17 +612,17 @@ binary_cross_entropy_with_logits         -     -
 bincount                                 -     -      
 binomial                                 -     -      
 bitwise_and                              -     yes    
-bitwise_and_                             -     -      
-bitwise_left_shift                       -     -      
-bitwise_left_shift_                      -     -      
-bitwise_not                              -     -      
-bitwise_not_                             -     -      
-bitwise_or                               -     -      
-bitwise_or_                              -     -      
-bitwise_right_shift                      -     -      
-bitwise_right_shift_                     -     -      
-bitwise_xor                              -     -      
-bitwise_xor_                             -     -      
+bitwise_and_                             -     yes    
+bitwise_left_shift                       -     yes    
+bitwise_left_shift_                      -     yes    
+bitwise_not                              -     yes    
+bitwise_not_                             -     yes    
+bitwise_or                               -     yes    
+bitwise_or_                              -     yes    
+bitwise_right_shift                      -     yes    
+bitwise_right_shift_                     -     yes    
+bitwise_xor                              -     yes    
+bitwise_xor_                             -     yes    
 blackman_window                          -     -      
 block_diag                               -     -      
 bmm                                      yes   yes    
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 8
-supported by codegen only: 81
+supported by codegen only: 95
 supported by both: 74
-unsupported by either: 1551
-supported by codegen: 155 / 1714 (9.0 %)
+unsupported by either: 1537
+supported by codegen: 169 / 1714 (9.9 %)
 supported by c-ref: 82 / 1714 (4.8 %)

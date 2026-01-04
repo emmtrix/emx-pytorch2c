@@ -67,6 +67,14 @@ _CODEGEN_DTYPES = {
 }
 
 _INTEGER_CODEGEN_DTYPES = {torch.int8, torch.int32}
+_BITWISE_OPS = {
+    "bitwise_and",
+    "bitwise_or",
+    "bitwise_xor",
+    "bitwise_left_shift",
+    "bitwise_right_shift",
+    "bitwise_not",
+}
 
 def _binary_spec(
     name: str,
@@ -165,6 +173,85 @@ SUPPORTED_OPS = {
         inplace_targets=(
             torch.ops.aten.bitwise_and_.Tensor,
             torch.ops.aten.bitwise_and_,
+        ),
+    ),
+    "bitwise_or": _binary_spec(
+        "bitwise_or",
+        (
+            operator.or_,
+            torch.bitwise_or,
+            torch.ops.aten.bitwise_or.Tensor,
+            torch.ops.aten.bitwise_or_.Tensor,
+            torch.ops.aten.bitwise_or_,
+            torch.ops.aten.bitwise_or,
+        ),
+        None,
+        inplace_targets=(
+            torch.ops.aten.bitwise_or_.Tensor,
+            torch.ops.aten.bitwise_or_,
+        ),
+    ),
+    "bitwise_xor": _binary_spec(
+        "bitwise_xor",
+        (
+            operator.xor,
+            torch.bitwise_xor,
+            torch.ops.aten.bitwise_xor.Tensor,
+            torch.ops.aten.bitwise_xor_.Tensor,
+            torch.ops.aten.bitwise_xor_,
+            torch.ops.aten.bitwise_xor,
+        ),
+        None,
+        inplace_targets=(
+            torch.ops.aten.bitwise_xor_.Tensor,
+            torch.ops.aten.bitwise_xor_,
+        ),
+    ),
+    "bitwise_left_shift": _binary_spec(
+        "bitwise_left_shift",
+        (
+            operator.lshift,
+            torch.bitwise_left_shift,
+            torch.ops.aten.bitwise_left_shift.Tensor,
+            torch.ops.aten.bitwise_left_shift_.Tensor,
+            torch.ops.aten.bitwise_left_shift_,
+            torch.ops.aten.bitwise_left_shift,
+        ),
+        None,
+        inplace_targets=(
+            torch.ops.aten.bitwise_left_shift_.Tensor,
+            torch.ops.aten.bitwise_left_shift_,
+        ),
+    ),
+    "bitwise_right_shift": _binary_spec(
+        "bitwise_right_shift",
+        (
+            operator.rshift,
+            torch.bitwise_right_shift,
+            torch.ops.aten.bitwise_right_shift.Tensor,
+            torch.ops.aten.bitwise_right_shift_.Tensor,
+            torch.ops.aten.bitwise_right_shift_,
+            torch.ops.aten.bitwise_right_shift,
+        ),
+        None,
+        inplace_targets=(
+            torch.ops.aten.bitwise_right_shift_.Tensor,
+            torch.ops.aten.bitwise_right_shift_,
+        ),
+    ),
+    "bitwise_not": _unary_spec(
+        "bitwise_not",
+        (
+            operator.invert,
+            torch.bitwise_not,
+            torch.ops.aten.bitwise_not.default,
+            torch.ops.aten.bitwise_not,
+            torch.ops.aten.bitwise_not_.default,
+            torch.ops.aten.bitwise_not_,
+        ),
+        inplace_targets=(
+            torch.ops.aten.bitwise_not_.default,
+            torch.ops.aten.bitwise_not_,
         ),
     ),
     "div": _binary_spec(
@@ -2451,6 +2538,13 @@ def _analyze_generic_graph(
                 input_nodes.append(arg)
                 input_shapes.append(shapes[arg])
             input_dtypes = [dtypes[arg] for arg in input_nodes]
+            if (
+                op_spec.name in _BITWISE_OPS
+                and dtype_info.torch_dtype not in _INTEGER_CODEGEN_DTYPES
+            ):
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects integer tensors"
+                )
             if op_spec.kind == "where":
                 if input_dtypes[0] is not torch.bool:
                     raise RefBackendError(

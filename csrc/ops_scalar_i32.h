@@ -42,6 +42,26 @@ static inline int32_t ref_scalar_i32_bitwise_and(int32_t a, int32_t b) {
     return a & b;
 }
 
+static inline int32_t ref_scalar_i32_bitwise_or(int32_t a, int32_t b) {
+    return a | b;
+}
+
+static inline int32_t ref_scalar_i32_bitwise_xor(int32_t a, int32_t b) {
+    return a ^ b;
+}
+
+static inline int32_t ref_scalar_i32_bitwise_left_shift(int32_t a, int32_t b) {
+    return a << b;
+}
+
+static inline int32_t ref_scalar_i32_bitwise_right_shift(int32_t a, int32_t b) {
+    return a >> b;
+}
+
+static inline int32_t ref_scalar_i32_bitwise_not(int32_t a) {
+    return ~a;
+}
+
 static inline int32_t ref_scalar_i32_div(int32_t a, int32_t b) {
     if (b == 0) {
         return 0;
