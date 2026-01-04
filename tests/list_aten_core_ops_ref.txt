@@ -930,8 +930,8 @@ hardshrink_backward                      -     -
 hardsigmoid                              -     -      
 hardsigmoid_                             -     -      
 hardsigmoid_backward                     -     -      
-hardswish                                -     -      
-hardswish_                               -     -      
+hardswish                                -     yes    
+hardswish_                               -     yes    
 hardswish_backward                       -     -      
 hardtanh                                 -     -      
 hardtanh_                                -     -      
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 8
-supported by codegen only: 80
+supported by codegen only: 82
 supported by both: 74
-unsupported by either: 1552
-supported by codegen: 154 / 1714 (9.0 %)
+unsupported by either: 1550
+supported by codegen: 156 / 1714 (9.1 %)
 supported by c-ref: 82 / 1714 (4.8 %)

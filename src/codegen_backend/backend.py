@@ -772,6 +772,20 @@ SUPPORTED_OPS = {
             torch.ops.aten.silu_,
         ),
     ),
+    "hardswish": _unary_spec(
+        "hardswish",
+        (
+            F.hardswish,
+            torch.ops.aten.hardswish.default,
+            torch.ops.aten.hardswish,
+            torch.ops.aten.hardswish_.default,
+            torch.ops.aten.hardswish_,
+        ),
+        inplace_targets=(
+            torch.ops.aten.hardswish_.default,
+            torch.ops.aten.hardswish_,
+        ),
+    ),
     "sign": _unary_spec(
         "sign",
         (
