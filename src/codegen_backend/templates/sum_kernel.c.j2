@@ -4,12 +4,12 @@
 {% endfor %}
     {{ acc_type }} acc = {{ init_value }};
 {% if input_rank == 0 %}
-    acc {{ reduce_op }} {{ input_access }};
+    {{ reduce_expr }};
 {% else %}
 {% for dim in reduction_dims %}
     for (int64_t r{{ dim.dim }} = 0; r{{ dim.dim }} < {{ dim.size }}; ++r{{ dim.dim }}) {
 {% endfor %}
-        acc {{ reduce_op }} {{ input_access }};
+        {{ reduce_expr }};
 {% for dim in reduction_dims | reverse %}
     }
 {% endfor %}

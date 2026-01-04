@@ -537,7 +537,7 @@ alias_copy                               -     -
 align_as                                 -     -      
 align_tensors                            -     -      
 align_to                                 -     -      
-all                                      -     -      
+all                                      -     yes    
 allclose                                 -     -      
 alpha_dropout                            -     -      
 alpha_dropout_                           -     -      
@@ -545,7 +545,7 @@ amax                                     yes   -
 amin                                     yes   -      
 aminmax                                  -     -      
 angle                                    yes   yes    
-any                                      -     -      
+any                                      -     yes    
 append                                   -     -      
 arange                                   -     -      
 arccos                                   -     -      
@@ -1717,9 +1717,9 @@ zfill                                    -     -
 
 Summary
 total aten ops: 1714
-supported by cref only: 8
-supported by codegen only: 76
+supported by cref only: 6
+supported by codegen only: 78
 supported by both: 74
 unsupported by either: 1556
-supported by codegen: 150 / 1714 (8.8 %)
-supported by c-ref: 82 / 1714 (4.8 %)
+supported by codegen: 152 / 1714 (8.9 %)
+supported by c-ref: 80 / 1714 (4.7 %)
