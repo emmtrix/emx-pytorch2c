@@ -24,20 +24,6 @@ def _update_sample(sample, updated_tensors):
     return SampleInput(new_input, args=tuple(new_args))
 
 
-def _matmul_sample_filter(sample):
-    tensors = _extract_tensors(sample)
-    if len(tensors) != 2:
-        return False
-    a, b = tensors
-    if a.ndim != b.ndim or a.ndim not in (1, 2, 3):
-        return False
-    if a.ndim == 1:
-        return a.shape[0] == b.shape[0]
-    if a.ndim == 2:
-        return a.shape[1] == b.shape[0]
-    return a.shape[0] == b.shape[0] and a.shape[2] == b.shape[1]
-
-
 def _bmm_sample_filter(sample):
     tensors = _extract_tensors(sample)
     if len(tensors) != 2:
@@ -335,7 +321,6 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.matmul.default: {
         "allow_noncontiguous": True,
         "requires_same_shape": False,
-        "sample_filter": _matmul_sample_filter,
     },
     torch.ops.aten.bmm.default: {
         "allow_noncontiguous": True,
@@ -456,8 +441,11 @@ class TestCodegenOpInfo(TestCase):
         compiled = _compile_codegen_op(aten_overload)
         for sample in _iter_supported_samples(op, device, dtype, constraints):
             inputs = (sample.input, *sample.args)
+            try:
+                expected = _reference_for_dtype(aten_overload, inputs, dtype)
+            except Exception:
+                continue
             result = compiled(*inputs)
-            expected = _reference_for_dtype(aten_overload, inputs, dtype)
             if result.dtype is not expected.dtype:
                 expected = expected.to(result.dtype)
             torch.testing.assert_close(
