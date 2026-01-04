@@ -1013,7 +1013,7 @@ isdigit                                  -     -
 isfinite                                 -     -      
 isidentifier                             -     -      
 isin                                     -     -      
-isinf                                    -     -      
+isinf                                    -     yes    
 islower                                  -     -      
 isnan                                    -     -      
 isneginf                                 -     -      

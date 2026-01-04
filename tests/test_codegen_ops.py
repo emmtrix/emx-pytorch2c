@@ -223,6 +223,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.heaviside.default,
     torch.ops.aten.hypot.default,
     torch.ops.aten.i0.default,
+    torch.ops.aten.isinf.default,
     torch.ops.aten.ldexp.Tensor,
     torch.ops.aten.lt.Tensor,
     torch.ops.aten.le.Tensor,
