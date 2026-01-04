@@ -63,6 +63,10 @@ def reduction_global_fn(a):
     return a.sum()
 
 
+def reduction_mean_global_fn(a):
+    return a.mean()
+
+
 def reduction_dim_fn(a):
     return a.sum(dim=1)
 
@@ -214,6 +218,18 @@ def test_codegen_generic_handles_reduction_global():
     compiled = torch.compile(reduction_global_fn, backend=codegen_generic_backend)
     result = compiled(a)
     torch.testing.assert_close(result, reduction_global_fn(a))
+
+
+def test_codegen_generic_handles_reduction_mean_global():
+    a = torch.randn(2, 3, dtype=torch.float32)
+    _assert_codegen_source_matches(
+        "mean_global.c", get_generic_source, reduction_mean_global_fn, (a,)
+    )
+    compiled = torch.compile(
+        reduction_mean_global_fn, backend=codegen_generic_backend
+    )
+    result = compiled(a)
+    torch.testing.assert_close(result, reduction_mean_global_fn(a))
 
 
 def test_codegen_generic_handles_reduction_dim():

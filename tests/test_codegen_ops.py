@@ -184,6 +184,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.maximum.default,
     torch.ops.aten.minimum.default,
     torch.ops.aten.mul.Tensor,
+    torch.ops.aten.mean.default,
     torch.ops.aten.nan_to_num.default,
     torch.ops.aten.neg.default,
     torch.ops.aten.nextafter.default,
@@ -540,6 +541,21 @@ class TestCodegenReductionOps(TestCase):
             expected = torch.ops.aten.prod.default(tensor)
             assert result.shape == torch.Size([])
             torch.testing.assert_close(result, expected)
+
+    def test_codegen_mean_default_cases(self):
+        cases = [
+            torch.randn(2, 3, dtype=torch.float32),
+            torch.randn(4, dtype=torch.float32),
+            torch.tensor(3.5, dtype=torch.float32),
+            torch.randn(0, 3, dtype=torch.float32),
+            torch.randn(2, 3, dtype=torch.float32).t(),
+        ]
+        for tensor in cases:
+            compiled = _compile_codegen_op(torch.ops.aten.mean.default)
+            result = compiled(tensor)
+            expected = torch.ops.aten.mean.default(tensor)
+            assert result.shape == torch.Size([])
+            torch.testing.assert_close(result, expected, equal_nan=True)
 
 
 instantiate_device_type_tests(TestCodegenOpInfo, globals(), only_for="cpu")
