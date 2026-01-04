@@ -38,6 +38,10 @@ static inline int32_t ref_scalar_i32_mul(int32_t a, int32_t b) {
     return a * b;
 }
 
+static inline int32_t ref_scalar_i32_bitwise_and(int32_t a, int32_t b) {
+    return a & b;
+}
+
 static inline int32_t ref_scalar_i32_div(int32_t a, int32_t b) {
     if (b == 0) {
         return 0;
@@ -51,6 +55,10 @@ static inline int32_t ref_scalar_i32_maximum(int32_t a, int32_t b) {
 
 static inline int32_t ref_scalar_i32_minimum(int32_t a, int32_t b) {
     return a < b ? a : b;
+}
+
+static inline int32_t ref_scalar_i32_le(int32_t a, int32_t b) {
+    return a <= b ? 1 : 0;
 }
 
 static inline int32_t ref_scalar_i32_fmax(int32_t a, int32_t b) {
@@ -229,6 +237,7 @@ REF_I32_UNARY_FROM_F32(rsqrt)
 REF_I32_UNARY_FROM_F32(sigmoid)
 REF_I32_UNARY_FROM_F32(silu)
 REF_I32_UNARY_FROM_F32(mish)
+REF_I32_UNARY_FROM_F32(hardswish)
 REF_I32_UNARY_FROM_F32(sin)
 REF_I32_UNARY_FROM_F32(sinc)
 REF_I32_UNARY_FROM_F32(sinh)

@@ -611,7 +611,7 @@ binary_cross_entropy_backward            -     -
 binary_cross_entropy_with_logits         -     -      
 bincount                                 -     -      
 binomial                                 -     -      
-bitwise_and                              -     -      
+bitwise_and                              -     yes    
 bitwise_and_                             -     -      
 bitwise_left_shift                       -     -      
 bitwise_left_shift_                      -     -      
@@ -930,8 +930,8 @@ hardshrink_backward                      -     -
 hardsigmoid                              -     -      
 hardsigmoid_                             -     -      
 hardsigmoid_backward                     -     -      
-hardswish                                -     -      
-hardswish_                               -     -      
+hardswish                                -     yes    
+hardswish_                               -     yes    
 hardswish_backward                       -     -      
 hardtanh                                 -     -      
 hardtanh_                                -     -      
@@ -1039,7 +1039,7 @@ lcm                                      -     -
 lcm_                                     -     -      
 ldexp                                    yes   yes    
 ldexp_                                   -     yes    
-le                                       -     -      
+le                                       -     yes    
 le_                                      -     -      
 leaky_relu                               -     -      
 leaky_relu_                              -     -      
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 8
-supported by codegen only: 80
+supported by codegen only: 81
 supported by both: 74
-unsupported by either: 1552
-supported by codegen: 154 / 1714 (9.0 %)
+unsupported by either: 1551
+supported by codegen: 155 / 1714 (9.0 %)
 supported by c-ref: 82 / 1714 (4.8 %)

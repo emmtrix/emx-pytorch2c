@@ -36,6 +36,10 @@ static inline float ref_scalar_f32_minimum(float a, float b) {
     return fminf(a, b);
 }
 
+static inline float ref_scalar_f32_le(float a, float b) {
+    return a <= b ? 1.0f : 0.0f;
+}
+
 static inline float ref_scalar_f32_fmax(float a, float b) {
     return fmaxf(a, b);
 }
@@ -263,6 +267,12 @@ static inline float ref_scalar_f32_mish(float a) {
     }
     float softplus = log1pf(expf(a));
     return a * tanhf(softplus);
+  }
+  
+static inline float ref_scalar_f32_hardswish(float a) {
+    float shifted = a + 3.0f;
+    float clamped = fminf(6.0f, fmaxf(0.0f, shifted));
+    return a * clamped / 6.0f;
 }
 
 static inline float ref_scalar_f32_sign(float a) {
