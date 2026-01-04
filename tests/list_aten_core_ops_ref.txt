@@ -799,7 +799,7 @@ exp                                      yes   yes
 exp2                                     yes   yes    
 exp2_                                    -     yes    
 exp_                                     -     yes    
-expand                                   yes   -      
+expand                                   yes   yes    
 expand_as                                -     -      
 expand_copy                              -     -      
 expandtabs                               -     -      
@@ -1235,7 +1235,7 @@ nanmean                                  -     -
 nanmedian                                -     -      
 nanquantile                              -     -      
 nansum                                   -     -      
-narrow                                   -     -      
+narrow                                   -     yes    
 narrow_copy                              -     -      
 native_batch_norm                        -     -      
 native_batch_norm_backward               -     -      
@@ -1298,7 +1298,7 @@ pairwise_distance                        -     -
 partition                                -     -      
 pdist                                    -     -      
 percentFormat                            -     -      
-permute                                  -     -      
+permute                                  -     yes    
 permute_copy                             -     -      
 pin_memory                               -     -      
 pinverse                                 -     -      
@@ -1386,7 +1386,7 @@ replication_pad2d_backward               -     -
 replication_pad3d                        -     -      
 replication_pad3d_backward               -     -      
 requires_grad_                           -     -      
-reshape                                  -     -      
+reshape                                  -     yes    
 reshape_as                               -     -      
 resize                                   -     -      
 resize_                                  -     -      
@@ -1439,7 +1439,7 @@ scatter_reduce_                          -     -
 searchsorted                             -     -      
 seed                                     -     -      
 segment_reduce                           -     -      
-select                                   -     -      
+select                                   -     yes    
 select_backward                          -     -      
 select_copy                              -     -      
 select_scatter                           -     -      
@@ -1468,7 +1468,7 @@ sinc_                                    -     yes
 sinh                                     yes   yes    
 sinh_                                    -     yes    
 size                                     -     -      
-slice                                    -     -      
+slice                                    -     yes    
 slice_backward                           -     -      
 slice_copy                               -     -      
 slice_inverse                            -     -      
@@ -1669,7 +1669,7 @@ unique_dim_consecutive                   -     -
 unsafe_chunk                             -     -      
 unsafe_split                             -     -      
 unsafe_split_with_sizes                  -     -      
-unsqueeze                                -     -      
+unsqueeze                                -     yes    
 unsqueeze_                               -     -      
 unsqueeze_copy                           -     -      
 update                                   -     -      
@@ -1695,7 +1695,7 @@ vander                                   -     -
 var                                      -     -      
 var_mean                                 -     -      
 vdot                                     -     -      
-view                                     -     -      
+view                                     -     yes    
 view_as                                  -     -      
 view_as_complex                          -     -      
 view_as_complex_copy                     -     -      
@@ -1717,9 +1717,9 @@ zfill                                    -     -
 
 Summary
 total aten ops: 1714
-supported by cref only: 7
-supported by codegen only: 69
-supported by both: 73
-unsupported by either: 1565
-supported by codegen: 142 / 1714 (8.3 %)
+supported by cref only: 6
+supported by codegen only: 76
+supported by both: 74
+unsupported by either: 1558
+supported by codegen: 150 / 1714 (8.8 %)
 supported by c-ref: 80 / 1714 (4.7 %)
