@@ -430,6 +430,10 @@ static inline float ref_scalar_f32_logit(float a) {
     return logf(a / (1.0f - a));
 }
 
+static inline float ref_scalar_f32_isinf(float a) {
+    return isinf(a) ? 1.0f : 0.0f;
+}
+
 static inline float ref_scalar_f32_nan_to_num(float a) {
     if (isnan(a)) {
         return 0.0f;

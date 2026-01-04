@@ -1195,6 +1195,14 @@ SUPPORTED_OPS = {
             torch.ops.aten.i0_,
         ),
     ),
+    "isinf": _unary_spec(
+        "isinf",
+        (
+            torch.isinf,
+            torch.ops.aten.isinf.default,
+            torch.ops.aten.isinf,
+        ),
+    ),
     "lgamma": _unary_spec(
         "lgamma",
         (
