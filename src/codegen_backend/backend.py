@@ -1471,6 +1471,26 @@ SUPPORTED_OPS = {
             torch.ops.aten.all,
         },
     ),
+    "amax": _OpSpec(
+        name="amax",
+        kind="reduction",
+        symbol=None,
+        supported_targets={
+            torch.amax,
+            torch.ops.aten.amax.default,
+            torch.ops.aten.amax,
+        },
+    ),
+    "amin": _OpSpec(
+        name="amin",
+        kind="reduction",
+        symbol=None,
+        supported_targets={
+            torch.amin,
+            torch.ops.aten.amin.default,
+            torch.ops.aten.amin,
+        },
+    ),
     "cat": _OpSpec(
         name="cat",
         kind="concat",
@@ -2099,6 +2119,31 @@ _REDUCTION_CONFIG = {
         "post_op": None,
         "bool_reduction": True,
     },
+    "amax": {
+        "init_value": 0,
+        "reduce_op": None,
+        "post_op": None,
+    },
+    "amin": {
+        "init_value": 0,
+        "reduce_op": None,
+        "post_op": None,
+    },
+}
+
+_MINMAX_INIT_VALUES = {
+    torch.float32: {
+        "amax": "-INFINITY",
+        "amin": "INFINITY",
+    },
+    torch.int8: {
+        "amax": "INT8_MIN",
+        "amin": "INT8_MAX",
+    },
+    torch.int32: {
+        "amax": "INT32_MIN",
+        "amin": "INT32_MAX",
+    },
 }
 
 
@@ -2205,6 +2250,20 @@ def _write_reduction_kernel(
                 "post_op": None,
                 "bool_reduction": True,
             }
+        elif op_spec.name == "amax":
+            config = {
+                "init_value": 0,
+                "reduce_op": "|=",
+                "post_op": None,
+                "bool_reduction": True,
+            }
+        elif op_spec.name == "amin":
+            config = {
+                "init_value": 1,
+                "reduce_op": "&=",
+                "post_op": None,
+                "bool_reduction": True,
+            }
         elif op_spec.name == "prod":
             config = {
                 "init_value": 1,
@@ -2252,25 +2311,47 @@ def _write_reduction_kernel(
             sizes=input_shape,
             c_type=dtype.c_type,
         )
+    reduce_expr = None
+    if op_spec.name in {"amax", "amin"} and dtype.torch_dtype is not torch.bool:
+        compare_op = ">" if op_spec.name == "amax" else "<"
+        init_value_config = _MINMAX_INIT_VALUES[dtype.torch_dtype][op_spec.name]
+        config = {
+            "init_value": init_value_config,
+            "post_op": None,
+        }
+        if dtype.torch_dtype is torch.float32:
+            isnan_fn = f"{dtype.scalar_prefix}isnan"
+            reduce_expr = (
+                f"acc = {isnan_fn}({input_access}) ? {input_access} : "
+                f"({isnan_fn}(acc) ? acc : ({input_access} {compare_op} acc ? {input_access} : acc))"
+            )
+        else:
+            reduce_expr = (
+                f"acc = ({input_access} {compare_op} acc ? {input_access} : acc)"
+            )
     reduction_count = 1
     for dim in reduction_dims:
         reduction_count *= input_shape[dim]
     bool_reduction = config.get("bool_reduction", False)
     acc_type = "int32_t" if bool_reduction else dtype.c_type
-    if bool_reduction or dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES:
-        init_value = str(config["init_value"])
+    init_value_config = config["init_value"]
+    if isinstance(init_value_config, str):
+        init_value = init_value_config
+    elif bool_reduction or dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES:
+        init_value = str(init_value_config)
     else:
-        init_value = f"{config['init_value']}.0f"
+        init_value = f"{init_value_config}.0f"
     post_op = None
     if config["post_op"] == "mean":
         if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES:
             post_op = f"acc /= {reduction_count};"
         else:
             post_op = f"acc /= (float){reduction_count};"
-    if bool_reduction:
-        reduce_expr = f"acc {config['reduce_op']} ({input_access} != 0)"
-    else:
-        reduce_expr = f"acc {config['reduce_op']} {input_access}"
+    if reduce_expr is None:
+        if bool_reduction:
+            reduce_expr = f"acc {config['reduce_op']} ({input_access} != 0)"
+        else:
+            reduce_expr = f"acc {config['reduce_op']} {input_access}"
     rendered = reduction_template.render(
         signature=signature,
         input_rank=input_rank,
