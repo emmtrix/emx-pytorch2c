@@ -141,6 +141,61 @@ def _concat_sample_filter(sample):
     return True
 
 
+def _normalize_conv2d_param(value):
+    if isinstance(value, int):
+        return (value, value)
+    if (
+        isinstance(value, (tuple, list))
+        and len(value) == 2
+        and all(isinstance(item, int) for item in value)
+    ):
+        return (value[0], value[1])
+    return None
+
+
+def _conv2d_sample_filter(sample):
+    if not isinstance(sample.input, torch.Tensor):
+        return False
+    if not sample.args:
+        return False
+    args = list(sample.args)
+    weight = args[0] if len(args) > 0 else sample.kwargs.get("weight")
+    if not isinstance(weight, torch.Tensor):
+        return False
+    bias = sample.kwargs.get("bias", args[1] if len(args) > 1 else None)
+    if bias is not None:
+        return False
+    stride = sample.kwargs.get("stride", args[2] if len(args) > 2 else 1)
+    padding = sample.kwargs.get("padding", args[3] if len(args) > 3 else 0)
+    dilation = sample.kwargs.get("dilation", args[4] if len(args) > 4 else 1)
+    groups = sample.kwargs.get("groups", args[5] if len(args) > 5 else 1)
+    stride_pair = _normalize_conv2d_param(stride)
+    padding_pair = _normalize_conv2d_param(padding)
+    dilation_pair = _normalize_conv2d_param(dilation)
+    if stride_pair is None or padding_pair is None or dilation_pair is None:
+        return False
+    if (
+        stride_pair[0] <= 0
+        or stride_pair[1] <= 0
+        or dilation_pair[0] <= 0
+        or dilation_pair[1] <= 0
+        or padding_pair[0] < 0
+        or padding_pair[1] < 0
+    ):
+        return False
+    if not isinstance(groups, int) or groups <= 0:
+        return False
+    if sample.input.ndim != 4 or weight.ndim != 4:
+        return False
+    if not sample.input.is_contiguous() or not weight.is_contiguous():
+        return False
+    if sample.input.shape[1] != weight.shape[1] * groups:
+        return False
+    if weight.shape[0] % groups != 0:
+        return False
+    return True
+
+
 def _sample_matches_constraints(sample, dtype, constraints):
     tensors = _extract_tensors(sample)
     if not tensors:
@@ -220,6 +275,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.conj.default,
     torch.ops.aten.conj_physical.default,
     torch.ops.aten.copysign.Tensor,
+    torch.ops.aten.conv2d.default,
     torch.ops.aten.cos.default,
     torch.ops.aten.cosh.default,
     torch.ops.aten.deg2rad.default,
@@ -509,6 +565,13 @@ CODEGEN_OP_TEST_CONFIG = {
         "requires_same_shape": False,
         "sample_filter": _concat_sample_filter,
     },
+    torch.ops.aten.conv2d.default: {
+        "allowed_dtypes": (torch.float32,),
+        "allow_non_tensor_args": True,
+        "allow_kwargs": True,
+        "requires_same_shape": False,
+        "requires_contiguous": True,
+        "sample_filter": _conv2d_sample_filter,
     torch.ops.aten.addmm.default: {
         "allowed_dtypes": (torch.float32,),
         "allow_non_tensor_args": True,

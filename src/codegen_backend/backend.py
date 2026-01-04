@@ -13,7 +13,7 @@ from jinja2 import Environment, FileSystemLoader
 import torch.fx
 from torch.fx.immutable_collections import immutable_list
 
-from c_ref_backend.cffi_bindings import RefBackendError
+from c_ref_backend.cffi_bindings import RefBackendError, _normalize_conv2d_param
 
 
 @dataclass(frozen=True)
@@ -1567,6 +1567,17 @@ SUPPORTED_OPS = {
             torch.ops.aten.bmm.default,
         },
     ),
+    "conv2d": _OpSpec(
+        name="conv2d",
+        kind="conv2d",
+        symbol=None,
+        supported_targets={
+            torch.ops.aten.convolution.default,
+            torch.ops.aten.convolution,
+            torch.ops.aten.conv2d.default,
+            torch.ops.aten.conv2d,
+        },
+    ),
 }
 
 
@@ -1620,6 +1631,10 @@ class _OpNode:
     reduce_all: bool = False
     std_unbiased: bool | None = None
     concat_dim: int | None = None
+    conv2d_stride: Tuple[int, int] | None = None
+    conv2d_padding: Tuple[int, int] | None = None
+    conv2d_dilation: Tuple[int, int] | None = None
+    conv2d_groups: int | None = None
     addmm_alpha: float | None = None
     addmm_beta: float | None = None
 
@@ -1718,6 +1733,38 @@ def _is_contiguous(shape: Sequence[int], strides: Sequence[int]) -> bool:
         size == 1 or stride == expected_stride
         for size, stride, expected_stride in zip(shape, strides, expected)
     )
+
+
+def _conv2d_output_shape_from_shapes(
+    input_shape: Sequence[int],
+    weight_shape: Sequence[int],
+    stride: Tuple[int, int],
+    padding: Tuple[int, int],
+    dilation: Tuple[int, int],
+    groups: int,
+) -> Tuple[int, int, int, int]:
+    batch, in_channels, in_h, in_w = input_shape
+    out_channels, weight_in_channels, kernel_h, kernel_w = weight_shape
+    if in_channels != weight_in_channels * groups:
+        raise RefBackendError(
+            "codegen conv2d requires input channels to match weight channels * groups"
+        )
+    if out_channels % groups != 0:
+        raise RefBackendError(
+            "codegen conv2d requires output channels to be divisible by groups"
+        )
+    stride_h, stride_w = stride
+    pad_h, pad_w = padding
+    dil_h, dil_w = dilation
+    numerator_h = in_h + 2 * pad_h - dil_h * (kernel_h - 1) - 1
+    numerator_w = in_w + 2 * pad_w - dil_w * (kernel_w - 1) - 1
+    if numerator_h < 0 or numerator_w < 0:
+        raise RefBackendError(
+            "codegen conv2d requires output shape (N, C_out, H_out, W_out)"
+        )
+    out_h = numerator_h // stride_h + 1
+    out_w = numerator_w // stride_w + 1
+    return batch, out_channels, out_h, out_w
 
 
 def _emit_strided_access(
@@ -2703,6 +2750,57 @@ def _write_concat_kernel(
     return lines
 
 
+def _write_conv2d_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    input_shape: Sequence[int],
+    weight_shape: Sequence[int],
+    output_shape: Sequence[int],
+    stride: Tuple[int, int],
+    padding: Tuple[int, int],
+    dilation: Tuple[int, int],
+    groups: int,
+    dtype: _CodegenDType,
+) -> List[str]:
+    conv2d_template = _get_template_env().get_template("conv2d_kernel.c.j2")
+    batch, in_channels, in_h, in_w = input_shape
+    out_channels, _, k_h, k_w = weight_shape
+    out_h, out_w = output_shape[2], output_shape[3]
+    stride_h, stride_w = stride
+    pad_h, pad_w = padding
+    dil_h, dil_w = dilation
+    input_suffix = _format_array_suffix(input_shape)
+    weight_suffix = _format_array_suffix(weight_shape)
+    output_suffix = _format_array_suffix(output_shape)
+    signature = (
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"const {dtype.c_type} input{input_suffix}, "
+        f"const {dtype.c_type} weight{weight_suffix}, "
+        f"{dtype.c_type} out{output_suffix}) {{"
+    )
+    rendered = conv2d_template.render(
+        signature=signature,
+        batch=batch,
+        in_channels=in_channels,
+        out_channels=out_channels,
+        in_h=in_h,
+        in_w=in_w,
+        out_h=out_h,
+        out_w=out_w,
+        k_h=k_h,
+        k_w=k_w,
+        stride_h=stride_h,
+        stride_w=stride_w,
+        pad_h=pad_h,
+        pad_w=pad_w,
+        dil_h=dil_h,
+        dil_w=dil_w,
+        groups=groups,
+        c_type=dtype.c_type,
+    )
+    return rendered.strip().splitlines()
+
+
 def _write_generic_source(graph: _GenericGraph) -> str:
     placeholders = graph.tensor_placeholders
     op_nodes = graph.op_nodes
@@ -2781,6 +2879,19 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 op_node.concat_dim if op_node.concat_dim is not None else 0,
                 graph.dtype,
             )
+        elif op_node.spec.kind == "conv2d":
+            input_node, weight_node = op_node.inputs
+            kernel_lines = _write_conv2d_kernel(
+                index,
+                op_node.spec,
+                graph.shapes[input_node],
+                graph.shapes[weight_node],
+                op_node.output_shape,
+                op_node.conv2d_stride or (1, 1),
+                op_node.conv2d_padding or (0, 0),
+                op_node.conv2d_dilation or (1, 1),
+                op_node.conv2d_groups or 1,
+                graph.dtype,
         elif op_node.spec.kind == "addmm":
             input_node, mat1_node, mat2_node = op_node.inputs
             kernel_lines = _write_addmm_kernel(
@@ -2938,6 +3049,8 @@ def _infer_output_shape(
         return ()
     if op_spec.kind == "concat":
         raise RefBackendError("codegen cat expects a tensor list input")
+    if op_spec.kind == "conv2d":
+        raise RefBackendError("codegen conv2d expects convolution arguments")
     if op_spec.kind == "addmm":
         input_shape, mat1_shape, mat2_shape = input_shapes
         if len(input_shape) != 2 or len(mat1_shape) != 2 or len(mat2_shape) != 2:
@@ -3235,6 +3348,97 @@ def _parse_concat_args(
     return list(tensors_arg), dim_value
 
 
+def _parse_conv2d_args(
+    node: torch.fx.Node,
+) -> Tuple[
+    torch.fx.Node,
+    torch.fx.Node,
+    object,
+    object,
+    object,
+    object,
+    object,
+    object,
+    object,
+]:
+    args = list(node.args)
+    kwargs = dict(node.kwargs)
+    if len(args) < 2 or len(args) > 9:
+        raise RefBackendError("codegen conv2d expects convolution arguments")
+    input_arg = args[0]
+    weight_arg = args[1]
+    bias = None
+    stride = 1
+    padding = 0
+    dilation = 1
+    groups = 1
+    transposed = False
+    output_padding: object = (0, 0)
+    remaining = args[2:]
+    if len(args) <= 7:
+        if len(remaining) >= 1:
+            bias = remaining[0]
+        if len(remaining) >= 2:
+            stride = remaining[1]
+        if len(remaining) >= 3:
+            padding = remaining[2]
+        if len(remaining) >= 4:
+            dilation = remaining[3]
+        if len(remaining) >= 5:
+            groups = remaining[4]
+    elif len(args) == 9:
+        (
+            bias,
+            stride,
+            padding,
+            dilation,
+            transposed,
+            output_padding,
+            groups,
+        ) = remaining
+
+    if kwargs:
+        extra = set(kwargs) - {
+            "bias",
+            "stride",
+            "padding",
+            "dilation",
+            "groups",
+            "transposed",
+            "output_padding",
+        }
+        if extra:
+            raise RefBackendError(
+                f"codegen conv2d got unexpected kwargs: {sorted(extra)}"
+            )
+        if "bias" in kwargs:
+            bias = kwargs["bias"]
+        if "stride" in kwargs:
+            stride = kwargs["stride"]
+        if "padding" in kwargs:
+            padding = kwargs["padding"]
+        if "dilation" in kwargs:
+            dilation = kwargs["dilation"]
+        if "groups" in kwargs:
+            groups = kwargs["groups"]
+        if "transposed" in kwargs:
+            transposed = kwargs["transposed"]
+        if "output_padding" in kwargs:
+            output_padding = kwargs["output_padding"]
+
+    return (
+        input_arg,
+        weight_arg,
+        bias,
+        stride,
+        padding,
+        dilation,
+        transposed,
+        output_padding,
+        groups,
+    )
+
+
 def _analyze_generic_graph(
     gm: torch.fx.GraphModule, example_inputs: Sequence[object]
 ) -> _GenericGraph:
@@ -3334,6 +3538,94 @@ def _analyze_generic_graph(
                     )
                 )
                 continue
+            if op_spec.kind == "conv2d":
+                (
+                    input_arg,
+                    weight_arg,
+                    bias,
+                    stride,
+                    padding,
+                    dilation,
+                    transposed,
+                    output_padding,
+                    groups,
+                ) = _parse_conv2d_args(node)
+                if not isinstance(input_arg, torch.fx.Node) or not isinstance(
+                    weight_arg, torch.fx.Node
+                ):
+                    raise RefBackendError("codegen conv2d expects tensor inputs only")
+                if bias is not None or isinstance(bias, torch.fx.Node):
+                    raise RefBackendError("codegen conv2d does not support bias")
+                if isinstance(stride, torch.fx.Node) or isinstance(
+                    padding, torch.fx.Node
+                ) or isinstance(dilation, torch.fx.Node):
+                    raise RefBackendError(
+                        "codegen conv2d expects constant stride, padding, and dilation"
+                    )
+                if isinstance(transposed, torch.fx.Node) or transposed:
+                    raise RefBackendError("codegen conv2d does not support transposed")
+                if isinstance(output_padding, torch.fx.Node) or output_padding not in (
+                    (0, 0),
+                    [0, 0],
+                    0,
+                ):
+                    raise RefBackendError("codegen conv2d expects zero output padding")
+                if isinstance(groups, torch.fx.Node):
+                    raise RefBackendError("codegen conv2d expects constant groups")
+                if dtype_info.torch_dtype is not torch.float32:
+                    raise RefBackendError(
+                        "codegen conv2d supports only torch.float32 tensors"
+                    )
+                if input_arg not in shapes or weight_arg not in shapes:
+                    raise RefBackendError("codegen conv2d expects tensor inputs only")
+                if (
+                    dtypes[input_arg] is not torch.float32
+                    or dtypes[weight_arg] is not torch.float32
+                ):
+                    raise RefBackendError(
+                        "codegen conv2d supports only torch.float32 tensors"
+                    )
+                input_shape = shapes[input_arg]
+                weight_shape = shapes[weight_arg]
+                if len(input_shape) != 4 or len(weight_shape) != 4:
+                    raise RefBackendError(
+                        "codegen conv2d requires 4D input and weight tensors"
+                    )
+                if not _is_contiguous(input_shape, strides[input_arg]) or not _is_contiguous(
+                    weight_shape, strides[weight_arg]
+                ):
+                    raise RefBackendError(
+                        "codegen conv2d requires contiguous tensors"
+                    )
+                stride_pair = _normalize_conv2d_param("stride", stride)
+                padding_pair = _normalize_conv2d_param("padding", padding)
+                dilation_pair = _normalize_conv2d_param("dilation", dilation)
+                if (
+                    stride_pair[0] <= 0
+                    or stride_pair[1] <= 0
+                    or dilation_pair[0] <= 0
+                    or dilation_pair[1] <= 0
+                    or padding_pair[0] < 0
+                    or padding_pair[1] < 0
+                ):
+                    raise RefBackendError(
+                        "codegen conv2d expects stride and dilation to be positive and padding to be non-negative"
+                    )
+                if not isinstance(groups, int) or groups <= 0:
+                    raise RefBackendError(
+                        "codegen conv2d requires positive groups"
+                    )
+                output_shape = _conv2d_output_shape_from_shapes(
+                    input_shape,
+                    weight_shape,
+                    stride_pair,
+                    padding_pair,
+                    dilation_pair,
+                    groups,
+                )
+                shapes[node] = output_shape
+                dtypes[node] = dtype_info.torch_dtype
+                strides[node] = _contiguous_strides(output_shape)
             if op_spec.kind == "addmm":
                 input_nodes, alpha, beta = _parse_addmm_args(node)
                 input_shapes = []
@@ -3363,6 +3655,13 @@ def _analyze_generic_graph(
                     _OpNode(
                         node=node,
                         spec=op_spec,
+                        inputs=(input_arg, weight_arg),
+                        output_shape=output_shape,
+                        inplace_input=None,
+                        conv2d_stride=stride_pair,
+                        conv2d_padding=padding_pair,
+                        conv2d_dilation=dilation_pair,
+                        conv2d_groups=groups,
                         inputs=tuple(input_nodes),
                         output_shape=output_shape,
                         inplace_input=inplace_input,
