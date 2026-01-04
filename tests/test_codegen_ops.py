@@ -210,6 +210,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.transpose.int,
     torch.ops.aten.trunc.default,
     torch.ops.aten.xlogy.Tensor,
+    torch.ops.aten.where.self,
 ]
 INPLACE_ATEN_OPS = [
     torch.ops.aten.add_.Tensor,
@@ -327,6 +328,10 @@ CODEGEN_OPS_UNDER_TEST = [
 CODEGEN_OPINFO_LIST = [opinfo for _, opinfo in CODEGEN_OPS_UNDER_TEST]
 CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.add.Tensor: {
+        "requires_same_shape": False,
+        "sample_filter": _broadcastable_sample_filter,
+    },
+    torch.ops.aten.where.self: {
         "requires_same_shape": False,
         "sample_filter": _broadcastable_sample_filter,
     },

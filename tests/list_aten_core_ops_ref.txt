@@ -1706,7 +1706,7 @@ vsplit                                   -     -
 vstack                                   -     -      
 wait                                     -     -      
 warn                                     -     -      
-where                                    -     -      
+where                                    -     yes    
 xlogy                                    yes   yes    
 xlogy_                                   -     yes    
 zero                                     -     -      
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 8
-supported by codegen only: 79
+supported by codegen only: 80
 supported by both: 74
-unsupported by either: 1553
-supported by codegen: 153 / 1714 (8.9 %)
+unsupported by either: 1552
+supported by codegen: 154 / 1714 (9.0 %)
 supported by c-ref: 82 / 1714 (4.8 %)

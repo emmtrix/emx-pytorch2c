@@ -83,6 +83,10 @@ def reduction_broadcast_fn(a, b):
     return (a + b).sum(dim=1)
 
 
+def where_fn(condition, a, b):
+    return torch.where(condition, a, b)
+
+
 @pytest.mark.parametrize(
     ("reference_name", "fn", "source_fn", "backend"),
     [
@@ -162,6 +166,18 @@ def test_codegen_generic_handles_atan():
     compiled = torch.compile(atan_fn, backend=codegen_generic_backend)
     result = compiled(a)
     torch.testing.assert_close(result, atan_fn(a))
+
+
+def test_codegen_generic_handles_where():
+    condition = torch.tensor([[True, False, True]], dtype=torch.bool)
+    a = torch.randn(1, 3, dtype=torch.float32)
+    b = torch.randn(1, 3, dtype=torch.float32)
+    _assert_codegen_source_matches(
+        "where.c", get_generic_source, where_fn, (condition, a, b)
+    )
+    compiled = torch.compile(where_fn, backend=codegen_generic_backend)
+    result = compiled(condition, a, b)
+    torch.testing.assert_close(result, where_fn(condition, a, b))
 
 
 def test_codegen_generic_supports_inplace_ops():

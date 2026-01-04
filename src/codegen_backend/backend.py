@@ -356,6 +356,15 @@ SUPPORTED_OPS = {
             torch.ops.aten.heaviside_,
         ),
     ),
+    "where": _OpSpec(
+        name="where",
+        kind="where",
+        symbol=None,
+        supported_targets={
+            torch.where,
+            torch.ops.aten.where.self,
+        },
+    ),
     "ldexp": _binary_spec(
         "ldexp",
         (
@@ -1239,6 +1248,7 @@ class _GenericGraph:
     output_structure: object
     shapes: Dict[torch.fx.Node, Tuple[int, ...]]
     strides: Dict[torch.fx.Node, Tuple[int, ...]]
+    dtypes: Dict[torch.fx.Node, torch.dtype]
     dtype: _CodegenDType
 
 
@@ -1267,18 +1277,22 @@ def _format_array_suffix(shape: Sequence[int]) -> str:
 
 
 def _broadcast_output_shape(
-    op_spec: _OpSpec, a_shape: Sequence[int], b_shape: Sequence[int]
+    op_spec: _OpSpec, *input_shapes: Sequence[int]
 ) -> Tuple[int, ...]:
-    max_len = max(len(a_shape), len(b_shape))
+    if not input_shapes:
+        return ()
+    max_len = max(len(shape) for shape in input_shapes)
     output_shape = []
     for dim in range(1, max_len + 1):
-        a_dim = a_shape[-dim] if dim <= len(a_shape) else 1
-        b_dim = b_shape[-dim] if dim <= len(b_shape) else 1
-        if a_dim != b_dim and a_dim != 1 and b_dim != 1:
+        sizes = [
+            shape[-dim] if dim <= len(shape) else 1 for shape in input_shapes
+        ]
+        max_size = max(sizes)
+        if any(size not in (1, max_size) for size in sizes):
             raise RefBackendError(
                 f"codegen {op_spec.name} requires inputs to be broadcastable"
             )
-        output_shape.append(max(a_dim, b_dim))
+        output_shape.append(max_size)
     return tuple(reversed(output_shape))
 
 
@@ -1383,11 +1397,22 @@ def _format_output_access(
     return f"(({c_type}*){name})[{index_expr}]"
 
 
+def _input_c_type(dtype: torch.dtype, graph_dtype: _CodegenDType) -> str:
+    if dtype is graph_dtype.torch_dtype:
+        return graph_dtype.c_type
+    if dtype is torch.bool:
+        return "uint8_t"
+    raise RefBackendError(
+        "codegen backend supports only torch.float32, torch.int8, torch.int32, or torch.bool tensors"
+    )
+
+
 def emit_signature(
     node_index: int,
     op_spec: _OpSpec,
     output_shape: Sequence[int],
     input_shapes: Sequence[Sequence[int]],
+    input_dtypes: Sequence[torch.dtype],
     dtype: _CodegenDType,
 ) -> str:
     out_suffix = _format_array_suffix(output_shape)
@@ -1395,16 +1420,34 @@ def emit_signature(
         a_shape, b_shape = input_shapes
         a_suffix = _format_array_suffix(a_shape)
         b_suffix = _format_array_suffix(b_shape)
+        a_c_type = _input_c_type(input_dtypes[0], dtype)
+        b_c_type = _input_c_type(input_dtypes[1], dtype)
         return (
             f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
-            f"const {dtype.c_type} a{a_suffix}, "
-            f"const {dtype.c_type} b{b_suffix}, "
+            f"const {a_c_type} a{a_suffix}, "
+            f"const {b_c_type} b{b_suffix}, "
+            f"{dtype.c_type} out{out_suffix}) {{"
+        )
+    if op_spec.kind == "where":
+        cond_shape, a_shape, b_shape = input_shapes
+        cond_suffix = _format_array_suffix(cond_shape)
+        a_suffix = _format_array_suffix(a_shape)
+        b_suffix = _format_array_suffix(b_shape)
+        cond_c_type = _input_c_type(input_dtypes[0], dtype)
+        a_c_type = _input_c_type(input_dtypes[1], dtype)
+        b_c_type = _input_c_type(input_dtypes[2], dtype)
+        return (
+            f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+            f"const {cond_c_type} cond{cond_suffix}, "
+            f"const {a_c_type} a{a_suffix}, "
+            f"const {b_c_type} b{b_suffix}, "
             f"{dtype.c_type} out{out_suffix}) {{"
         )
     a_suffix = _format_array_suffix(input_shapes[0])
+    a_c_type = _input_c_type(input_dtypes[0], dtype)
     return (
         f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
-        f"const {dtype.c_type} a{a_suffix}, "
+        f"const {a_c_type} a{a_suffix}, "
         f"{dtype.c_type} out{out_suffix}) {{"
     )
 
@@ -1461,6 +1504,7 @@ def emit_body(
     output_access: str,
     input_shapes: Sequence[Sequence[int]],
     input_strides: Sequence[Sequence[int]],
+    input_dtypes: Sequence[torch.dtype],
     output_shape: Sequence[int],
     indent: str,
     dtype: _CodegenDType,
@@ -1475,7 +1519,7 @@ def emit_body(
             a_strides,
             output_shape,
             broadcast_contiguous=True,
-            c_type=dtype.c_type,
+            c_type=_input_c_type(input_dtypes[0], dtype),
         )
         b_index_expr = emit_input_access(
             "b",
@@ -1483,10 +1527,40 @@ def emit_body(
             b_strides,
             output_shape,
             broadcast_contiguous=True,
-            c_type=dtype.c_type,
+            c_type=_input_c_type(input_dtypes[1], dtype),
         )
         return [
             f"{indent}{output_access} = {scalar_fn}({a_index_expr}, {b_index_expr});"
+        ]
+    if op_spec.kind == "where":
+        cond_shape, a_shape, b_shape = input_shapes
+        cond_strides, a_strides, b_strides = input_strides
+        cond_index_expr = emit_input_access(
+            "cond",
+            cond_shape,
+            cond_strides,
+            output_shape,
+            broadcast_contiguous=True,
+            c_type=_input_c_type(input_dtypes[0], dtype),
+        )
+        a_index_expr = emit_input_access(
+            "a",
+            a_shape,
+            a_strides,
+            output_shape,
+            broadcast_contiguous=True,
+            c_type=_input_c_type(input_dtypes[1], dtype),
+        )
+        b_index_expr = emit_input_access(
+            "b",
+            b_shape,
+            b_strides,
+            output_shape,
+            broadcast_contiguous=True,
+            c_type=_input_c_type(input_dtypes[2], dtype),
+        )
+        return [
+            f"{indent}{output_access} = ({cond_index_expr} != 0) ? {a_index_expr} : {b_index_expr};"
         ]
     a_shape = input_shapes[0]
     a_strides = input_strides[0]
@@ -1496,7 +1570,7 @@ def emit_body(
         a_strides,
         output_shape,
         broadcast_contiguous=False,
-        c_type=dtype.c_type,
+        c_type=_input_c_type(input_dtypes[0], dtype),
     )
     return [f"{indent}{output_access} = {scalar_fn}({input_access});"]
 
@@ -1517,10 +1591,15 @@ def _write_elementwise_kernel(
     output_shape: Sequence[int],
     input_shapes: Sequence[Sequence[int]],
     input_strides: Sequence[Sequence[int]],
+    input_dtypes: Sequence[torch.dtype],
     output_strides: Sequence[int],
     dtype: _CodegenDType,
 ) -> List[str]:
-    lines = [emit_signature(node_index, op_spec, output_shape, input_shapes, dtype)]
+    lines = [
+        emit_signature(
+            node_index, op_spec, output_shape, input_shapes, input_dtypes, dtype
+        )
+    ]
     loop_lines, indent = emit_loops(output_shape)
     lines.extend(loop_lines)
     output_access = emit_output_access(
@@ -1532,6 +1611,7 @@ def _write_elementwise_kernel(
             output_access,
             input_shapes,
             input_strides,
+            input_dtypes,
             output_shape,
             indent,
             dtype,
@@ -1878,9 +1958,10 @@ def _write_generic_source(graph: _GenericGraph) -> str:
     ]
     kernels: List[str] = []
     for index, op_node in enumerate(op_nodes, start=1):
-        if op_node.spec.kind in {"binary", "unary"}:
+        if op_node.spec.kind in {"binary", "unary", "where"}:
             input_shapes = [graph.shapes[arg] for arg in op_node.inputs]
             input_strides = [graph.strides[arg] for arg in op_node.inputs]
+            input_dtypes = [graph.dtypes[arg] for arg in op_node.inputs]
             output_strides = graph.strides[op_node.node]
             kernel_lines = _write_elementwise_kernel(
                 index,
@@ -1888,6 +1969,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 op_node.output_shape,
                 input_shapes,
                 input_strides,
+                input_dtypes,
                 output_strides,
                 graph.dtype,
             )
@@ -1936,7 +2018,10 @@ def _write_generic_source(graph: _GenericGraph) -> str:
         kernels.append("\n".join(kernel_lines))
     input_args = ", ".join(
         [
-            f"const {graph.dtype.c_type} input_{idx}{_format_array_suffix(graph.shapes[node])}"
+            (
+                f"const {_input_c_type(graph.dtypes[node], graph.dtype)} "
+                f"input_{idx}{_format_array_suffix(graph.shapes[node])}"
+            )
             for idx, node in enumerate(placeholders)
         ]
     )
@@ -1995,14 +2080,21 @@ def _validate_example_inputs(
     ]
     if not tensor_examples:
         raise RefBackendError("codegen backend requires at least one example tensor input")
-    first_dtype = tensor_examples[0].dtype
+    non_bool_examples = [
+        example for example in tensor_examples if example.dtype is not torch.bool
+    ]
+    if not non_bool_examples:
+        raise RefBackendError(
+            "codegen backend requires at least one non-boolean tensor input"
+        )
+    first_dtype = non_bool_examples[0].dtype
     dtype_info = _CODEGEN_DTYPES.get(first_dtype)
     if dtype_info is None:
         raise RefBackendError(
             "codegen backend supports only torch.float32, torch.int8, or torch.int32 tensors"
         )
     for example in tensor_examples:
-        if example.dtype is not first_dtype:
+        if example.dtype is not first_dtype and example.dtype is not torch.bool:
             raise RefBackendError("codegen backend expects all tensors to share a dtype")
         if example.device.type != "cpu":
             raise RefBackendError("codegen backend supports only CPU tensors")
@@ -2025,8 +2117,9 @@ def _infer_output_shape(
     op_spec: _OpSpec, input_shapes: Sequence[Tuple[int, ...]]
 ) -> Tuple[int, ...]:
     if op_spec.kind == "binary":
-        a_shape, b_shape = input_shapes
-        return _broadcast_output_shape(op_spec, a_shape, b_shape)
+        return _broadcast_output_shape(op_spec, *input_shapes)
+    if op_spec.kind == "where":
+        return _broadcast_output_shape(op_spec, *input_shapes)
     if op_spec.kind == "unary":
         return input_shapes[0]
     if op_spec.kind == "reduction":
@@ -2201,6 +2294,7 @@ def _analyze_generic_graph(
     op_nodes: List[_OpNode] = []
     shapes: Dict[torch.fx.Node, Tuple[int, ...]] = {}
     strides: Dict[torch.fx.Node, Tuple[int, ...]] = {}
+    dtypes: Dict[torch.fx.Node, torch.dtype] = {}
     input_iter = iter(example_inputs)
 
     for node in gm.graph.nodes:
@@ -2215,6 +2309,7 @@ def _analyze_generic_graph(
             if isinstance(example, torch.Tensor):
                 shapes[node] = tuple(example.shape)
                 strides[node] = tuple(example.stride())
+                dtypes[node] = example.dtype
                 tensor_placeholders.append(node)
             continue
         if node.op in {"call_function", "call_method"}:
@@ -2243,14 +2338,25 @@ def _analyze_generic_graph(
                     raise RefBackendError(
                         "codegen backend expects positional args only"
                     )
-                expected_arity = 1 if op_spec.kind == "unary" else 2
+                if op_spec.kind == "unary":
+                    expected_arity = 1
+                elif op_spec.kind == "binary":
+                    expected_arity = 2
+                elif op_spec.kind == "where":
+                    expected_arity = 3
+                else:
+                    expected_arity = 2
                 if len(node.args) != expected_arity:
                     if expected_arity == 1:
                         raise RefBackendError(
                             f"codegen {op_spec.name} expects one input"
                         )
+                    if expected_arity == 2:
+                        raise RefBackendError(
+                            f"codegen {op_spec.name} expects exactly two inputs"
+                        )
                     raise RefBackendError(
-                        f"codegen {op_spec.name} expects exactly two inputs"
+                        f"codegen {op_spec.name} expects exactly three inputs"
                     )
             input_nodes: List[torch.fx.Node] = []
             input_shapes: List[Tuple[int, ...]] = []
@@ -2268,6 +2374,22 @@ def _analyze_generic_graph(
                     )
                 input_nodes.append(arg)
                 input_shapes.append(shapes[arg])
+            input_dtypes = [dtypes[arg] for arg in input_nodes]
+            if op_spec.kind == "where":
+                if input_dtypes[0] is not torch.bool:
+                    raise RefBackendError(
+                        "codegen where expects condition to be a boolean tensor"
+                    )
+                if any(
+                    dtype is not dtype_info.torch_dtype for dtype in input_dtypes[1:]
+                ):
+                    raise RefBackendError(
+                        "codegen where expects self and other to match the graph dtype"
+                    )
+            elif any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects inputs to share the graph dtype"
+                )
             if op_spec.kind == "reduction":
                 (
                     reduction_dims,
@@ -2286,6 +2408,7 @@ def _analyze_generic_graph(
             else:
                 output_shape = _infer_output_shape(op_spec, input_shapes)
             shapes[node] = output_shape
+            dtypes[node] = dtype_info.torch_dtype
             if inplace_input is not None:
                 strides[node] = strides[input_nodes[inplace_input]]
             else:
@@ -2347,6 +2470,7 @@ def _analyze_generic_graph(
         output_structure=output_structure,
         shapes=shapes,
         strides=strides,
+        dtypes=dtypes,
         dtype=dtype_info,
     )
 
@@ -2400,12 +2524,19 @@ def _compile_generic_library(graph: _GenericGraph) -> _GenericLibrary:
 
 
 def _validate_runtime_inputs(
-    inputs: Iterable[torch.Tensor], dtype: _CodegenDType
+    inputs: Iterable[torch.Tensor],
+    expected_dtypes: Sequence[torch.dtype],
+    graph_dtype: _CodegenDType,
 ) -> None:
-    for tensor in inputs:
-        if tensor.dtype is not dtype.torch_dtype:
+    for tensor, expected_dtype in zip(inputs, expected_dtypes):
+        if expected_dtype is torch.bool:
+            if tensor.dtype is not torch.bool:
+                raise RefBackendError(
+                    "codegen backend expects boolean condition tensors"
+                )
+        elif tensor.dtype is not graph_dtype.torch_dtype:
             raise RefBackendError(
-                f"codegen backend supports only {dtype.torch_dtype} tensors"
+                f"codegen backend supports only {graph_dtype.torch_dtype} tensors"
             )
         if tensor.device.type != "cpu":
             raise RefBackendError("codegen backend supports only CPU tensors")
@@ -2453,7 +2584,8 @@ def _compile_graph(
                 if not isinstance(value, torch.Tensor):
                     raise RefBackendError("codegen backend expects tensor inputs only")
                 input_tensors.append(value)
-        _validate_runtime_inputs(input_tensors, graph.dtype)
+        expected_dtypes = [graph.dtypes[node] for node in graph.tensor_placeholders]
+        _validate_runtime_inputs(input_tensors, expected_dtypes, graph.dtype)
 
         input_shapes = tuple(tuple(tensor.shape) for tensor in input_tensors)
         input_strides = tuple(tuple(tensor.stride()) for tensor in input_tensors)
@@ -2478,7 +2610,7 @@ def _compile_graph(
         else:
             out = torch.empty(
                 lib.output_shape,
-                dtype=contiguous_inputs[0].dtype,
+                dtype=graph.dtype.torch_dtype,
                 device=contiguous_inputs[0].device,
             )
             lib.run(contiguous_inputs, out)
