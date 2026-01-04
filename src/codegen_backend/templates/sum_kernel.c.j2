@@ -2,7 +2,7 @@
 {% for dim in output_dims %}
     for (int64_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
 {% endfor %}
-    float acc = {{ init_value }};
+    {{ acc_type }} acc = {{ init_value }};
 {% if input_rank == 0 %}
     acc {{ reduce_op }} {{ input_access }};
 {% else %}

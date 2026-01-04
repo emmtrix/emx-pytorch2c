@@ -52,38 +52,6 @@ _CODEGEN_DTYPES = {
     ),
 }
 
-_INT32_ELEMENTWISE_OPS = frozenset(
-    {
-        "abs",
-        "add",
-        "ceil",
-        "clamp_max",
-        "clamp_min",
-        "conj",
-        "conj_physical",
-        "fmax",
-        "fmin",
-        "fmod",
-        "floor",
-        "floor_divide",
-        "maximum",
-        "minimum",
-        "mul",
-        "neg",
-        "positive",
-        "real",
-        "relu",
-        "remainder",
-        "round",
-        "sgn",
-        "sign",
-        "square",
-        "sub",
-        "trunc",
-    }
-)
-
-
 def _binary_spec(
     name: str,
     targets: Iterable[object],
@@ -1545,6 +1513,8 @@ def _write_matmul_kernel(
     matmul_template = _get_template_env().get_template("matmul_kernel.c.j2")
     a_is_contiguous = _is_contiguous(a_shape, a_strides)
     b_is_contiguous = _is_contiguous(b_shape, b_strides)
+    acc_type = dtype.c_type
+    acc_init = "0" if dtype.torch_dtype is torch.int32 else "0.0f"
 
     if op_spec.name == "matmul":
         if len(a_shape) == 1:
@@ -1563,6 +1533,8 @@ def _write_matmul_kernel(
                 m=1,
                 n=1,
                 k=k,
+                acc_type=acc_type,
+                acc_init=acc_init,
                 a_access=_emit_strided_access(
                     "a",
                     ("t",),
@@ -1598,6 +1570,8 @@ def _write_matmul_kernel(
             m=m,
             n=n,
             k=k,
+            acc_type=acc_type,
+            acc_init=acc_init,
             a_access=_emit_strided_access(
                 "a",
                 ("i", "t"),
@@ -1633,6 +1607,8 @@ def _write_matmul_kernel(
         m=m,
         n=n,
         k=k,
+        acc_type=acc_type,
+        acc_init=acc_init,
         a_access=_emit_strided_access(
             "a",
             ("b_idx", "i", "t"),
@@ -1656,17 +1632,17 @@ def _write_matmul_kernel(
 
 _REDUCTION_CONFIG = {
     "sum": {
-        "init_value": "0.0f",
+        "init_value": 0,
         "reduce_op": "+=",
         "post_op": None,
     },
     "prod": {
-        "init_value": "1.0f",
+        "init_value": 1,
         "reduce_op": "*=",
         "post_op": None,
     },
     "mean": {
-        "init_value": "0.0f",
+        "init_value": 0,
         "reduce_op": "+=",
         "post_op": "mean",
     },
@@ -1729,9 +1705,17 @@ def _write_reduction_kernel(
     reduction_count = 1
     for dim in reduction_dims:
         reduction_count *= input_shape[dim]
+    acc_type = dtype.c_type
+    if dtype.torch_dtype is torch.int32:
+        init_value = str(config["init_value"])
+    else:
+        init_value = f"{config['init_value']}.0f"
     post_op = None
     if config["post_op"] == "mean":
-        post_op = f"acc /= (float){reduction_count};"
+        if dtype.torch_dtype is torch.int32:
+            post_op = f"acc /= {reduction_count};"
+        else:
+            post_op = f"acc /= (float){reduction_count};"
     rendered = reduction_template.render(
         signature=signature,
         input_rank=input_rank,
@@ -1744,7 +1728,8 @@ def _write_reduction_kernel(
         ],
         input_access=input_access,
         output_access=output_access,
-        init_value=config["init_value"],
+        acc_type=acc_type,
+        init_value=init_value,
         reduce_op=config["reduce_op"],
         post_op=post_op,
     )
@@ -2020,11 +2005,11 @@ def _parse_reduction_args(
     if dtype is not None:
         if isinstance(dtype, torch.fx.Node):
             raise RefBackendError(
-                f"codegen {op_name} expects dtype to be torch.float32"
+                f"codegen {op_name} expects dtype to be torch.float32 or torch.int32"
             )
-        if dtype is not torch.float32:
+        if dtype not in (torch.float32, torch.int32):
             raise RefBackendError(
-                f"codegen {op_name} expects dtype to be torch.float32"
+                f"codegen {op_name} expects dtype to be torch.float32 or torch.int32"
             )
     reduction_dims = _normalize_reduction_dims(op_name, dim, len(input_shape))
     reduce_all = dim is None
@@ -2069,8 +2054,6 @@ def _analyze_generic_graph(
                     raise RefBackendError(f"Unsupported call_function: {node.target}")
                 op_spec = target_info.op_spec
                 inplace_input = target_info.inplace_arg_index
-            if op_spec.name == "mean" and dtype_info.torch_dtype is not torch.float32:
-                raise RefBackendError("codegen mean supports only torch.float32 tensors")
             reduction_dims: Tuple[int, ...] | None = None
             keepdim = False
             reduce_all = False
@@ -2171,17 +2154,6 @@ def _analyze_generic_graph(
             if candidate in tensor_placeholders:
                 output_inplace_input = candidate
             break
-
-    if dtype_info.torch_dtype is torch.int32:
-        unsupported = {
-            op_node.spec.name
-            for op_node in op_nodes
-            if op_node.spec.name not in _INT32_ELEMENTWISE_OPS
-        }
-        if unsupported:
-            raise RefBackendError(
-                "codegen backend supports torch.int32 only for elementwise ops"
-            )
 
     return _GenericGraph(
         placeholders=placeholders,

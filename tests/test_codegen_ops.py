@@ -346,36 +346,8 @@ CODEGEN_OP_TEST_CONFIG = {
         "allow_non_tensor_args": True,
     },
 }
-INT32_ELEMENTWISE_ATEN_OPS = {
-    torch.ops.aten.abs.default,
-    torch.ops.aten.add.Tensor,
-    torch.ops.aten.ceil.default,
-    torch.ops.aten.clamp_max.Tensor,
-    torch.ops.aten.clamp_min.Tensor,
-    torch.ops.aten.conj.default,
-    torch.ops.aten.conj_physical.default,
-    torch.ops.aten.fmax.default,
-    torch.ops.aten.fmin.default,
-    torch.ops.aten.fmod.Tensor,
-    torch.ops.aten.floor.default,
-    torch.ops.aten.floor_divide.default,
-    torch.ops.aten.maximum.default,
-    torch.ops.aten.minimum.default,
-    torch.ops.aten.mul.Tensor,
-    torch.ops.aten.neg.default,
-    torch.ops.aten.positive.default,
-    torch.ops.aten.real.default,
-    torch.ops.aten.relu.default,
-    torch.ops.aten.remainder.Tensor,
-    torch.ops.aten.round.default,
-    torch.ops.aten.sgn.default,
-    torch.ops.aten.sign.default,
-    torch.ops.aten.square.default,
-    torch.ops.aten.sub.Tensor,
-    torch.ops.aten.trunc.default,
-}
 DEFAULT_CONSTRAINTS = {
-    "allowed_dtypes": (torch.float32,),
+    "allowed_dtypes": (torch.float32, torch.int32),
     "allow_noncontiguous": True,
     "allow_non_tensor_args": False,
     "max_ndim": 8,
@@ -388,8 +360,6 @@ DEFAULT_CONSTRAINTS = {
 def _constraints_for_codegen(aten_overload):
     constraints = DEFAULT_CONSTRAINTS.copy()
     constraints.update(CODEGEN_OP_TEST_CONFIG.get(aten_overload, {}))
-    if aten_overload in INT32_ELEMENTWISE_ATEN_OPS:
-        constraints["allowed_dtypes"] = (torch.float32, torch.int32)
     return constraints
 
 
@@ -448,6 +418,24 @@ def _sanitize_inplace_inputs(
     return lhs, rhs
 
 
+def _reference_for_dtype(
+    aten_overload: torch._ops.OpOverload,
+    inputs: tuple[object, ...],
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    if dtype is not torch.int32:
+        return aten_overload(*inputs)
+    try:
+        expected = aten_overload(*inputs)
+    except Exception:
+        float_inputs = tuple(
+            arg.to(torch.float32) if isinstance(arg, torch.Tensor) else arg
+            for arg in inputs
+        )
+        expected = aten_overload(*float_inputs)
+    return expected
+
+
 class TestCodegenOpInfo(TestCase):
     @ops(CODEGEN_OPINFO_LIST)
     def test_codegen_backend_matches_eager(self, device, dtype, op):
@@ -469,7 +457,12 @@ class TestCodegenOpInfo(TestCase):
         for sample in _iter_supported_samples(op, device, dtype, constraints):
             inputs = (sample.input, *sample.args)
             result = compiled(*inputs)
-            torch.testing.assert_close(result, aten_overload(*inputs))
+            expected = _reference_for_dtype(aten_overload, inputs, dtype)
+            if result.dtype is not expected.dtype:
+                expected = expected.to(result.dtype)
+            torch.testing.assert_close(
+                result, expected, equal_nan=dtype is torch.int32
+            )
 
 
 class TestCodegenInplaceOps(TestCase):

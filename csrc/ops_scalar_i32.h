@@ -4,6 +4,21 @@
 #include <limits.h>
 #include <stdint.h>
 
+#include "ops_scalar_f32.h"
+
+static inline int32_t ref_scalar_i32_from_f32(float value) {
+    if (!isfinite(value)) {
+        return INT32_MIN;
+    }
+    if (value > (float)INT32_MAX) {
+        return INT32_MAX;
+    }
+    if (value < (float)INT32_MIN) {
+        return INT32_MIN;
+    }
+    return (int32_t)value;
+}
+
 static inline int32_t ref_scalar_i32_abs(int32_t a) {
     if (a == INT32_MIN) {
         return INT32_MIN;
@@ -170,5 +185,66 @@ static inline int32_t ref_scalar_i32_sgn(int32_t a) {
 static inline int32_t ref_scalar_i32_square(int32_t a) {
     return a * a;
 }
+
+#define REF_I32_UNARY_FROM_F32(name)                          \
+    static inline int32_t ref_scalar_i32_##name(int32_t a) {   \
+        return ref_scalar_i32_from_f32(ref_scalar_f32_##name(  \
+            (float)a));                                       \
+    }
+
+#define REF_I32_BINARY_FROM_F32(name)                                 \
+    static inline int32_t ref_scalar_i32_##name(int32_t a, int32_t b) { \
+        return ref_scalar_i32_from_f32(ref_scalar_f32_##name(         \
+            (float)a, (float)b));                                     \
+    }
+
+REF_I32_UNARY_FROM_F32(acos)
+REF_I32_UNARY_FROM_F32(acosh)
+REF_I32_UNARY_FROM_F32(angle)
+REF_I32_UNARY_FROM_F32(asin)
+REF_I32_UNARY_FROM_F32(asinh)
+REF_I32_UNARY_FROM_F32(atan)
+REF_I32_UNARY_FROM_F32(atanh)
+REF_I32_UNARY_FROM_F32(cbrt)
+REF_I32_UNARY_FROM_F32(cos)
+REF_I32_UNARY_FROM_F32(cosh)
+REF_I32_UNARY_FROM_F32(deg2rad)
+REF_I32_UNARY_FROM_F32(digamma)
+REF_I32_UNARY_FROM_F32(erf)
+REF_I32_UNARY_FROM_F32(erfc)
+REF_I32_UNARY_FROM_F32(erfinv)
+REF_I32_UNARY_FROM_F32(exp)
+REF_I32_UNARY_FROM_F32(exp2)
+REF_I32_UNARY_FROM_F32(expm1)
+REF_I32_UNARY_FROM_F32(i0)
+REF_I32_UNARY_FROM_F32(lgamma)
+REF_I32_UNARY_FROM_F32(log)
+REF_I32_UNARY_FROM_F32(log10)
+REF_I32_UNARY_FROM_F32(log1p)
+REF_I32_UNARY_FROM_F32(log2)
+REF_I32_UNARY_FROM_F32(logit)
+REF_I32_UNARY_FROM_F32(nan_to_num)
+REF_I32_UNARY_FROM_F32(rad2deg)
+REF_I32_UNARY_FROM_F32(rsqrt)
+REF_I32_UNARY_FROM_F32(sigmoid)
+REF_I32_UNARY_FROM_F32(silu)
+REF_I32_UNARY_FROM_F32(sin)
+REF_I32_UNARY_FROM_F32(sinc)
+REF_I32_UNARY_FROM_F32(sinh)
+REF_I32_UNARY_FROM_F32(sqrt)
+REF_I32_UNARY_FROM_F32(tan)
+REF_I32_UNARY_FROM_F32(tanh)
+
+REF_I32_BINARY_FROM_F32(atan2)
+REF_I32_BINARY_FROM_F32(heaviside)
+REF_I32_BINARY_FROM_F32(hypot)
+REF_I32_BINARY_FROM_F32(ldexp)
+REF_I32_BINARY_FROM_F32(logaddexp)
+REF_I32_BINARY_FROM_F32(nextafter)
+REF_I32_BINARY_FROM_F32(pow)
+REF_I32_BINARY_FROM_F32(xlogy)
+
+#undef REF_I32_UNARY_FROM_F32
+#undef REF_I32_BINARY_FROM_F32
 
 #endif
