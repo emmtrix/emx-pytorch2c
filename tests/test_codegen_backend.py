@@ -176,6 +176,17 @@ def test_codegen_generic_supports_inplace_ops():
     torch.testing.assert_close(a, expected)
 
 
+def test_i32():
+    a = torch.randint(0, 5, (2, 3), dtype=torch.int32)
+    b = torch.randint(0, 5, (2, 3), dtype=torch.int32)
+    _assert_codegen_source_matches(
+        "mul_chain_i32.c", get_generic_source, mul_chain_fn, (a, b, b)
+    )
+    compiled = torch.compile(mul_chain_fn, backend=codegen_generic_backend)
+    result = compiled(a, b, b)
+    torch.testing.assert_close(result, mul_chain_fn(a, b, b))
+
+
 def test_emit_strided_access_expressions():
     broadcast_expr = _format_strided_access(
         "b", (1, 3), (3, 1), (2, 3)
