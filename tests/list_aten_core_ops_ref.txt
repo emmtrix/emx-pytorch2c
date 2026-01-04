@@ -1189,7 +1189,7 @@ miopen_depthwise_convolution             -     -
 miopen_rnn                               -     -      
 miopen_rnn_backward                      -     -      
 mish                                     -     -      
-mish_                                    -     -      
+mish_                                    -     yes    
 mish_backward                            -     -      
 mkldnn_adaptive_avg_pool2d               -     -      
 mkldnn_adaptive_avg_pool2d_backward      -     -      
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 8
-supported by codegen only: 109
+supported by codegen only: 116
 supported by both: 74
-unsupported by either: 1523
-supported by codegen: 183 / 1714 (10.7 %)
+unsupported by either: 1516
+supported by codegen: 190 / 1714 (11.1 %)
 supported by c-ref: 82 / 1714 (4.8 %)

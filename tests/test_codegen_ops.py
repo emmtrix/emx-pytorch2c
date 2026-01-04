@@ -338,6 +338,7 @@ INPLACE_ATEN_OPS = [
     torch.ops.aten.log1p_.default,
     torch.ops.aten.log2_.default,
     torch.ops.aten.logit_.default,
+    torch.ops.aten.mish_.default,
     torch.ops.aten.logical_and_.default,
     torch.ops.aten.logical_not_.default,
     torch.ops.aten.logical_or_.default,
@@ -449,6 +450,9 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.where.self: {
         "requires_same_shape": False,
         "sample_filter": _broadcastable_sample_filter,
+    },
+    torch.ops.aten.mish_.default: {
+        "allowed_dtypes": (torch.float32,),
     },
     torch.ops.aten.matmul.default: {
         "allow_noncontiguous": True,

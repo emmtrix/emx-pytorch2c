@@ -1005,6 +1005,12 @@ SUPPORTED_OPS = {
             F.mish,
             torch.ops.aten.mish.default,
             torch.ops.aten.mish,
+            torch.ops.aten.mish_.default,
+            torch.ops.aten.mish_,
+        ),
+        inplace_targets=(
+            torch.ops.aten.mish_.default,
+            torch.ops.aten.mish_,
         ),
     ),
     "silu": _unary_spec(
