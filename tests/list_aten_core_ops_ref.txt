@@ -551,7 +551,7 @@ arange                                   -     -
 arccos                                   -     -      
 arccos_                                  -     -      
 arccosh                                  -     -      
-arccosh_                                 -     -      
+arccosh_                                 -     yes    
 arcsin                                   -     -      
 arcsin_                                  -     -      
 arcsinh                                  -     -      
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 8
-supported by codegen only: 96
+supported by codegen only: 102
 supported by both: 74
-unsupported by either: 1536
-supported by codegen: 170 / 1714 (9.9 %)
+unsupported by either: 1530
+supported by codegen: 176 / 1714 (10.3 %)
 supported by c-ref: 82 / 1714 (4.8 %)

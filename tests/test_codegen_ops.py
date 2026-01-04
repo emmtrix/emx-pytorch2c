@@ -287,6 +287,7 @@ INPLACE_ATEN_OPS = [
     torch.ops.aten.abs_.default,
     torch.ops.aten.acos_.default,
     torch.ops.aten.acosh_.default,
+    torch.ops.aten.arccosh_.default,
     torch.ops.aten.asin_.default,
     torch.ops.aten.asinh_.default,
     torch.ops.aten.atan_.default,
@@ -501,7 +502,7 @@ def _sanitize_inplace_inputs(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     name = aten_overload._schema.name.split("::")[-1]
     unit_range_ops = {"acos_", "asin_", "atanh_", "erfinv_"}
-    ge1_ops = {"acosh_"}
+    ge1_ops = {"acosh_", "arccosh_"}
     positive_ops = {"digamma_", "lgamma_", "log_", "log10_", "log2_", "rsqrt_", "sqrt_"}
     log1p_ops = {"log1p_"}
     logit_ops = {"logit_"}
@@ -584,6 +585,17 @@ class TestCodegenOpInfo(TestCase):
             torch.testing.assert_close(
                 result, expected, equal_nan=dtype in (torch.int8, torch.int32)
             )
+
+
+class TestCodegenAliasedOps(TestCase):
+    def test_codegen_arccosh_matches_eager(self):
+        aten_overload = torch.ops.aten.arccosh.default
+        compiled = _compile_codegen_op(aten_overload)
+        for dtype in (torch.float32,):
+            inputs = (torch.rand(2, 3, dtype=dtype) + 1.0,)
+            expected = aten_overload(*inputs)
+            result = compiled(*inputs)
+            torch.testing.assert_close(result, expected)
 
 
 class TestCodegenInplaceOps(TestCase):

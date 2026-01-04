@@ -713,14 +713,21 @@ SUPPORTED_OPS = {
         "acosh",
         (
             torch.acosh,
+            torch.arccosh,
             torch.ops.aten.acosh.default,
             torch.ops.aten.acosh,
             torch.ops.aten.acosh_.default,
             torch.ops.aten.acosh_,
+            torch.ops.aten.arccosh.default,
+            torch.ops.aten.arccosh,
+            torch.ops.aten.arccosh_.default,
+            torch.ops.aten.arccosh_,
         ),
         inplace_targets=(
             torch.ops.aten.acosh_.default,
             torch.ops.aten.acosh_,
+            torch.ops.aten.arccosh_.default,
+            torch.ops.aten.arccosh_,
         ),
     ),
     "asin": _unary_spec(
