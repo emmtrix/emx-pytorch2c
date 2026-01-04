@@ -26,6 +26,12 @@ UPDATE_REFS=1 PYTHONPATH=src pytest -q
 
 ## Operator Guidelines
 
+Overview: there are two backends for new operators—C ref backend and codegen backend.
+Rule of thumb: use C ref for handwritten reference semantics; use codegen for generated kernel support.
+See the two subsections below for the correct workflow.
+
+### C ref backend: adding a new operator
+
 When adding a new operator, follow the same structure as the existing `add`/`matmul` paths:
 
 - **C implementation**: add a new `csrc/ops_<op>.c` with a `ref_run_<op>` entry point,
@@ -41,10 +47,6 @@ When adding a new operator, follow the same structure as the existing `add`/`mat
   to the new implementation.
 - **Tests**: add coverage in `tests/` for correct results and error handling
   (e.g. non-contiguous tensors, shape mismatches).
-
-Note: C ref backend uses handwritten C under `csrc/` (e.g. `csrc/ops_<op>.c` + registration in `csrc/c_ref_backend.c`) for reference semantics.
-Codegen backend registers ops in `src/codegen_backend/backend.py` (`SUPPORTED_OPS`) and may require updating Jinja templates under `src/codegen_backend/templates/*.c.j2`.
-Rule of thumb: pick C ref for correctness/reference behavior, codegen for generated kernel support.
 
 ### Codegen backend: adding a new operator
 
