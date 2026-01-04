@@ -1174,7 +1174,7 @@ max_pool3d_with_indices_backward         -     -
 max_unpool2d                             -     -      
 max_unpool3d                             -     -      
 maximum                                  yes   yes    
-mean                                     -     -      
+mean                                     -     yes    
 median                                   -     -      
 meshgrid                                 -     -      
 min                                      -     -      
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 7
-supported by codegen only: 68
+supported by codegen only: 69
 supported by both: 73
-unsupported by either: 1566
-supported by codegen: 141 / 1714 (8.2 %)
+unsupported by either: 1565
+supported by codegen: 142 / 1714 (8.3 %)
 supported by c-ref: 80 / 1714 (4.7 %)

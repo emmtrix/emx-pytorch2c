@@ -1104,6 +1104,16 @@ SUPPORTED_OPS = {
             torch.ops.aten.prod.default,
         },
     ),
+    "mean": _OpSpec(
+        name="mean",
+        kind="reduction",
+        symbol=None,
+        supported_targets={
+            torch.mean,
+            torch.ops.aten.mean.default,
+            torch.ops.aten.mean,
+        },
+    ),
     "matmul": _OpSpec(
         name="matmul",
         kind="matmul",
@@ -1582,10 +1592,17 @@ _REDUCTION_CONFIG = {
     "sum": {
         "init_value": "0.0f",
         "reduce_op": "+=",
+        "post_op": None,
     },
     "prod": {
         "init_value": "1.0f",
         "reduce_op": "*=",
+        "post_op": None,
+    },
+    "mean": {
+        "init_value": "0.0f",
+        "reduce_op": "+=",
+        "post_op": "mean",
     },
 }
 
@@ -1643,6 +1660,12 @@ def _write_reduction_kernel(
             sizes=input_shape,
             c_type=dtype.c_type,
         )
+    reduction_count = 1
+    for dim in reduction_dims:
+        reduction_count *= input_shape[dim]
+    post_op = None
+    if config["post_op"] == "mean":
+        post_op = f"acc /= (float){reduction_count};"
     rendered = reduction_template.render(
         signature=signature,
         input_rank=input_rank,
@@ -1657,6 +1680,7 @@ def _write_reduction_kernel(
         output_access=output_access,
         init_value=config["init_value"],
         reduce_op=config["reduce_op"],
+        post_op=post_op,
     )
     return rendered.strip().splitlines()
 
@@ -1963,7 +1987,7 @@ def _analyze_generic_graph(
             continue
         if node.op in {"call_function", "call_method"}:
             if node.op == "call_method":
-                if node.target not in {"sum", "prod"}:
+                if node.target not in {"sum", "prod", "mean"}:
                     raise RefBackendError(f"Unsupported call_method: {node.target}")
                 op_spec = SUPPORTED_OPS[node.target]
                 inplace_input = None
@@ -1973,6 +1997,8 @@ def _analyze_generic_graph(
                     raise RefBackendError(f"Unsupported call_function: {node.target}")
                 op_spec = target_info.op_spec
                 inplace_input = target_info.inplace_arg_index
+            if op_spec.name == "mean" and dtype_info.torch_dtype is not torch.float32:
+                raise RefBackendError("codegen mean supports only torch.float32 tensors")
             reduction_dims: Tuple[int, ...] | None = None
             keepdim = False
             reduce_all = False
