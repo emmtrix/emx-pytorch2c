@@ -171,6 +171,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.minimum.default,
     torch.ops.aten.mul.Tensor,
     torch.ops.aten.mean.default,
+    torch.ops.aten.std.default,
     torch.ops.aten.nan_to_num.default,
     torch.ops.aten.neg.default,
     torch.ops.aten.nextafter.default,
@@ -293,6 +294,7 @@ def _lookup_opinfo(aten_name, variant_test_name):
 CODEGEN_OPINFO_OVERRIDES = {
     torch.ops.aten.div.Tensor: _lookup_opinfo("div", "no_rounding_mode"),
     torch.ops.aten.round.default: _lookup_opinfo("round", ""),
+    torch.ops.aten.std.default: _lookup_opinfo("std", ""),
 }
 
 
@@ -334,6 +336,10 @@ CODEGEN_OP_TEST_CONFIG = {
         "allow_noncontiguous": True,
         "requires_same_shape": False,
         "sample_filter": _bmm_sample_filter,
+    },
+    torch.ops.aten.std.default: {
+        "allowed_dtypes": (torch.float32,),
+        "allow_non_tensor_args": True,
     },
     torch.ops.aten.transpose.int: {
         "allow_non_tensor_args": True,
@@ -543,6 +549,27 @@ class TestCodegenReductionOps(TestCase):
             compiled = _compile_codegen_op(torch.ops.aten.mean.default)
             result = compiled(tensor)
             expected = torch.ops.aten.mean.default(tensor)
+            assert result.shape == torch.Size([])
+            torch.testing.assert_close(result, expected, equal_nan=True)
+
+    def test_codegen_std_default_cases(self):
+        cases = [
+            torch.randn(2, 3, dtype=torch.float32),
+            torch.randn(4, dtype=torch.float32),
+            torch.tensor(3.5, dtype=torch.float32),
+            torch.randn(0, 3, dtype=torch.float32),
+            torch.randn(2, 3, dtype=torch.float32).t(),
+        ]
+        compiled = _compile_codegen_op(torch.ops.aten.std.default)
+        for tensor in cases:
+            result = compiled(tensor)
+            expected = torch.ops.aten.std.default(tensor)
+            assert result.shape == torch.Size([])
+            torch.testing.assert_close(result, expected, equal_nan=True)
+
+        for tensor in cases:
+            result = compiled(tensor, False)
+            expected = torch.ops.aten.std.default(tensor, False)
             assert result.shape == torch.Size([])
             torch.testing.assert_close(result, expected, equal_nan=True)
 
