@@ -632,7 +632,7 @@ bucketize                                -     -
 can_cast                                 -     -      
 capitalize                               -     -      
 cartesian_prod                           -     -      
-cat                                      -     -      
+cat                                      -     yes    
 cauchy                                   -     -      
 cauchy_                                  -     -      
 ccol_indices                             -     -      
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 8
-supported by codegen only: 95
+supported by codegen only: 96
 supported by both: 74
-unsupported by either: 1537
-supported by codegen: 169 / 1714 (9.9 %)
+unsupported by either: 1536
+supported by codegen: 170 / 1714 (9.9 %)
 supported by c-ref: 82 / 1714 (4.8 %)

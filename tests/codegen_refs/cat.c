@@ -1,0 +1,19 @@
+#include <stdint.h>
+#include "ops_scalar_f32.h"
+
+void node1_cat_f32(const float a0[2][2], const float a1[2][1], float out[2][3]) {
+    for (int64_t i0 = 0; i0 < 2; ++i0) {
+        for (int64_t i1 = 0; i1 < 2; ++i1) {
+            out[i0][i1 + 0] = a0[i0][i1];
+        }
+    }
+    for (int64_t i0 = 0; i0 < 2; ++i0) {
+        for (int64_t i1 = 0; i1 < 1; ++i1) {
+            out[i0][i1 + 2] = a1[i0][i1];
+        }
+    }
+}
+
+void ref_codegen_main_f32(const float input_0[2][2], const float input_1[2][1], float out[2][3]) {
+    node1_cat_f32(input_0, input_1, out);
+}

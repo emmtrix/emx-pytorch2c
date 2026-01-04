@@ -1304,6 +1304,16 @@ SUPPORTED_OPS = {
             torch.ops.aten.all,
         },
     ),
+    "cat": _OpSpec(
+        name="cat",
+        kind="concat",
+        symbol=None,
+        supported_targets={
+            torch.cat,
+            torch.ops.aten.cat.default,
+            torch.ops.aten.cat,
+        },
+    ),
     "matmul": _OpSpec(
         name="matmul",
         kind="matmul",
@@ -1378,6 +1388,7 @@ class _OpNode:
     reduction_dims: Tuple[int, ...] | None = None
     keepdim: bool = False
     std_unbiased: bool | None = None
+    concat_dim: int | None = None
 
 
 @dataclass
@@ -2112,6 +2123,62 @@ def _write_reduction_kernel(
     return rendered.strip().splitlines()
 
 
+def _write_concat_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    input_shapes: Sequence[Sequence[int]],
+    input_strides: Sequence[Sequence[int]],
+    output_shape: Sequence[int],
+    output_strides: Sequence[int],
+    concat_dim: int,
+    dtype: _CodegenDType,
+) -> List[str]:
+    input_args = []
+    for idx, shape in enumerate(input_shapes):
+        suffix = _format_array_suffix(shape)
+        input_args.append(f"const {dtype.c_type} a{idx}{suffix}")
+    out_suffix = _format_array_suffix(output_shape)
+    signature = (
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"{', '.join(input_args)}, "
+        f"{dtype.c_type} out{out_suffix}) {{"
+    )
+    lines = [signature]
+    output_is_contiguous = _is_contiguous(output_shape, output_strides)
+    offset = 0
+    for idx, (shape, strides) in enumerate(zip(input_shapes, input_strides)):
+        loop_lines, indent = emit_loops(shape)
+        lines.extend(loop_lines)
+        indices = [f"i{dim}" for dim in range(len(shape))]
+        input_access = _emit_strided_access(
+            f"a{idx}",
+            indices,
+            strides,
+            _is_contiguous(shape, strides),
+            sizes=shape,
+            c_type=dtype.c_type,
+        )
+        output_indices = [
+            f"i{dim} + {offset}" if dim == concat_dim else f"i{dim}"
+            for dim in range(len(shape))
+        ]
+        output_access = _emit_strided_access(
+            "out",
+            output_indices,
+            output_strides,
+            output_is_contiguous,
+            sizes=output_shape,
+            c_type=dtype.c_type,
+        )
+        lines.append(f"{indent}{output_access} = {input_access};")
+        for _ in range(len(shape)):
+            indent = indent[:-4]
+            lines.append(f"{indent}}}")
+        offset += shape[concat_dim]
+    lines.append("}")
+    return lines
+
+
 def _write_generic_source(graph: _GenericGraph) -> str:
     placeholders = graph.tensor_placeholders
     op_nodes = graph.op_nodes
@@ -2163,6 +2230,19 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                     op_node.keepdim,
                     graph.dtype,
                 )
+        elif op_node.spec.kind == "concat":
+            input_shapes = [graph.shapes[arg] for arg in op_node.inputs]
+            input_strides = [graph.strides[arg] for arg in op_node.inputs]
+            kernel_lines = _write_concat_kernel(
+                index,
+                op_node.spec,
+                input_shapes,
+                input_strides,
+                op_node.output_shape,
+                graph.strides[op_node.node],
+                op_node.concat_dim if op_node.concat_dim is not None else 0,
+                graph.dtype,
+            )
         else:
             lhs, rhs = op_node.inputs
             lhs_shape = graph.shapes[lhs]
@@ -2235,12 +2315,23 @@ def _write_generic_source(graph: _GenericGraph) -> str:
     )
 
 
+def _iter_example_tensors(example_inputs: Sequence[object]) -> Iterable[torch.Tensor]:
+    for example in example_inputs:
+        if isinstance(example, torch.Tensor):
+            yield example
+            continue
+        if isinstance(example, (list, tuple)):
+            for item in example:
+                if isinstance(item, torch.Tensor):
+                    yield item
+                elif isinstance(item, (list, tuple)):
+                    yield from _iter_example_tensors(item)
+
+
 def _validate_example_inputs(
-    example_inputs: Sequence[torch.Tensor],
+    example_inputs: Sequence[object],
 ) -> _CodegenDType:
-    tensor_examples = [
-        example for example in example_inputs if isinstance(example, torch.Tensor)
-    ]
+    tensor_examples = list(_iter_example_tensors(example_inputs))
     if not tensor_examples:
         raise RefBackendError("codegen backend requires at least one example tensor input")
     non_bool_examples = [
@@ -2287,6 +2378,8 @@ def _infer_output_shape(
         return input_shapes[0]
     if op_spec.kind == "reduction":
         return ()
+    if op_spec.kind == "concat":
+        raise RefBackendError("codegen cat expects a tensor list input")
     a_shape, b_shape = input_shapes
     if op_spec.name == "matmul":
         if len(a_shape) == 1 and len(b_shape) == 1:
@@ -2447,8 +2540,44 @@ def _parse_reduction_args(
     return reduction_dims, keepdim, reduce_all, None
 
 
+def _parse_concat_args(
+    node: torch.fx.Node,
+) -> Tuple[Sequence[torch.fx.Node], int]:
+    if not node.args:
+        raise RefBackendError("codegen cat expects a tensor list input")
+    if len(node.args) > 2:
+        raise RefBackendError("codegen cat expects at most two inputs")
+    tensors_arg = node.args[0]
+    dim = node.args[1] if len(node.args) > 1 else None
+    if node.kwargs:
+        if "dim" in node.kwargs:
+            if dim is not None:
+                raise RefBackendError("codegen cat expects dim to be specified once")
+            dim = node.kwargs["dim"]
+        extra = set(node.kwargs) - {"dim"}
+        if extra:
+            raise RefBackendError(
+                f"codegen cat got unexpected kwargs: {sorted(extra)}"
+            )
+    if isinstance(dim, torch.fx.Node):
+        raise RefBackendError("codegen cat expects dim to be an int")
+    if dim is None:
+        dim_value = 0
+    else:
+        try:
+            dim_value = operator.index(dim)
+        except TypeError as exc:
+            raise RefBackendError("codegen cat expects dim to be an int") from exc
+    if not isinstance(tensors_arg, (list, tuple)) or not tensors_arg:
+        raise RefBackendError("codegen cat expects a non-empty tensor list input")
+    for item in tensors_arg:
+        if not isinstance(item, torch.fx.Node):
+            raise RefBackendError("codegen cat expects tensor inputs only")
+    return list(tensors_arg), dim_value
+
+
 def _analyze_generic_graph(
-    gm: torch.fx.GraphModule, example_inputs: Sequence[torch.Tensor]
+    gm: torch.fx.GraphModule, example_inputs: Sequence[object]
 ) -> _GenericGraph:
     dtype_info = _validate_example_inputs(example_inputs)
     output_node = None
@@ -2487,6 +2616,56 @@ def _analyze_generic_graph(
                     raise RefBackendError(f"Unsupported call_function: {node.target}")
                 op_spec = target_info.op_spec
                 inplace_input = target_info.inplace_arg_index
+            if op_spec.kind == "concat":
+                input_nodes, concat_dim = _parse_concat_args(node)
+                input_shapes: List[Tuple[int, ...]] = []
+                for arg in input_nodes:
+                    if arg not in shapes:
+                        raise RefBackendError("codegen cat expects tensor inputs only")
+                    input_shapes.append(shapes[arg])
+                if not input_shapes:
+                    raise RefBackendError("codegen cat expects a non-empty tensor list input")
+                rank = len(input_shapes[0])
+                if rank == 0:
+                    raise RefBackendError("codegen cat expects inputs with rank >= 1")
+                if concat_dim < 0:
+                    concat_dim += rank
+                if concat_dim < 0 or concat_dim >= rank:
+                    raise RefBackendError("codegen cat dim is out of range")
+                for shape in input_shapes:
+                    if len(shape) != rank:
+                        raise RefBackendError("codegen cat expects inputs with the same rank")
+                    for dim, size in enumerate(shape):
+                        if dim == concat_dim:
+                            continue
+                        if size != input_shapes[0][dim]:
+                            raise RefBackendError(
+                                "codegen cat expects input shapes to match except in the concat dimension"
+                            )
+                input_dtypes = [dtypes[arg] for arg in input_nodes]
+                if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
+                    raise RefBackendError(
+                        "codegen cat expects inputs to share the graph dtype"
+                    )
+                output_shape = list(input_shapes[0])
+                output_shape[concat_dim] = sum(
+                    shape[concat_dim] for shape in input_shapes
+                )
+                output_shape = tuple(output_shape)
+                shapes[node] = output_shape
+                dtypes[node] = dtype_info.torch_dtype
+                strides[node] = _contiguous_strides(output_shape)
+                op_nodes.append(
+                    _OpNode(
+                        node=node,
+                        spec=op_spec,
+                        inputs=tuple(input_nodes),
+                        output_shape=output_shape,
+                        inplace_input=None,
+                        concat_dim=concat_dim,
+                    )
+                )
+                continue
             reduction_dims: Tuple[int, ...] | None = None
             keepdim = False
             reduce_all = False
@@ -2711,7 +2890,7 @@ def _validate_runtime_inputs(
 
 
 def _compile_graph(
-    gm: torch.fx.GraphModule, example_inputs: List[torch.Tensor]
+    gm: torch.fx.GraphModule, example_inputs: List[object]
 ) -> Callable[..., torch.Tensor]:
     graph = _analyze_generic_graph(gm, example_inputs)
     lib = _compile_generic_library(graph)
@@ -2739,14 +2918,22 @@ def _compile_graph(
             return type(value)(resolved)
         return value
 
-    def compiled(*args: object) -> object:
-        if len(args) != len(graph.placeholders):
+    def compiled(*args: object, **kwargs: object) -> object:
+        if kwargs:
+            placeholder_targets = [node.target for node in graph.placeholders]
+            normalized_args = list(args)
+            for name in placeholder_targets[len(normalized_args) :]:
+                if name in kwargs:
+                    normalized_args.append(kwargs[name])
+        else:
+            normalized_args = list(args)
+        if len(normalized_args) != len(graph.placeholders):
             raise RefBackendError(
-                f"codegen backend expects {len(graph.placeholders)} inputs, got {len(args)}"
+                f"codegen backend expects {len(graph.placeholders)} inputs, got {len(normalized_args)}"
             )
         env: Dict[torch.fx.Node, object] = {}
         input_tensors = []
-        for node, value in zip(graph.placeholders, args):
+        for node, value in zip(graph.placeholders, normalized_args):
             env[node] = value
             if node in graph.tensor_placeholders:
                 if not isinstance(value, torch.Tensor):
@@ -2760,7 +2947,7 @@ def _compile_graph(
         cache_key = (input_shapes, input_strides)
         cached_lib = library_cache.get(cache_key)
         if cached_lib is None:
-            updated_graph = _analyze_generic_graph(gm, list(args))
+            updated_graph = _analyze_generic_graph(gm, list(normalized_args))
             cached_lib = _compile_generic_library(updated_graph)
             library_cache[cache_key] = cached_lib
         lib = cached_lib
@@ -2789,13 +2976,13 @@ def _compile_graph(
 
 
 def get_generic_source(
-    gm: torch.fx.GraphModule, example_inputs: Sequence[torch.Tensor]
+    gm: torch.fx.GraphModule, example_inputs: Sequence[object]
 ) -> str:
     graph = _analyze_generic_graph(gm, example_inputs)
     return _write_generic_source(graph)
 
 
 def codegen_generic_backend(
-    gm: torch.fx.GraphModule, example_inputs: List[torch.Tensor]
+    gm: torch.fx.GraphModule, example_inputs: List[object]
 ) -> Callable[..., torch.Tensor]:
     return _compile_graph(gm, example_inputs)

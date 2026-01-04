@@ -6,22 +6,47 @@ from torch.testing._internal.common_methods_invocations import SampleInput, op_d
 from torch.testing._internal.common_utils import TestCase
 
 
+def _flatten_tensors(value):
+    if isinstance(value, torch.Tensor):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        tensors = []
+        for item in value:
+            tensors.extend(_flatten_tensors(item))
+        return tensors
+    return []
+
+
 def _extract_tensors(sample):
-    tensors = [sample.input]
-    tensors.extend(arg for arg in sample.args if isinstance(arg, torch.Tensor))
+    tensors = _flatten_tensors(sample.input)
+    for arg in sample.args:
+        tensors.extend(_flatten_tensors(arg))
     return tensors
 
 
 def _update_sample(sample, updated_tensors):
     tensor_iter = iter(updated_tensors)
-    new_input = next(tensor_iter)
+    if isinstance(sample.input, (list, tuple)):
+        new_input = type(sample.input)(
+            next(tensor_iter) if isinstance(item, torch.Tensor) else item
+            for item in sample.input
+        )
+    else:
+        new_input = next(tensor_iter)
     new_args = []
     for arg in sample.args:
         if isinstance(arg, torch.Tensor):
             new_args.append(next(tensor_iter))
+        elif isinstance(arg, (list, tuple)):
+            new_args.append(
+                type(arg)(
+                    next(tensor_iter) if isinstance(item, torch.Tensor) else item
+                    for item in arg
+                )
+            )
         else:
             new_args.append(arg)
-    return SampleInput(new_input, args=tuple(new_args))
+    return SampleInput(new_input, args=tuple(new_args), kwargs=sample.kwargs)
 
 
 def _bmm_sample_filter(sample):
@@ -72,6 +97,37 @@ def _broadcastable_sample_filter(sample):
     return True
 
 
+def _concat_sample_filter(sample):
+    if not isinstance(sample.input, (list, tuple)):
+        return False
+    tensors = _extract_tensors(sample)
+    if not tensors:
+        return False
+    dim = sample.kwargs.get("dim", 0)
+    if sample.args:
+        dim = sample.args[0]
+    if not isinstance(dim, int):
+        return False
+    rank = tensors[0].ndim
+    if rank == 0:
+        return False
+    if dim < 0:
+        dim += rank
+    if dim < 0 or dim >= rank:
+        return False
+    for tensor in tensors:
+        if tensor.ndim != rank:
+            return False
+    base_shape = tensors[0].shape
+    for tensor in tensors[1:]:
+        for dim_index, size in enumerate(tensor.shape):
+            if dim_index == dim:
+                continue
+            if size != base_shape[dim_index]:
+                return False
+    return True
+
+
 def _sample_matches_constraints(sample, dtype, constraints):
     tensors = _extract_tensors(sample)
     if not tensors:
@@ -95,7 +151,7 @@ def _sample_matches_constraints(sample, dtype, constraints):
 
 def _iter_supported_samples(op, device, dtype, constraints):
     for sample in op.sample_inputs(device, dtype):
-        if sample.kwargs:
+        if sample.kwargs and not constraints["allow_kwargs"]:
             continue
         if not constraints["allow_non_tensor_args"] and any(
             not isinstance(arg, torch.Tensor) for arg in sample.args
@@ -140,6 +196,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.bitwise_right_shift.Tensor,
     torch.ops.aten.bitwise_xor.Tensor,
     torch.ops.aten.bmm.default,
+    torch.ops.aten.cat.default,
     torch.ops.aten.ceil.default,
     torch.ops.aten.clamp_max.Tensor,
     torch.ops.aten.clamp_min.Tensor,
@@ -401,11 +458,19 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.transpose.int: {
         "allow_non_tensor_args": True,
     },
+    torch.ops.aten.cat.default: {
+        "allow_kwargs": True,
+        "expand_input_list": True,
+        "requires_same_shape": False,
+        "sample_filter": _concat_sample_filter,
+    },
 }
 DEFAULT_CONSTRAINTS = {
     "allowed_dtypes": (torch.float32, torch.int8, torch.int32, torch.bool),
     "allow_noncontiguous": True,
     "allow_non_tensor_args": False,
+    "allow_kwargs": False,
+    "expand_input_list": False,
     "max_ndim": 8,
     "requires_same_shape": True,
     "requires_contiguous": False,
@@ -419,9 +484,24 @@ def _constraints_for_codegen(aten_overload):
     return constraints
 
 
+def _sample_to_inputs(sample, constraints):
+    inputs = []
+    if constraints["expand_input_list"] and isinstance(sample.input, (list, tuple)):
+        inputs.extend(sample.input)
+    else:
+        inputs.append(sample.input)
+    inputs.extend(sample.args)
+    kwargs = sample.kwargs if constraints["allow_kwargs"] else {}
+    return tuple(inputs), kwargs
+
+
 def _compile_codegen_op(aten_overload):
-    def compiled_fn(*args: torch.Tensor) -> torch.Tensor:
-        return aten_overload(*args)
+    if aten_overload is torch.ops.aten.cat.default:
+        def compiled_fn(*args: torch.Tensor, **kwargs) -> torch.Tensor:
+            return aten_overload(list(args), **kwargs)
+    else:
+        def compiled_fn(*args: torch.Tensor, **kwargs) -> torch.Tensor:
+            return aten_overload(*args, **kwargs)
 
     return torch.compile(compiled_fn, backend=codegen_generic_backend)
 
@@ -477,18 +557,19 @@ def _sanitize_inplace_inputs(
 def _reference_for_dtype(
     aten_overload: torch._ops.OpOverload,
     inputs: tuple[object, ...],
+    kwargs: dict[str, object],
     dtype: torch.dtype,
 ) -> torch.Tensor:
     if dtype not in (torch.int8, torch.int32, torch.bool):
-        return aten_overload(*inputs)
+        return aten_overload(*inputs, **kwargs)
     try:
-        expected = aten_overload(*inputs)
+        expected = aten_overload(*inputs, **kwargs)
     except Exception:
         float_inputs = tuple(
             arg.to(torch.float32) if isinstance(arg, torch.Tensor) else arg
             for arg in inputs
         )
-        expected = aten_overload(*float_inputs)
+        expected = aten_overload(*float_inputs, **kwargs)
     return expected
 
 
@@ -511,12 +592,12 @@ class TestCodegenOpInfo(TestCase):
             pytest.skip("dtype not supported by test constraints")
         compiled = _compile_codegen_op(aten_overload)
         for sample in _iter_supported_samples(op, device, dtype, constraints):
-            inputs = (sample.input, *sample.args)
+            inputs, kwargs = _sample_to_inputs(sample, constraints)
             try:
-                expected = _reference_for_dtype(aten_overload, inputs, dtype)
+                expected = _reference_for_dtype(aten_overload, inputs, kwargs, dtype)
             except Exception:
                 continue
-            result = compiled(*inputs)
+            result = compiled(*inputs, **kwargs)
             if result.dtype is not expected.dtype:
                 expected = expected.to(result.dtype)
             torch.testing.assert_close(
