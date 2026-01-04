@@ -1507,6 +1507,23 @@ SUPPORTED_OPS = {
             torch.ops.aten.cat,
         },
     ),
+    "addmm": _OpSpec(
+        name="addmm",
+        kind="addmm",
+        symbol=None,
+        supported_targets={
+            torch.addmm,
+            torch.ops.aten.addmm.default,
+            torch.ops.aten.addmm,
+            torch.ops.aten.addmm_.default,
+            torch.ops.aten.addmm_,
+        },
+        inplace_targets={
+            torch.ops.aten.addmm_.default,
+            torch.ops.aten.addmm_,
+        },
+        inplace_arg_index=0,
+    ),
     "matmul": _OpSpec(
         name="matmul",
         kind="matmul",
@@ -1582,6 +1599,8 @@ class _OpNode:
     keepdim: bool = False
     std_unbiased: bool | None = None
     concat_dim: int | None = None
+    addmm_alpha: float | None = None
+    addmm_beta: float | None = None
 
 
 @dataclass
@@ -1752,6 +1771,14 @@ def _input_c_type(dtype: torch.dtype, graph_dtype: _CodegenDType) -> str:
     raise RefBackendError(
         "codegen backend supports only torch.float32, torch.int8, torch.int32, or torch.bool tensors"
     )
+
+
+def _format_scalar_literal(value: float, dtype: _CodegenDType) -> str:
+    if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES:
+        return str(int(value))
+    if dtype.torch_dtype is torch.float32:
+        return f"{float(value)}f"
+    raise RefBackendError("codegen addmm supports only floating point tensors")
 
 
 def emit_signature(
@@ -2093,6 +2120,85 @@ def _write_matmul_kernel(
             c_type=dtype.c_type,
         ),
         out_access="out[b_idx][i][j]",
+    )
+    return rendered.strip().splitlines()
+
+
+def _write_addmm_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    input_shape: Sequence[int],
+    mat1_shape: Sequence[int],
+    mat2_shape: Sequence[int],
+    input_strides: Sequence[int],
+    mat1_strides: Sequence[int],
+    mat2_strides: Sequence[int],
+    output_strides: Sequence[int],
+    dtype: _CodegenDType,
+    *,
+    alpha: float,
+    beta: float,
+) -> List[str]:
+    addmm_template = _get_template_env().get_template("addmm_kernel.c.j2")
+    input_is_contiguous = _is_contiguous(input_shape, input_strides)
+    mat1_is_contiguous = _is_contiguous(mat1_shape, mat1_strides)
+    mat2_is_contiguous = _is_contiguous(mat2_shape, mat2_strides)
+    output_is_contiguous = _is_contiguous(input_shape, output_strides)
+    acc_type = dtype.c_type
+    acc_init = "0" if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES else "0.0f"
+    m, k = mat1_shape
+    _, n = mat2_shape
+    input_suffix = _format_array_suffix(input_shape)
+    mat1_suffix = _format_array_suffix(mat1_shape)
+    mat2_suffix = _format_array_suffix(mat2_shape)
+    out_suffix = _format_array_suffix(input_shape)
+    rendered = addmm_template.render(
+        signature=(
+            f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+            f"const {dtype.c_type} input{input_suffix}, "
+            f"const {dtype.c_type} mat1{mat1_suffix}, "
+            f"const {dtype.c_type} mat2{mat2_suffix}, "
+            f"{dtype.c_type} out{out_suffix}) {{"
+        ),
+        m=m,
+        n=n,
+        k=k,
+        acc_type=acc_type,
+        acc_init=acc_init,
+        input_access=_emit_strided_access(
+            "input",
+            ("i", "j"),
+            input_strides,
+            input_is_contiguous,
+            sizes=input_shape,
+            c_type=dtype.c_type,
+        ),
+        mat1_access=_emit_strided_access(
+            "mat1",
+            ("i", "t"),
+            mat1_strides,
+            mat1_is_contiguous,
+            sizes=mat1_shape,
+            c_type=dtype.c_type,
+        ),
+        mat2_access=_emit_strided_access(
+            "mat2",
+            ("t", "j"),
+            mat2_strides,
+            mat2_is_contiguous,
+            sizes=mat2_shape,
+            c_type=dtype.c_type,
+        ),
+        out_access=_emit_strided_access(
+            "out",
+            ("i", "j"),
+            output_strides,
+            output_is_contiguous,
+            sizes=input_shape,
+            c_type=dtype.c_type,
+        ),
+        alpha=_format_scalar_literal(alpha, dtype),
+        beta=_format_scalar_literal(beta, dtype),
     )
     return rendered.strip().splitlines()
 
@@ -2497,6 +2603,22 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 op_node.concat_dim if op_node.concat_dim is not None else 0,
                 graph.dtype,
             )
+        elif op_node.spec.kind == "addmm":
+            input_node, mat1_node, mat2_node = op_node.inputs
+            kernel_lines = _write_addmm_kernel(
+                index,
+                op_node.spec,
+                graph.shapes[input_node],
+                graph.shapes[mat1_node],
+                graph.shapes[mat2_node],
+                graph.strides[input_node],
+                graph.strides[mat1_node],
+                graph.strides[mat2_node],
+                graph.strides[op_node.node],
+                graph.dtype,
+                alpha=op_node.addmm_alpha if op_node.addmm_alpha is not None else 1.0,
+                beta=op_node.addmm_beta if op_node.addmm_beta is not None else 1.0,
+            )
         else:
             lhs, rhs = op_node.inputs
             lhs_shape = graph.shapes[lhs]
@@ -2634,6 +2756,18 @@ def _infer_output_shape(
         return ()
     if op_spec.kind == "concat":
         raise RefBackendError("codegen cat expects a tensor list input")
+    if op_spec.kind == "addmm":
+        input_shape, mat1_shape, mat2_shape = input_shapes
+        if len(input_shape) != 2 or len(mat1_shape) != 2 or len(mat2_shape) != 2:
+            raise RefBackendError("codegen addmm expects 2D inputs")
+        if mat1_shape[1] != mat2_shape[0]:
+            raise RefBackendError("codegen addmm requires inner dimensions to match")
+        expected_shape = (mat1_shape[0], mat2_shape[1])
+        if input_shape != expected_shape:
+            raise RefBackendError(
+                "codegen addmm expects input shape to match matmul output"
+            )
+        return expected_shape
     a_shape, b_shape = input_shapes
     if op_spec.name == "matmul":
         if len(a_shape) == 1 and len(b_shape) == 1:
@@ -2794,6 +2928,47 @@ def _parse_reduction_args(
     return reduction_dims, keepdim, reduce_all, None
 
 
+def _parse_addmm_scalar(name: str, value: object | None) -> float:
+    if value is None:
+        return 1.0
+    if isinstance(value, torch.fx.Node):
+        raise RefBackendError(f"codegen addmm expects {name} to be a number")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise RefBackendError(f"codegen addmm expects {name} to be a number")
+    return float(value)
+
+
+def _parse_addmm_args(
+    node: torch.fx.Node,
+) -> Tuple[Sequence[torch.fx.Node], float, float]:
+    if len(node.args) < 3:
+        raise RefBackendError("codegen addmm expects at least three inputs")
+    if len(node.args) > 5:
+        raise RefBackendError("codegen addmm expects at most five inputs")
+    input_node, mat1_node, mat2_node = node.args[:3]
+    beta = node.args[3] if len(node.args) > 3 else None
+    alpha = node.args[4] if len(node.args) > 4 else None
+    if node.kwargs:
+        if "beta" in node.kwargs:
+            if beta is not None:
+                raise RefBackendError("codegen addmm expects beta to be specified once")
+            beta = node.kwargs["beta"]
+        if "alpha" in node.kwargs:
+            if alpha is not None:
+                raise RefBackendError("codegen addmm expects alpha to be specified once")
+            alpha = node.kwargs["alpha"]
+        extra = set(node.kwargs) - {"beta", "alpha"}
+        if extra:
+            raise RefBackendError(
+                f"codegen addmm got unexpected kwargs: {sorted(extra)}"
+            )
+    return (
+        (input_node, mat1_node, mat2_node),
+        _parse_addmm_scalar("alpha", alpha),
+        _parse_addmm_scalar("beta", beta),
+    )
+
+
 def _parse_concat_args(
     node: torch.fx.Node,
 ) -> Tuple[Sequence[torch.fx.Node], int]:
@@ -2917,6 +3092,43 @@ def _analyze_generic_graph(
                         output_shape=output_shape,
                         inplace_input=None,
                         concat_dim=concat_dim,
+                    )
+                )
+                continue
+            if op_spec.kind == "addmm":
+                input_nodes, alpha, beta = _parse_addmm_args(node)
+                input_shapes = []
+                for arg in input_nodes:
+                    if not isinstance(arg, torch.fx.Node):
+                        raise RefBackendError("codegen addmm expects tensor inputs only")
+                    if arg not in shapes:
+                        raise RefBackendError("codegen addmm expects tensor inputs only")
+                    input_shapes.append(shapes[arg])
+                input_dtypes = [dtypes[arg] for arg in input_nodes]
+                if dtype_info.torch_dtype is not torch.float32:
+                    raise RefBackendError(
+                        "codegen addmm supports only torch.float32 tensors"
+                    )
+                if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
+                    raise RefBackendError(
+                        "codegen addmm expects inputs to share the graph dtype"
+                    )
+                output_shape = _infer_output_shape(op_spec, input_shapes)
+                shapes[node] = output_shape
+                dtypes[node] = dtype_info.torch_dtype
+                if inplace_input is not None:
+                    strides[node] = strides[input_nodes[inplace_input]]
+                else:
+                    strides[node] = _contiguous_strides(output_shape)
+                op_nodes.append(
+                    _OpNode(
+                        node=node,
+                        spec=op_spec,
+                        inputs=tuple(input_nodes),
+                        output_shape=output_shape,
+                        inplace_input=inplace_input,
+                        addmm_alpha=alpha,
+                        addmm_beta=beta,
                     )
                 )
                 continue

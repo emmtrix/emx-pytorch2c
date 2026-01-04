@@ -523,7 +523,7 @@ addcdiv                                  -     -
 addcdiv_                                 -     -      
 addcmul                                  -     -      
 addcmul_                                 -     -      
-addmm                                    -     -      
+addmm                                    -     yes    
 addmm_                                   -     -      
 addmv                                    -     -      
 addmv_                                   -     -      
@@ -1717,9 +1717,9 @@ zfill                                    -     -
 
 Summary
 total aten ops: 1714
-supported by cref only: 6
-supported by codegen only: 115
-supported by both: 76
-unsupported by either: 1517
-supported by codegen: 191 / 1714 (11.1 %)
+supported by cref only: 8
+supported by codegen only: 116
+supported by both: 74
+unsupported by either: 1516
+supported by codegen: 190 / 1714 (11.1 %)
 supported by c-ref: 82 / 1714 (4.8 %)
