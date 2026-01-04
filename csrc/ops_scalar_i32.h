@@ -38,6 +38,10 @@ static inline int32_t ref_scalar_i32_mul(int32_t a, int32_t b) {
     return a * b;
 }
 
+static inline int32_t ref_scalar_i32_bitwise_and(int32_t a, int32_t b) {
+    return a & b;
+}
+
 static inline int32_t ref_scalar_i32_div(int32_t a, int32_t b) {
     if (b == 0) {
         return 0;

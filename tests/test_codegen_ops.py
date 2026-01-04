@@ -133,6 +133,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.atan.default,
     torch.ops.aten.atan2.default,
     torch.ops.aten.atanh.default,
+    torch.ops.aten.bitwise_and.Tensor,
     torch.ops.aten.bmm.default,
     torch.ops.aten.ceil.default,
     torch.ops.aten.clamp_max.Tensor,

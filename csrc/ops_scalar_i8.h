@@ -32,6 +32,10 @@ static inline int8_t ref_scalar_i8_mul(int8_t a, int8_t b) {
     return (int8_t)(a * b);
 }
 
+static inline int8_t ref_scalar_i8_bitwise_and(int8_t a, int8_t b) {
+    return (int8_t)(a & b);
+}
+
 static inline int8_t ref_scalar_i8_div(int8_t a, int8_t b) {
     if (b == 0) {
         return 0;
