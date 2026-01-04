@@ -32,6 +32,10 @@ static inline int8_t ref_scalar_i8_mul(int8_t a, int8_t b) {
     return (int8_t)(a * b);
 }
 
+static inline int8_t ref_scalar_i8_bitwise_and(int8_t a, int8_t b) {
+    return (int8_t)(a & b);
+}
+
 static inline int8_t ref_scalar_i8_div(int8_t a, int8_t b) {
     if (b == 0) {
         return 0;
@@ -45,6 +49,10 @@ static inline int8_t ref_scalar_i8_maximum(int8_t a, int8_t b) {
 
 static inline int8_t ref_scalar_i8_minimum(int8_t a, int8_t b) {
     return a < b ? a : b;
+}
+
+static inline int8_t ref_scalar_i8_le(int8_t a, int8_t b) {
+    return a <= b ? (int8_t)1 : (int8_t)0;
 }
 
 static inline int8_t ref_scalar_i8_fmax(int8_t a, int8_t b) {

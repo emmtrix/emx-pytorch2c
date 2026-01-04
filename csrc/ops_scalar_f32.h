@@ -36,6 +36,10 @@ static inline float ref_scalar_f32_minimum(float a, float b) {
     return fminf(a, b);
 }
 
+static inline float ref_scalar_f32_le(float a, float b) {
+    return a <= b ? 1.0f : 0.0f;
+}
+
 static inline float ref_scalar_f32_fmax(float a, float b) {
     return fmaxf(a, b);
 }

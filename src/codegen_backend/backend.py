@@ -151,6 +151,22 @@ SUPPORTED_OPS = {
             torch.ops.aten.mul_,
         ),
     ),
+    "bitwise_and": _binary_spec(
+        "bitwise_and",
+        (
+            operator.and_,
+            torch.bitwise_and,
+            torch.ops.aten.bitwise_and.Tensor,
+            torch.ops.aten.bitwise_and_.Tensor,
+            torch.ops.aten.bitwise_and_,
+            torch.ops.aten.bitwise_and,
+        ),
+        None,
+        inplace_targets=(
+            torch.ops.aten.bitwise_and_.Tensor,
+            torch.ops.aten.bitwise_and_,
+        ),
+    ),
     "div": _binary_spec(
         "div",
         (
@@ -167,6 +183,17 @@ SUPPORTED_OPS = {
             torch.ops.aten.div_.Tensor,
             torch.ops.aten.div_,
         ),
+    ),
+    "le": _binary_spec(
+        "le",
+        (
+            operator.le,
+            torch.le,
+            torch.ops.aten.le.Tensor,
+            torch.ops.aten.le.default,
+            torch.ops.aten.le,
+        ),
+        None,
     ),
     "maximum": _binary_spec(
         "maximum",
