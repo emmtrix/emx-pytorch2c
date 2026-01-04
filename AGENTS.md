@@ -47,4 +47,5 @@ When adding a new operator, follow the same structure as the existing `add`/`mat
 - Register the op in `src/codegen_backend/backend.py` by adding it to `SUPPORTED_OPS` via `_binary_spec`, `_unary_spec`, or a custom `_OpSpec`.
 - Map targets in `TARGET_REGISTRY`, and wire in-place behavior with `inplace_targets`/`inplace_arg_index` when needed.
 - Ensure dtype coverage via `_CODEGEN_DTYPES` and `_INTEGER_CODEGEN_DTYPES`, extending them if the op needs additional dtypes.
+- If the op needs a new kernel shape or custom emission logic, update the Jinja templates under `src/codegen_backend/templates/*.c.j2`; the codegen backend renders these templates and changes may require regenerating golden refs with `UPDATE_REFS=1 PYTHONPATH=src pytest -q`.
 - Test with `PYTHONPATH=src pytest -q`; update golden refs with `UPDATE_REFS=1 PYTHONPATH=src pytest -q`.
