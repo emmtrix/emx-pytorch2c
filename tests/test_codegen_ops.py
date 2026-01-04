@@ -340,7 +340,7 @@ CODEGEN_OP_TEST_CONFIG = {
         "sample_filter": _bmm_sample_filter,
     },
     torch.ops.aten.std.default: {
-        "allowed_dtypes": (torch.float32,),
+        "allowed_dtypes": (torch.float32, torch.bool),
         "allow_non_tensor_args": True,
     },
     torch.ops.aten.transpose.int: {
@@ -348,7 +348,7 @@ CODEGEN_OP_TEST_CONFIG = {
     },
 }
 DEFAULT_CONSTRAINTS = {
-    "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
+    "allowed_dtypes": (torch.float32, torch.int8, torch.int32, torch.bool),
     "allow_noncontiguous": True,
     "allow_non_tensor_args": False,
     "max_ndim": 8,
@@ -424,7 +424,7 @@ def _reference_for_dtype(
     inputs: tuple[object, ...],
     dtype: torch.dtype,
 ) -> torch.Tensor:
-    if dtype not in (torch.int8, torch.int32):
+    if dtype not in (torch.int8, torch.int32, torch.bool):
         return aten_overload(*inputs)
     try:
         expected = aten_overload(*inputs)

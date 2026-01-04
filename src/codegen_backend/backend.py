@@ -57,6 +57,13 @@ _CODEGEN_DTYPES = {
         scalar_prefix="ref_scalar_i32_",
         suffix="i32",
     ),
+    torch.bool: _CodegenDType(
+        torch_dtype=torch.bool,
+        c_type="bool",
+        scalar_header="ops_scalar_bool.h",
+        scalar_prefix="ref_scalar_bool_",
+        suffix="bool",
+    ),
 }
 
 _INTEGER_CODEGEN_DTYPES = {torch.int8, torch.int32}
@@ -1758,6 +1765,11 @@ def _write_std_kernel(
     reduction_count = 1
     for dim in reduction_dims:
         reduction_count *= input_shape[dim]
+    acc_type = dtype.c_type
+    sqrt_fn = f"{dtype.scalar_prefix}sqrt"
+    if dtype.torch_dtype is torch.bool:
+        acc_type = "float"
+        sqrt_fn = "ref_scalar_f32_sqrt"
     rendered = std_template.render(
         signature=signature,
         input_rank=input_rank,
@@ -1770,10 +1782,10 @@ def _write_std_kernel(
         ],
         input_access=input_access,
         output_access=output_access,
-        acc_type=dtype.c_type,
+        acc_type=acc_type,
         reduction_count=reduction_count,
         unbiased=int(unbiased),
-        sqrt_fn=f"{dtype.scalar_prefix}sqrt",
+        sqrt_fn=sqrt_fn,
     )
     return rendered.strip().splitlines()
 
@@ -1791,6 +1803,21 @@ def _write_reduction_kernel(
 ) -> List[str]:
     reduction_template = _get_template_env().get_template("sum_kernel.c.j2")
     config = _REDUCTION_CONFIG[op_spec.name]
+    if dtype.torch_dtype is torch.bool:
+        if op_spec.name in {"sum", "mean"}:
+            config = {
+                "init_value": 0,
+                "reduce_op": "|=",
+                "post_op": None,
+                "bool_reduction": True,
+            }
+        elif op_spec.name == "prod":
+            config = {
+                "init_value": 1,
+                "reduce_op": "&=",
+                "post_op": None,
+                "bool_reduction": True,
+            }
     a_is_contiguous = _is_contiguous(input_shape, input_strides)
     input_rank = len(input_shape)
     output_rank = len(output_shape)
@@ -1999,7 +2026,7 @@ def _validate_example_inputs(
     dtype_info = _CODEGEN_DTYPES.get(first_dtype)
     if dtype_info is None:
         raise RefBackendError(
-            "codegen backend supports only torch.float32, torch.int8, or torch.int32 tensors"
+            "codegen backend supports only torch.float32, torch.int8, torch.int32, or torch.bool tensors"
         )
     for example in tensor_examples:
         if example.dtype is not first_dtype:
@@ -2180,11 +2207,11 @@ def _parse_reduction_args(
     if dtype is not None:
         if isinstance(dtype, torch.fx.Node):
             raise RefBackendError(
-                f"codegen {op_name} expects dtype to be torch.float32, torch.int8, or torch.int32"
+                f"codegen {op_name} expects dtype to be torch.float32, torch.int8, torch.int32, or torch.bool"
             )
-        if dtype not in (torch.float32, torch.int8, torch.int32):
+        if dtype not in (torch.float32, torch.int8, torch.int32, torch.bool):
             raise RefBackendError(
-                f"codegen {op_name} expects dtype to be torch.float32, torch.int8, or torch.int32"
+                f"codegen {op_name} expects dtype to be torch.float32, torch.int8, torch.int32, or torch.bool"
             )
     reduction_dims = _normalize_reduction_dims(op_name, dim, len(input_shape))
     reduce_all = dim is None
@@ -2275,8 +2302,13 @@ def _analyze_generic_graph(
                     reduce_all,
                     std_unbiased,
                 ) = _parse_reduction_args(op_spec.name, node, input_shapes[0])
-                if op_spec.name == "std" and dtype_info.torch_dtype is not torch.float32:
-                    raise RefBackendError("codegen std supports only torch.float32")
+                if op_spec.name == "std" and dtype_info.torch_dtype not in (
+                    torch.float32,
+                    torch.bool,
+                ):
+                    raise RefBackendError(
+                        "codegen std supports only torch.float32 or torch.bool"
+                    )
                 output_shape = _infer_reduction_output_shape(
                     input_shapes[0],
                     reduction_dims,
