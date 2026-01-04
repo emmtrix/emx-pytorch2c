@@ -523,7 +523,7 @@ addcdiv                                  -     -
 addcdiv_                                 -     -      
 addcmul                                  -     -      
 addcmul_                                 -     -      
-addmm                                    -     -      
+addmm                                    -     yes    
 addmm_                                   -     -      
 addmv                                    -     -      
 addmv_                                   -     -      
@@ -541,8 +541,8 @@ all                                      -     yes
 allclose                                 -     -      
 alpha_dropout                            -     -      
 alpha_dropout_                           -     -      
-amax                                     yes   -      
-amin                                     yes   -      
+amax                                     yes   yes    
+amin                                     yes   yes    
 aminmax                                  -     -      
 angle                                    yes   yes    
 any                                      -     yes    
@@ -1189,7 +1189,7 @@ miopen_depthwise_convolution             -     -
 miopen_rnn                               -     -      
 miopen_rnn_backward                      -     -      
 mish                                     -     -      
-mish_                                    -     -      
+mish_                                    -     yes    
 mish_backward                            -     -      
 mkldnn_adaptive_avg_pool2d               -     -      
 mkldnn_adaptive_avg_pool2d_backward      -     -      
