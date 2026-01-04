@@ -43,6 +43,13 @@ _CODEGEN_DTYPES = {
         scalar_prefix="ref_scalar_f32_",
         suffix="f32",
     ),
+    torch.int8: _CodegenDType(
+        torch_dtype=torch.int8,
+        c_type="int8_t",
+        scalar_header="ops_scalar_i8.h",
+        scalar_prefix="ref_scalar_i8_",
+        suffix="i8",
+    ),
     torch.int32: _CodegenDType(
         torch_dtype=torch.int32,
         c_type="int32_t",
@@ -52,9 +59,7 @@ _CODEGEN_DTYPES = {
     ),
 }
 
-_INTEGER_CODEGEN_DTYPES = {
-    torch.int32,
-}
+_INTEGER_CODEGEN_DTYPES = {torch.int8, torch.int32}
 
 def _binary_spec(
     name: str,
@@ -1538,7 +1543,7 @@ def _write_matmul_kernel(
     a_is_contiguous = _is_contiguous(a_shape, a_strides)
     b_is_contiguous = _is_contiguous(b_shape, b_strides)
     acc_type = dtype.c_type
-    acc_init = "0" if dtype.torch_dtype is torch.int32 else "0.0f"
+    acc_init = "0" if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES else "0.0f"
 
     if op_spec.name == "matmul":
         if len(a_shape) == 1:
@@ -1749,7 +1754,7 @@ def _write_reduction_kernel(
         init_value = f"{config['init_value']}.0f"
     post_op = None
     if config["post_op"] == "mean":
-        if dtype.torch_dtype is torch.int32:
+        if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES:
             post_op = f"acc /= {reduction_count};"
         else:
             post_op = f"acc /= (float){reduction_count};"
@@ -1892,7 +1897,7 @@ def _validate_example_inputs(
     dtype_info = _CODEGEN_DTYPES.get(first_dtype)
     if dtype_info is None:
         raise RefBackendError(
-            "codegen backend supports only torch.float32 or torch.int32 tensors"
+            "codegen backend supports only torch.float32, torch.int8, or torch.int32 tensors"
         )
     for example in tensor_examples:
         if example.dtype is not first_dtype:
@@ -2045,11 +2050,11 @@ def _parse_reduction_args(
     if dtype is not None:
         if isinstance(dtype, torch.fx.Node):
             raise RefBackendError(
-                f"codegen {op_name} expects dtype to be torch.float32 or torch.int32"
+                f"codegen {op_name} expects dtype to be torch.float32, torch.int8, or torch.int32"
             )
-        if dtype not in (torch.float32, torch.int32):
+        if dtype not in (torch.float32, torch.int8, torch.int32):
             raise RefBackendError(
-                f"codegen {op_name} expects dtype to be torch.float32 or torch.int32"
+                f"codegen {op_name} expects dtype to be torch.float32, torch.int8, or torch.int32"
             )
     reduction_dims = _normalize_reduction_dims(op_name, dim, len(input_shape))
     reduce_all = dim is None

@@ -541,8 +541,8 @@ all                                      -     yes
 allclose                                 -     -      
 alpha_dropout                            -     -      
 alpha_dropout_                           -     -      
-amax                                     -     -      
-amin                                     -     -      
+amax                                     yes   -      
+amin                                     yes   -      
 aminmax                                  -     -      
 angle                                    yes   yes    
 any                                      -     yes    

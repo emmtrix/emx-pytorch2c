@@ -94,6 +94,8 @@ class RefOpKind:
     REF_OP_SILU = 76
     REF_OP_CBRT = 77
     REF_OP_LSTM = 78
+    REF_OP_AMAX = 79
+    REF_OP_AMIN = 80
 
 
 class RefTensorView(ctypes.Structure):
@@ -241,6 +243,11 @@ def _validate_max_dims(op_name: str, *tensors: torch.Tensor, max_dims: int = 8) 
         raise RefBackendError(f"{op_name} supports at most {max_dims} dimensions")
 
 
+def _validate_scalar_output(op_name: str, out: torch.Tensor) -> None:
+    if out.ndim != 0:
+        raise RefBackendError(f"{op_name} requires output to be a scalar tensor")
+
+
 def _normalize_conv2d_param(name: str, value: object) -> Tuple[int, int]:
     if isinstance(value, int):
         return (value, value)
@@ -339,6 +346,33 @@ def run_maximum(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
 
 def run_minimum(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
     _run_binary_elementwise("minimum", RefOpKind.REF_OP_MINIMUM, a, b, out)
+
+
+def run_amax(a: torch.Tensor, out: torch.Tensor) -> None:
+    _validate_float32("amax", a, out)
+    _validate_max_dims("amax", a)
+    if a.numel() == 0:
+        raise RefBackendError(
+            "amax requires input.numel() > 0 when dim is not specified"
+        )
+    _validate_scalar_output("amax", out)
+    call, buffers = _build_call((a,), (out,))
+    _ = buffers
+    _get_library().run_op(RefOpKind.REF_OP_AMAX, call)
+
+
+def run_amin(a: torch.Tensor, out: torch.Tensor) -> None:
+    _validate_float32("amin", a, out)
+    _validate_max_dims("amin", a)
+    if a.numel() == 0:
+        raise RefBackendError(
+            "amin requires input.numel() > 0 when dim is not specified"
+        )
+    _validate_scalar_output("amin", out)
+    call, buffers = _build_call((a,), (out,))
+    _ = buffers
+    _get_library().run_op(RefOpKind.REF_OP_AMIN, call)
+
 
 def run_atan2(a: torch.Tensor, b: torch.Tensor, out: torch.Tensor) -> None:
     _run_binary_elementwise("atan2", RefOpKind.REF_OP_ATAN2, a, b, out)

@@ -14,6 +14,8 @@ from .cffi_bindings import (
     run_abs,
     run_acos,
     run_acosh,
+    run_amax,
+    run_amin,
     run_asin,
     run_asinh,
     run_atan,
@@ -128,6 +130,34 @@ def _run_minimum(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     out = torch.empty_like(a, memory_format=torch.contiguous_format)
     run_minimum(a, b, out)
     return out
+
+
+def _is_empty_dim(dim: object) -> bool:
+    if dim is None:
+        return True
+    if isinstance(dim, (tuple, list)) and len(dim) == 0:
+        return True
+    return False
+
+
+def _run_amax(
+    a: torch.Tensor, dim: object = None, keepdim: bool = False
+) -> torch.Tensor:
+    if _is_empty_dim(dim) and not keepdim:
+        out = torch.empty((), dtype=a.dtype, device=a.device)
+        run_amax(a, out)
+        return out
+    return torch.amax(a, dim=dim, keepdim=keepdim)
+
+
+def _run_amin(
+    a: torch.Tensor, dim: object = None, keepdim: bool = False
+) -> torch.Tensor:
+    if _is_empty_dim(dim) and not keepdim:
+        out = torch.empty((), dtype=a.dtype, device=a.device)
+        run_amin(a, out)
+        return out
+    return torch.amin(a, dim=dim, keepdim=keepdim)
 
 
 def _run_atan2(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
@@ -715,6 +745,12 @@ def _compile_graph(
         torch.minimum: ("minimum", _run_minimum),
         torch.ops.aten.minimum.default: ("minimum", _run_minimum),
         torch.ops.aten.minimum: ("minimum", _run_minimum),
+        torch.amax: ("amax", _run_amax),
+        torch.ops.aten.amax.default: ("amax", _run_amax),
+        torch.ops.aten.amax: ("amax", _run_amax),
+        torch.amin: ("amin", _run_amin),
+        torch.ops.aten.amin.default: ("amin", _run_amin),
+        torch.ops.aten.amin: ("amin", _run_amin),
         torch.atan2: ("atan2", _run_atan2),
         torch.ops.aten.atan2.default: ("atan2", _run_atan2),
         torch.ops.aten.atan2: ("atan2", _run_atan2),
@@ -998,6 +1034,8 @@ def _compile_graph(
         "sgn",
         "sinc",
         "square",
+        "amax",
+        "amin",
     }
 
     def compiled(*args: torch.Tensor) -> torch.Tensor:
@@ -1091,6 +1129,21 @@ def _compile_graph(
                         bool(bidirectional),
                         bool(batch_first),
                     )
+                elif op_name in ("amax", "amin"):
+                    if node.kwargs:
+                        raise RefBackendError(f"{op_name} expects positional arguments only")
+                    if len(node.args) not in (1, 2, 3):
+                        raise RefBackendError(
+                            f"{op_name} expects input, optional dim, and optional keepdim"
+                        )
+                    input_arg = node.args[0]
+                    if not isinstance(input_arg, torch.fx.Node):
+                        raise RefBackendError(f"{op_name} expects tensor input only")
+                    dim = node.args[1] if len(node.args) >= 2 else None
+                    keepdim = node.args[2] if len(node.args) == 3 else False
+                    if isinstance(dim, torch.fx.Node) or isinstance(keepdim, torch.fx.Node):
+                        raise RefBackendError(f"{op_name} expects constant dim/keepdim")
+                    result = op_fn(env[input_arg.name], dim, bool(keepdim))
                 elif op_name == "unbind":
                     if node.kwargs:
                         raise RefBackendError("unbind expects positional arguments only")

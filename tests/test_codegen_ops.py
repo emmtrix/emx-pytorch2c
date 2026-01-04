@@ -342,7 +342,7 @@ CODEGEN_OP_TEST_CONFIG = {
     },
 }
 DEFAULT_CONSTRAINTS = {
-    "allowed_dtypes": (torch.float32, torch.int32),
+    "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
     "allow_noncontiguous": True,
     "allow_non_tensor_args": False,
     "max_ndim": 8,
@@ -418,7 +418,7 @@ def _reference_for_dtype(
     inputs: tuple[object, ...],
     dtype: torch.dtype,
 ) -> torch.Tensor:
-    if dtype is not torch.int32:
+    if dtype not in (torch.int8, torch.int32):
         return aten_overload(*inputs)
     try:
         expected = aten_overload(*inputs)
@@ -459,7 +459,7 @@ class TestCodegenOpInfo(TestCase):
             if result.dtype is not expected.dtype:
                 expected = expected.to(result.dtype)
             torch.testing.assert_close(
-                result, expected, equal_nan=dtype is torch.int32
+                result, expected, equal_nan=dtype in (torch.int8, torch.int32)
             )
 
 

@@ -4,6 +4,15 @@
 #include <limits.h>
 #include <stdint.h>
 
+#include "ops_scalar_f32.h"
+
+static inline int8_t ref_scalar_i8_from_f32(float value) {
+    if (!isfinite(value)) {
+        return 0;
+    }
+    return (int8_t)value;
+}
+
 static inline int8_t ref_scalar_i8_abs(int8_t a) {
     if (a == INT8_MIN) {
         return INT8_MIN;
@@ -170,5 +179,66 @@ static inline int8_t ref_scalar_i8_sgn(int8_t a) {
 static inline int8_t ref_scalar_i8_square(int8_t a) {
     return (int8_t)(a * a);
 }
+
+#define REF_I8_UNARY_FROM_F32(name)                         \
+    static inline int8_t ref_scalar_i8_##name(int8_t a) {    \
+        return ref_scalar_i8_from_f32(ref_scalar_f32_##name( \
+            (float)a));                                     \
+    }
+
+#define REF_I8_BINARY_FROM_F32(name)                                \
+    static inline int8_t ref_scalar_i8_##name(int8_t a, int8_t b) {  \
+        return ref_scalar_i8_from_f32(ref_scalar_f32_##name(         \
+            (float)a, (float)b));                                   \
+    }
+
+REF_I8_UNARY_FROM_F32(acos)
+REF_I8_UNARY_FROM_F32(acosh)
+REF_I8_UNARY_FROM_F32(angle)
+REF_I8_UNARY_FROM_F32(asin)
+REF_I8_UNARY_FROM_F32(asinh)
+REF_I8_UNARY_FROM_F32(atan)
+REF_I8_UNARY_FROM_F32(atanh)
+REF_I8_UNARY_FROM_F32(cbrt)
+REF_I8_UNARY_FROM_F32(cos)
+REF_I8_UNARY_FROM_F32(cosh)
+REF_I8_UNARY_FROM_F32(deg2rad)
+REF_I8_UNARY_FROM_F32(digamma)
+REF_I8_UNARY_FROM_F32(erf)
+REF_I8_UNARY_FROM_F32(erfc)
+REF_I8_UNARY_FROM_F32(erfinv)
+REF_I8_UNARY_FROM_F32(exp)
+REF_I8_UNARY_FROM_F32(exp2)
+REF_I8_UNARY_FROM_F32(expm1)
+REF_I8_UNARY_FROM_F32(i0)
+REF_I8_UNARY_FROM_F32(lgamma)
+REF_I8_UNARY_FROM_F32(log)
+REF_I8_UNARY_FROM_F32(log10)
+REF_I8_UNARY_FROM_F32(log1p)
+REF_I8_UNARY_FROM_F32(log2)
+REF_I8_UNARY_FROM_F32(logit)
+REF_I8_UNARY_FROM_F32(nan_to_num)
+REF_I8_UNARY_FROM_F32(rad2deg)
+REF_I8_UNARY_FROM_F32(rsqrt)
+REF_I8_UNARY_FROM_F32(sigmoid)
+REF_I8_UNARY_FROM_F32(silu)
+REF_I8_UNARY_FROM_F32(sin)
+REF_I8_UNARY_FROM_F32(sinc)
+REF_I8_UNARY_FROM_F32(sinh)
+REF_I8_UNARY_FROM_F32(sqrt)
+REF_I8_UNARY_FROM_F32(tan)
+REF_I8_UNARY_FROM_F32(tanh)
+
+REF_I8_BINARY_FROM_F32(atan2)
+REF_I8_BINARY_FROM_F32(heaviside)
+REF_I8_BINARY_FROM_F32(hypot)
+REF_I8_BINARY_FROM_F32(ldexp)
+REF_I8_BINARY_FROM_F32(logaddexp)
+REF_I8_BINARY_FROM_F32(nextafter)
+REF_I8_BINARY_FROM_F32(pow)
+REF_I8_BINARY_FROM_F32(xlogy)
+
+#undef REF_I8_UNARY_FROM_F32
+#undef REF_I8_BINARY_FROM_F32
 
 #endif
