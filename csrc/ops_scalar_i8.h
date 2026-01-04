@@ -75,6 +75,26 @@ static inline int8_t ref_scalar_i8_le(int8_t a, int8_t b) {
     return a <= b ? (int8_t)1 : (int8_t)0;
 }
 
+static inline int8_t ref_scalar_i8_lt(int8_t a, int8_t b) {
+    return a < b ? (int8_t)1 : (int8_t)0;
+}
+
+static inline int8_t ref_scalar_i8_ge(int8_t a, int8_t b) {
+    return a >= b ? (int8_t)1 : (int8_t)0;
+}
+
+static inline int8_t ref_scalar_i8_gt(int8_t a, int8_t b) {
+    return a > b ? (int8_t)1 : (int8_t)0;
+}
+
+static inline int8_t ref_scalar_i8_eq(int8_t a, int8_t b) {
+    return a == b ? (int8_t)1 : (int8_t)0;
+}
+
+static inline int8_t ref_scalar_i8_ne(int8_t a, int8_t b) {
+    return a != b ? (int8_t)1 : (int8_t)0;
+}
+
 static inline int8_t ref_scalar_i8_fmax(int8_t a, int8_t b) {
     return a > b ? a : b;
 }

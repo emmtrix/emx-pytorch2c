@@ -56,6 +56,26 @@ REF_BOOL_BINARY(minimum)
 static inline bool ref_scalar_bool_le(bool a, bool b) {
     return a <= b;
 }
+
+static inline bool ref_scalar_bool_lt(bool a, bool b) {
+    return a < b;
+}
+
+static inline bool ref_scalar_bool_ge(bool a, bool b) {
+    return a >= b;
+}
+
+static inline bool ref_scalar_bool_gt(bool a, bool b) {
+    return a > b;
+}
+
+static inline bool ref_scalar_bool_eq(bool a, bool b) {
+    return a == b;
+}
+
+static inline bool ref_scalar_bool_ne(bool a, bool b) {
+    return a != b;
+}
 REF_BOOL_BINARY(fmax)
 REF_BOOL_BINARY(fmin)
 REF_BOOL_BINARY(copysign)
