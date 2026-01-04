@@ -253,6 +253,18 @@ static inline float ref_scalar_f32_silu(float a) {
     return a / (1.0f + expf(-a));
 }
 
+static inline float ref_scalar_f32_mish(float a) {
+    if (a > 20.0f) {
+        return a;
+    }
+    if (a < -20.0f) {
+        float exp_a = expf(a);
+        return a * exp_a;
+    }
+    float softplus = log1pf(expf(a));
+    return a * tanhf(softplus);
+}
+
 static inline float ref_scalar_f32_sign(float a) {
     if (isnan(a)) {
         return a;

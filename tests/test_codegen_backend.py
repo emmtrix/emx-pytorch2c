@@ -53,6 +53,10 @@ def atan_fn(a):
     return torch.atan(a)
 
 
+def mish_fn(a):
+    return torch.ops.aten.mish.default(a)
+
+
 def inplace_fn(a):
     b = torch.atan(a)
     b = torch.ops.aten.add_.Tensor(b, a)
@@ -166,6 +170,15 @@ def test_codegen_generic_handles_atan():
     compiled = torch.compile(atan_fn, backend=codegen_generic_backend)
     result = compiled(a)
     torch.testing.assert_close(result, atan_fn(a))
+
+
+def test_codegen_generic_handles_mish():
+    a = torch.randn(2, 3, dtype=torch.float32)
+    source = get_generic_source(torch.fx.symbolic_trace(mish_fn), (a,))
+    assert "ref_scalar_f32_mish" in source
+    compiled = torch.compile(mish_fn, backend=codegen_generic_backend)
+    result = compiled(a)
+    torch.testing.assert_close(result, mish_fn(a))
 
 
 def test_codegen_generic_handles_where():
