@@ -367,16 +367,13 @@ def _pool2d_output_shape_from_shapes(
     return batch, channels, out_h, out_w
 
 
-def _conv1d_output_shape_from_shapes(
+def _conv1d_validate_channels(
     input_shape: Sequence[int],
     weight_shape: Sequence[int],
-    stride: int,
-    padding: int,
-    dilation: int,
     groups: int,
-) -> Tuple[int, int, int]:
-    batch, in_channels, in_l = input_shape
-    out_channels, weight_in_channels, kernel_l = weight_shape
+) -> Tuple[int, int]:
+    batch, in_channels, _ = input_shape
+    out_channels, weight_in_channels, _ = weight_shape
     if in_channels != weight_in_channels * groups:
         raise RefBackendError(
             "codegen conv1d requires input channels to match weight channels * groups"
@@ -385,6 +382,39 @@ def _conv1d_output_shape_from_shapes(
         raise RefBackendError(
             "codegen conv1d requires output channels to be divisible by groups"
         )
+    return batch, out_channels
+
+
+def _conv1d_same_padding(
+    input_shape: Sequence[int],
+    weight_shape: Sequence[int],
+    stride: int,
+    dilation: int,
+) -> Tuple[int, int]:
+    _, _, in_l = input_shape
+    _, _, kernel_l = weight_shape
+    out_l = math.ceil(in_l / stride)
+    pad_l = max(
+        (out_l - 1) * stride + (dilation * (kernel_l - 1) + 1) - in_l,
+        0,
+    )
+    pad_left = pad_l // 2
+    return pad_left, out_l
+
+
+def _conv1d_output_shape_from_shapes(
+    input_shape: Sequence[int],
+    weight_shape: Sequence[int],
+    stride: int,
+    padding: int,
+    dilation: int,
+    groups: int,
+) -> Tuple[int, int, int]:
+    batch, out_channels = _conv1d_validate_channels(
+        input_shape, weight_shape, groups
+    )
+    in_l = input_shape[2]
+    kernel_l = weight_shape[2]
     numerator = in_l + 2 * padding - dilation * (kernel_l - 1) - 1
     if numerator < 0:
         raise RefBackendError(
@@ -3446,31 +3476,50 @@ def _handle_conv1d_node(
             raise RefBackendError(
                 "codegen conv1d expects bias shape to match output channels"
             )
-        if not _is_contiguous(bias_shape, strides[bias_node]):
-            raise RefBackendError("codegen conv1d requires contiguous bias")
     if len(input_shape) != 3 or len(weight_shape) != 3:
         raise RefBackendError("codegen conv1d requires 3D input and weight tensors")
-    if not _is_contiguous(input_shape, strides[input_arg]) or not _is_contiguous(
-        weight_shape, strides[weight_arg]
-    ):
-        raise RefBackendError("codegen conv1d requires contiguous tensors")
     stride_value = _normalize_conv1d_param("stride", stride)
-    padding_value = _normalize_conv1d_param("padding", padding)
     dilation_value = _normalize_conv1d_param("dilation", dilation)
+    if isinstance(padding, str):
+        padding_mode = padding.lower()
+        if padding_mode not in ("same", "valid"):
+            raise RefBackendError(
+                "codegen conv1d expects padding to be an int, 1-item tuple, or 'same'/'valid'"
+            )
+        if padding_mode == "valid":
+            padding_value = 0
+            output_shape = _conv1d_output_shape_from_shapes(
+                input_shape,
+                weight_shape,
+                stride_value,
+                padding_value,
+                dilation_value,
+                groups,
+            )
+        else:
+            batch, out_channels = _conv1d_validate_channels(
+                input_shape, weight_shape, groups
+            )
+            padding_value, out_l = _conv1d_same_padding(
+                input_shape, weight_shape, stride_value, dilation_value
+            )
+            output_shape = (batch, out_channels, out_l)
+    else:
+        padding_value = _normalize_conv1d_param("padding", padding)
+        output_shape = _conv1d_output_shape_from_shapes(
+            input_shape,
+            weight_shape,
+            stride_value,
+            padding_value,
+            dilation_value,
+            groups,
+        )
     if stride_value <= 0 or dilation_value <= 0 or padding_value < 0:
         raise RefBackendError(
             "codegen conv1d expects stride and dilation to be positive and padding to be non-negative"
         )
     if not isinstance(groups, int) or groups <= 0:
         raise RefBackendError("codegen conv1d requires positive groups")
-    output_shape = _conv1d_output_shape_from_shapes(
-        input_shape,
-        weight_shape,
-        stride_value,
-        padding_value,
-        dilation_value,
-        groups,
-    )
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
     strides[node] = _contiguous_strides(output_shape)
@@ -4255,12 +4304,12 @@ def _compile_graph(
     ] = {
         (lib.input_shapes, lib.input_strides): lib,
     }
-    conv2d_contiguous_indices = tuple(
+    conv_contiguous_indices = tuple(
         sorted(
             {
                 graph.tensor_placeholders.index(input_node)
                 for op_node in graph.op_nodes
-                if op_node.spec.kind == "conv2d"
+                if op_node.spec.kind in {"conv1d", "conv2d"}
                 for input_node in op_node.inputs
                 if input_node in graph.tensor_placeholders
             }
@@ -4306,8 +4355,8 @@ def _compile_graph(
         _validate_runtime_inputs(input_tensors, expected_dtypes, graph.dtype)
 
         contiguous_inputs = list(input_tensors)
-        if conv2d_contiguous_indices:
-            for index in conv2d_contiguous_indices:
+        if conv_contiguous_indices:
+            for index in conv_contiguous_indices:
                 if not contiguous_inputs[index].is_contiguous():
                     contiguous_inputs[index] = contiguous_inputs[
                         index
