@@ -14,7 +14,10 @@ from jinja2 import Environment, FileSystemLoader
 import torch.fx
 from torch.fx.immutable_collections import immutable_list
 
-from c_ref_backend.cffi_bindings import RefBackendError, _normalize_conv2d_param
+from c_ref_backend.cffi_bindings import (
+    RefBackendError,
+    _normalize_conv2d_param as _normalize_conv2d_pair,
+)
 from codegen_backend.ops_registry import SUPPORTED_OPS
 from codegen_backend.specs import _OpSpec
 
@@ -232,6 +235,18 @@ def _is_contiguous(shape: Sequence[int], strides: Sequence[int]) -> bool:
     )
 
 
+def _unpack_conv2d_input_shape(
+    input_shape: Sequence[int],
+) -> Tuple[bool, int, int, int, int]:
+    if len(input_shape) == 4:
+        batch, in_channels, in_h, in_w = input_shape
+        return True, batch, in_channels, in_h, in_w
+    if len(input_shape) == 3:
+        in_channels, in_h, in_w = input_shape
+        return False, 1, in_channels, in_h, in_w
+    raise RefBackendError("codegen conv2d requires 3D or 4D input tensors")
+
+
 def _conv2d_output_shape_from_shapes(
     input_shape: Sequence[int],
     weight_shape: Sequence[int],
@@ -239,8 +254,10 @@ def _conv2d_output_shape_from_shapes(
     padding: Tuple[int, int],
     dilation: Tuple[int, int],
     groups: int,
-) -> Tuple[int, int, int, int]:
-    batch, in_channels, in_h, in_w = input_shape
+) -> Tuple[int, ...]:
+    has_batch, batch, in_channels, in_h, in_w = _unpack_conv2d_input_shape(
+        input_shape
+    )
     out_channels, weight_in_channels, kernel_h, kernel_w = weight_shape
     if in_channels != weight_in_channels * groups:
         raise RefBackendError(
@@ -261,7 +278,52 @@ def _conv2d_output_shape_from_shapes(
         )
     out_h = numerator_h // stride_h + 1
     out_w = numerator_w // stride_w + 1
-    return batch, out_channels, out_h, out_w
+    if has_batch:
+        return batch, out_channels, out_h, out_w
+    return out_channels, out_h, out_w
+
+
+def _conv2d_same_padding(
+    input_shape: Sequence[int],
+    weight_shape: Sequence[int],
+    stride: Tuple[int, int],
+    dilation: Tuple[int, int],
+) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    _, _, in_h, in_w = _unpack_conv2d_input_shape(input_shape)[1:]
+    _, _, kernel_h, kernel_w = weight_shape
+    stride_h, stride_w = stride
+    dil_h, dil_w = dilation
+    out_h = math.ceil(in_h / stride_h)
+    out_w = math.ceil(in_w / stride_w)
+    pad_h = max(
+        (out_h - 1) * stride_h + (dil_h * (kernel_h - 1) + 1) - in_h,
+        0,
+    )
+    pad_w = max(
+        (out_w - 1) * stride_w + (dil_w * (kernel_w - 1) + 1) - in_w,
+        0,
+    )
+    pad_top = pad_h // 2
+    pad_left = pad_w // 2
+    return (pad_top, pad_left), (out_h, out_w)
+
+
+def _conv2d_validate_channels(
+    input_shape: Sequence[int],
+    weight_shape: Sequence[int],
+    groups: int,
+) -> Tuple[bool, int]:
+    has_batch, _, in_channels, _, _ = _unpack_conv2d_input_shape(input_shape)
+    out_channels, weight_in_channels, _, _ = weight_shape
+    if in_channels != weight_in_channels * groups:
+        raise RefBackendError(
+            "codegen conv2d requires input channels to match weight channels * groups"
+        )
+    if out_channels % groups != 0:
+        raise RefBackendError(
+            "codegen conv2d requires output channels to be divisible by groups"
+        )
+    return has_batch, out_channels
 
 
 def _normalize_pool2d_param(name: str, value: object) -> Tuple[int, int]:
@@ -1798,9 +1860,14 @@ def _write_conv2d_kernel(
     has_bias: bool,
 ) -> List[str]:
     conv2d_template = _get_template_env().get_template("conv2d_kernel.c.j2")
-    batch, in_channels, in_h, in_w = input_shape
+    has_batch, batch, in_channels, in_h, in_w = _unpack_conv2d_input_shape(
+        input_shape
+    )
     out_channels, _, k_h, k_w = weight_shape
-    out_h, out_w = output_shape[2], output_shape[3]
+    if has_batch:
+        out_h, out_w = output_shape[2], output_shape[3]
+    else:
+        out_h, out_w = output_shape[1], output_shape[2]
     stride_h, stride_w = stride
     pad_h, pad_w = padding
     dil_h, dil_w = dilation
@@ -1837,6 +1904,7 @@ def _write_conv2d_kernel(
         groups=groups,
         c_type=dtype.c_type,
         has_bias=has_bias,
+        has_batch=has_batch,
     )
     return rendered.strip().splitlines()
 
@@ -3485,11 +3553,49 @@ def _handle_conv2d_node(
             raise RefBackendError(
                 "codegen conv2d expects bias shape to match output channels"
             )
-    if len(input_shape) != 4 or len(weight_shape) != 4:
-        raise RefBackendError("codegen conv2d requires 4D input and weight tensors")
-    stride_pair = _normalize_conv2d_param("stride", stride)
-    padding_pair = _normalize_conv2d_param("padding", padding)
-    dilation_pair = _normalize_conv2d_param("dilation", dilation)
+    if len(weight_shape) != 4:
+        raise RefBackendError("codegen conv2d requires 4D weight tensors")
+    if len(input_shape) not in (3, 4):
+        raise RefBackendError("codegen conv2d requires 3D or 4D input tensors")
+    stride_pair = _normalize_conv2d_pair("stride", stride)
+    dilation_pair = _normalize_conv2d_pair("dilation", dilation)
+    if isinstance(padding, str):
+        padding_mode = padding.lower()
+        if padding_mode not in ("same", "valid"):
+            raise RefBackendError(
+                "codegen conv2d expects padding to be an int, a pair of ints, or 'same'/'valid'"
+            )
+        if padding_mode == "valid":
+            padding_pair = (0, 0)
+            output_shape = _conv2d_output_shape_from_shapes(
+                input_shape,
+                weight_shape,
+                stride_pair,
+                padding_pair,
+                dilation_pair,
+                groups,
+            )
+        else:
+            has_batch, out_channels = _conv2d_validate_channels(
+                input_shape, weight_shape, groups
+            )
+            padding_pair, (out_h, out_w) = _conv2d_same_padding(
+                input_shape, weight_shape, stride_pair, dilation_pair
+            )
+            if has_batch:
+                output_shape = (input_shape[0], out_channels, out_h, out_w)
+            else:
+                output_shape = (out_channels, out_h, out_w)
+    else:
+        padding_pair = _normalize_conv2d_pair("padding", padding)
+        output_shape = _conv2d_output_shape_from_shapes(
+            input_shape,
+            weight_shape,
+            stride_pair,
+            padding_pair,
+            dilation_pair,
+            groups,
+        )
     if (
         stride_pair[0] <= 0
         or stride_pair[1] <= 0
@@ -3503,14 +3609,6 @@ def _handle_conv2d_node(
         )
     if not isinstance(groups, int) or groups <= 0:
         raise RefBackendError("codegen conv2d requires positive groups")
-    output_shape = _conv2d_output_shape_from_shapes(
-        input_shape,
-        weight_shape,
-        stride_pair,
-        padding_pair,
-        dilation_pair,
-        groups,
-    )
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
     strides[node] = _contiguous_strides(output_shape)
