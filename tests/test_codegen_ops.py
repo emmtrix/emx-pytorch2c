@@ -75,6 +75,51 @@ def _addmm_sample_filter(sample):
     return input_tensor.shape == expected_shape
 
 
+def _addbmm_sample_filter(sample):
+    tensors = _extract_tensors(sample)
+    if len(tensors) != 3:
+        return False
+    input_tensor, batch1, batch2 = tensors
+    if input_tensor.ndim != 2 or batch1.ndim != 3 or batch2.ndim != 3:
+        return False
+    if batch1.shape[0] != batch2.shape[0]:
+        return False
+    if batch1.shape[2] != batch2.shape[1]:
+        return False
+    expected_shape = (batch1.shape[1], batch2.shape[2])
+    return input_tensor.shape == expected_shape
+
+
+def _addmv_sample_filter(sample):
+    tensors = _extract_tensors(sample)
+    if len(tensors) != 3:
+        return False
+    input_tensor, mat, vec = tensors
+    if input_tensor.ndim != 1 or mat.ndim != 2 or vec.ndim != 1:
+        return False
+    if mat.shape[1] != vec.shape[0]:
+        return False
+    expected_shape = (mat.shape[0],)
+    return input_tensor.shape == expected_shape
+
+
+def _addr_sample_filter(sample):
+    tensors = _extract_tensors(sample)
+    if len(tensors) != 3:
+        return False
+    input_tensor, vec1, vec2 = tensors
+    if input_tensor.ndim != 2 or vec1.ndim != 1 or vec2.ndim != 1:
+        return False
+    if not (
+        torch.isfinite(input_tensor).all()
+        and torch.isfinite(vec1).all()
+        and torch.isfinite(vec2).all()
+    ):
+        return False
+    expected_shape = (vec1.shape[0], vec2.shape[0])
+    return input_tensor.shape == expected_shape
+
+
 def _all_same_shape(tensors):
     if not tensors:
         return True
@@ -320,6 +365,9 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.logaddexp.default,
     torch.ops.aten.logit.default,
     torch.ops.aten.addmm.default,
+    torch.ops.aten.addbmm.default,
+    torch.ops.aten.addmv.default,
+    torch.ops.aten.addr.default,
     torch.ops.aten.matmul.default,
     torch.ops.aten.maximum.default,
     torch.ops.aten.minimum.default,
@@ -465,6 +513,9 @@ CODEGEN_OPINFO_OVERRIDES = {
     torch.ops.aten.round.default: _lookup_opinfo("round", ""),
     torch.ops.aten.std.default: _lookup_opinfo("std", ""),
     torch.ops.aten.addmm.default: _lookup_opinfo("addmm", ""),
+    torch.ops.aten.addbmm.default: _lookup_opinfo("addbmm", ""),
+    torch.ops.aten.addmv.default: _lookup_opinfo("addmv", ""),
+    torch.ops.aten.addr.default: _lookup_opinfo("addr", ""),
 }
 
 
@@ -581,6 +632,30 @@ CODEGEN_OP_TEST_CONFIG = {
         "allow_kwargs": True,
         "requires_same_shape": False,
         "sample_filter": _addmm_sample_filter,
+    },
+    torch.ops.aten.addbmm.default: {
+        "allowed_dtypes": (torch.float32,),
+        "allow_non_tensor_args": True,
+        "allow_noncontiguous": True,
+        "allow_kwargs": True,
+        "requires_same_shape": False,
+        "sample_filter": _addbmm_sample_filter,
+    },
+    torch.ops.aten.addmv.default: {
+        "allowed_dtypes": (torch.float32,),
+        "allow_non_tensor_args": True,
+        "allow_noncontiguous": True,
+        "allow_kwargs": True,
+        "requires_same_shape": False,
+        "sample_filter": _addmv_sample_filter,
+    },
+    torch.ops.aten.addr.default: {
+        "allowed_dtypes": (torch.float32,),
+        "allow_non_tensor_args": True,
+        "allow_noncontiguous": True,
+        "allow_kwargs": True,
+        "requires_same_shape": False,
+        "sample_filter": _addr_sample_filter,
     },
 }
 DEFAULT_CONSTRAINTS = {

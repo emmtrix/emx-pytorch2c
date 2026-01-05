@@ -517,7 +517,7 @@ adaptive_max_pool3d                      -     -
 adaptive_max_pool3d_backward             -     -      
 add                                      yes   yes    
 add_                                     -     yes    
-addbmm                                   -     -      
+addbmm                                   -     yes    
 addbmm_                                  -     -      
 addcdiv                                  -     -      
 addcdiv_                                 -     -      
@@ -525,9 +525,9 @@ addcmul                                  -     -
 addcmul_                                 -     -      
 addmm                                    -     yes    
 addmm_                                   -     -      
-addmv                                    -     -      
+addmv                                    -     yes    
 addmv_                                   -     -      
-addr                                     -     -      
+addr                                     -     yes    
 addr_                                    -     -      
 adjoint                                  -     -      
 affine_grid_generator                    -     -      
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 5
-supported by codegen only: 119
+supported by codegen only: 122
 supported by both: 77
-unsupported by either: 1513
-supported by codegen: 196 / 1714 (11.4 %)
+unsupported by either: 1510
+supported by codegen: 199 / 1714 (11.6 %)
 supported by c-ref: 82 / 1714 (4.8 %)

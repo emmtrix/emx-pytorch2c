@@ -15,6 +15,9 @@ _VALID_KINDS = {
     "reduction",
     "concat",
     "addmm",
+    "addbmm",
+    "addmv",
+    "addr",
     "matmul",
     "conv2d",
 }
@@ -1110,6 +1113,39 @@ _REGISTRY.register_op("addmm", kind="addmm").targets(
 ).inplace(
     torch.ops.aten.addmm_.default,
     torch.ops.aten.addmm_,
+    arg_index=0,
+).build()
+_REGISTRY.register_op("addbmm", kind="addbmm").targets(
+    torch.addbmm,
+    torch.ops.aten.addbmm.default,
+    torch.ops.aten.addbmm,
+    torch.ops.aten.addbmm_.default,
+    torch.ops.aten.addbmm_,
+).inplace(
+    torch.ops.aten.addbmm_.default,
+    torch.ops.aten.addbmm_,
+    arg_index=0,
+).build()
+_REGISTRY.register_op("addmv", kind="addmv").targets(
+    torch.addmv,
+    torch.ops.aten.addmv.default,
+    torch.ops.aten.addmv,
+    torch.ops.aten.addmv_.default,
+    torch.ops.aten.addmv_,
+).inplace(
+    torch.ops.aten.addmv_.default,
+    torch.ops.aten.addmv_,
+    arg_index=0,
+).build()
+_REGISTRY.register_op("addr", kind="addr").targets(
+    torch.addr,
+    torch.ops.aten.addr.default,
+    torch.ops.aten.addr,
+    torch.ops.aten.addr_.default,
+    torch.ops.aten.addr_,
+).inplace(
+    torch.ops.aten.addr_.default,
+    torch.ops.aten.addr_,
     arg_index=0,
 ).build()
 _REGISTRY.register_op("matmul", kind="matmul").targets(

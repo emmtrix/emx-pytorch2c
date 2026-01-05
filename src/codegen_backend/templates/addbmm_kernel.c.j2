@@ -1,0 +1,13 @@
+{{ signature }}
+    for (int64_t i = 0; i < {{ m }}; ++i) {
+        for (int64_t j = 0; j < {{ n }}; ++j) {
+            {{ acc_type }} acc = {{ acc_init }};
+            for (int64_t b_idx = 0; b_idx < {{ batch }}; ++b_idx) {
+                for (int64_t t = 0; t < {{ k }}; ++t) {
+                    acc += {{ batch1_access }} * {{ batch2_access }};
+                }
+            }
+            {{ out_access }} = ({{ beta }}) * {{ input_access }} + ({{ alpha }}) * acc;
+        }
+    }
+}
