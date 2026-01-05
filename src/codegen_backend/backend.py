@@ -420,6 +420,14 @@ def emit_loops(output_shape: Sequence[int]) -> Tuple[List[str], str]:
     return lines, indent
 
 
+def _close_loops(loop_count: int, indent: str) -> Tuple[List[str], str]:
+    lines: List[str] = []
+    for _ in range(loop_count):
+        indent = indent[:-4]
+        lines.append(f"{indent}}}")
+    return lines, indent
+
+
 def emit_output_access(
     output_shape: Sequence[int],
     output_strides: Sequence[int],
@@ -532,11 +540,7 @@ def emit_body(
 
 
 def emit_footer(output_shape: Sequence[int], indent: str) -> List[str]:
-    lines: List[str] = []
-    if output_shape:
-        for _ in range(len(output_shape)):
-            indent = indent[:-4]
-            lines.append(f"{indent}}}")
+    lines, _ = _close_loops(len(output_shape), indent)
     lines.append("}")
     return lines
 
@@ -1132,9 +1136,8 @@ def _write_argminmax_kernel(
         lines.append(f"{reduction_indent}    best_value = value;")
         lines.append(f"{reduction_indent}    best_index = linear_index;")
         lines.append(f"{reduction_indent}}}")
-        for _ in range(len(input_shape)):
-            reduction_indent = reduction_indent[:-4]
-            lines.append(f"{reduction_indent}}}")
+        close_lines, _ = _close_loops(len(input_shape), reduction_indent)
+        lines.extend(close_lines)
         lines.append(f"{indent}{output_access} = best_index;")
         lines.extend(emit_footer(output_shape, indent))
         return lines
@@ -1239,9 +1242,8 @@ def _write_concat_kernel(
             c_type=dtype.c_type,
         )
         lines.append(f"{indent}{output_access} = {input_access};")
-        for _ in range(len(shape)):
-            indent = indent[:-4]
-            lines.append(f"{indent}}}")
+        close_lines, indent = _close_loops(len(shape), indent)
+        lines.extend(close_lines)
         offset += shape[concat_dim]
     lines.append("}")
     return lines
