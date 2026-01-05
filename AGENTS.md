@@ -63,3 +63,7 @@ When adding a new operator, follow the same structure as the existing `add`/`mat
 - Ensure dtype coverage via `_CODEGEN_DTYPES` and `_INTEGER_CODEGEN_DTYPES`, extending them if the op needs additional dtypes.
 - If the op needs a new kernel shape or custom emission logic, prefer adding or updating a Jinja template under `src/codegen_backend/templates/*.c.j2` instead of inline string assembly; the codegen backend renders these templates and changes may require regenerating golden refs with `UPDATE_REFS=1 PYTHONPATH=src pytest -q`.
 - Test with `PYTHONPATH=src pytest -q`; update golden refs with `UPDATE_REFS=1 PYTHONPATH=src pytest -q`.
+
+## Template Prompt Guidance
+
+When writing a template prompt, check the `prompts/` directory for available prompt files.
