@@ -2514,6 +2514,22 @@ def _normalize_reduction_dims(
         raise RefBackendError(
             f"codegen {op_name} expects dim to be an int or tuple of ints"
         )
+    if rank == 0:
+        dims = dim if isinstance(dim, (tuple, list)) else (dim,)
+        for item in dims:
+            if isinstance(item, torch.fx.Node):
+                raise RefBackendError(
+                    f"codegen {op_name} expects dim to be an int or tuple of ints"
+                )
+            try:
+                dim_value = operator.index(item)
+            except TypeError as exc:
+                raise RefBackendError(
+                    f"codegen {op_name} expects dim to be an int or tuple of ints"
+                ) from exc
+            if dim_value not in (-1, 0):
+                raise RefBackendError(f"codegen {op_name} dim is out of range")
+        return ()
     if isinstance(dim, (tuple, list)):
         dims = dim
     else:

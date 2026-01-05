@@ -423,6 +423,7 @@ _REGISTRY.register_binary("fmin").targets(
 _REGISTRY.register_binary("copysign").targets(
     torch.copysign,
     torch.ops.aten.copysign.default,
+    torch.ops.aten.copysign.Tensor,
     torch.ops.aten.copysign,
     torch.ops.aten.copysign_.Tensor,
     torch.ops.aten.copysign_,

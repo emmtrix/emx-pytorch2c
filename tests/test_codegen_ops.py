@@ -1,4 +1,5 @@
 import copy
+import operator
 
 import pytest
 import torch
@@ -684,6 +685,9 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.add.Tensor: {
         "requires_same_shape": False,
     },
+    torch.ops.aten.copysign.Tensor: {
+        "allowed_dtypes": (torch.float32,),
+    },
     torch.ops.aten.amax.default: {
         "allow_kwargs": True,
         "allow_non_tensor_args": True,
@@ -796,9 +800,9 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.cat.default: {
         "allow_kwargs": True,
+        "allow_non_tensor_args": True,
         "expand_input_list": True,
         "requires_same_shape": False,
-        "sample_filter": _concat_sample_filter,
     },
     torch.ops.aten.relu6.default: {
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
@@ -904,10 +908,39 @@ def _sample_to_inputs(sample, constraints):
     return tuple(inputs), kwargs
 
 
+def _normalize_dim_argument(dim: object) -> object:
+    if dim is None:
+        return None
+    if isinstance(dim, (tuple, list)):
+        return tuple(int(operator.index(item)) for item in dim)
+    return int(operator.index(dim))
+
+
 def _compile_codegen_op(aten_overload):
-    if aten_overload is torch.ops.aten.cat.default:
+    if aten_overload in {
+        torch.ops.aten.amax.default,
+        torch.ops.aten.amin.default,
+    }:
         def compiled_fn(*args: torch.Tensor, **kwargs) -> torch.Tensor:
-            return aten_overload(list(args), **kwargs)
+            args = list(args)
+            if len(args) > 1:
+                args[1] = _normalize_dim_argument(args[1])
+            if "dim" in kwargs:
+                kwargs["dim"] = _normalize_dim_argument(kwargs["dim"])
+            return aten_overload(*args, **kwargs)
+    elif aten_overload is torch.ops.aten.cat.default:
+        def compiled_fn(*args: torch.Tensor, **kwargs) -> torch.Tensor:
+            tensors = list(args)
+            dim = None
+            if tensors and not isinstance(tensors[-1], torch.Tensor):
+                dim = tensors.pop()
+            if len(tensors) == 1 and isinstance(tensors[0], (list, tuple)):
+                tensors = list(tensors[0])
+            if dim is None:
+                return aten_overload(tensors, **kwargs)
+            if "dim" in kwargs:
+                raise TypeError("cat got multiple values for argument 'dim'")
+            return aten_overload(tensors, dim, **kwargs)
     else:
         def compiled_fn(*args: torch.Tensor, **kwargs) -> torch.Tensor:
             return aten_overload(*args, **kwargs)
