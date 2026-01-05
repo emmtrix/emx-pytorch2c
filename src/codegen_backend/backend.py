@@ -58,6 +58,13 @@ _CODEGEN_DTYPES = {
 }
 
 _INTEGER_CODEGEN_DTYPES = {torch.int8, torch.int32}
+_C_TYPE_BY_DTYPE = {
+    torch.bool: "uint8_t",
+    torch.int8: "int8_t",
+    torch.int32: "int32_t",
+    torch.int64: "int64_t",
+    torch.float32: "float",
+}
 _BITWISE_OPS = {
     "bitwise_and",
     "bitwise_or",
@@ -327,7 +334,7 @@ def _input_c_type(dtype: torch.dtype, graph_dtype: _CodegenDType) -> str:
     if dtype is graph_dtype.torch_dtype:
         return graph_dtype.c_type
     if dtype is torch.bool:
-        return "uint8_t"
+        return _C_TYPE_BY_DTYPE[torch.bool]
     raise RefBackendError(
         "codegen backend supports only torch.float32, torch.int8, torch.int32, or torch.bool tensors"
     )
@@ -336,22 +343,20 @@ def _input_c_type(dtype: torch.dtype, graph_dtype: _CodegenDType) -> str:
 def _dtype_to_c_type(dtype: torch.dtype, graph_dtype: _CodegenDType) -> str:
     if dtype is graph_dtype.torch_dtype:
         return graph_dtype.c_type
-    if dtype is torch.bool:
-        return "uint8_t"
-    if dtype is torch.int8:
-        return "int8_t"
-    if dtype is torch.int32:
-        return "int32_t"
-    if dtype is torch.float32:
-        return "float"
-    if dtype is torch.int64:
-        return "int64_t"
+    c_type = _C_TYPE_BY_DTYPE.get(dtype)
+    if c_type is not None:
+        return c_type
     raise RefBackendError(
         "codegen backend supports only torch.float32, torch.int8, torch.int32, torch.int64, or torch.bool tensors"
     )
 
+
+def _is_integer_dtype(dtype: torch.dtype) -> bool:
+    return dtype in _INTEGER_CODEGEN_DTYPES
+
+
 def _format_scalar_literal(value: float, dtype: _CodegenDType) -> str:
-    if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES:
+    if _is_integer_dtype(dtype.torch_dtype):
         return str(int(value))
     if dtype.torch_dtype is torch.float32:
         return f"{float(value)}f"
