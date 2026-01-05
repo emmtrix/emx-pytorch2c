@@ -415,6 +415,9 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.xlogy.Tensor,
     torch.ops.aten.where.self,
 ]
+aten_cbrt = getattr(torch.ops.aten, "cbrt", None)
+if aten_cbrt is not None:
+    CODEGEN_ATEN_OPS.append(aten_cbrt.default)
 INPLACE_ATEN_OPS = [
     torch.ops.aten.add_.Tensor,
     torch.ops.aten.abs_.default,
@@ -494,6 +497,9 @@ INPLACE_ATEN_OPS = [
     torch.ops.aten.trunc_.default,
     torch.ops.aten.xlogy_.Tensor,
 ]
+aten_cbrt_inplace = getattr(torch.ops.aten, "cbrt_", None)
+if aten_cbrt_inplace is not None:
+    INPLACE_ATEN_OPS.append(aten_cbrt_inplace.default)
 
 
 def _lookup_opinfo(aten_name, variant_test_name):

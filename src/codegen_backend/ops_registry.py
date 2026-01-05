@@ -552,6 +552,23 @@ _REGISTRY.register_unary("sqrt").targets(
     torch.ops.aten.sqrt_.default,
     torch.ops.aten.sqrt_,
 ).build()
+_cbrt_targets = []
+cbrt_op = getattr(torch, "cbrt", None)
+if cbrt_op is not None:
+    _cbrt_targets.append(cbrt_op)
+aten_cbrt = getattr(torch.ops.aten, "cbrt", None)
+if aten_cbrt is not None:
+    _cbrt_targets.extend([aten_cbrt.default, aten_cbrt])
+aten_cbrt_inplace = getattr(torch.ops.aten, "cbrt_", None)
+_cbrt_inplace_targets = []
+if aten_cbrt_inplace is not None:
+    _cbrt_inplace_targets.extend(
+        [aten_cbrt_inplace.default, aten_cbrt_inplace]
+    )
+if _cbrt_targets:
+    _REGISTRY.register_unary("cbrt").targets(_cbrt_targets).inplace(
+        _cbrt_inplace_targets
+    ).build()
 _REGISTRY.register_unary("log").targets(
     torch.log,
     torch.ops.aten.log.default,
