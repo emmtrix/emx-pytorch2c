@@ -7,6 +7,9 @@
 #ifndef REF_PI_F
 #define REF_PI_F 3.14159265358979323846f
 #endif
+#ifndef REF_PI_D
+#define REF_PI_D 3.14159265358979323846
+#endif
 
 static inline float ref_scalar_f32_abs(float a) {
     return fabsf(a);
@@ -355,27 +358,33 @@ static inline float ref_scalar_f32_deg2rad(float a) {
     return a * (REF_PI_F / 180.0f);
 }
 
-static inline float ref_scalar_f32_digamma(float x) {
+static inline double ref_scalar_f64_digamma(double x) {
     if (isnan(x) || isinf(x)) {
         return x;
     }
-    if (x <= 0.0f) {
-        float frac = x - floorf(x);
-        if (frac == 0.0f) {
+    if (x <= 0.0) {
+        double frac = x - floor(x);
+        if (frac == 0.0) {
             return NAN;
         }
-        return ref_scalar_f32_digamma(1.0f - x) - REF_PI_F / tanf(REF_PI_F * x);
+        return ref_scalar_f64_digamma(1.0 - x) - REF_PI_D / tan(REF_PI_D * x);
     }
-    float result = 0.0f;
-    while (x < 6.0f) {
-        result -= 1.0f / x;
-        x += 1.0f;
+    double result = 0.0;
+    while (x < 10.0) {
+        result -= 1.0 / x;
+        x += 1.0;
     }
-    float inv = 1.0f / x;
-    float inv2 = inv * inv;
-    result += logf(x) - 0.5f * inv
-        - inv2 * (1.0f / 12.0f - inv2 * (1.0f / 120.0f - inv2 * (1.0f / 252.0f)));
+    double inv = 1.0 / x;
+    double inv2 = inv * inv;
+    result += log(x) - 0.5 * inv
+        - inv2 * (1.0 / 12.0 - inv2 * (1.0 / 120.0
+        - inv2 * (1.0 / 252.0 - inv2 * (1.0 / 240.0
+        - inv2 * (1.0 / 132.0 - inv2 * (691.0 / 32760.0))))));
     return result;
+}
+
+static inline float ref_scalar_f32_digamma(float x) {
+    return (float)ref_scalar_f64_digamma((double)x);
 }
 
 static inline float ref_scalar_f32_erfinv(float x) {

@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
-import importlib.util
+import ast
 import re
 import sys
 from pathlib import Path
-from typing import Iterable, Set
+from typing import Set
 
 import torch
 
@@ -30,28 +30,86 @@ def _ops_from_backend_source(path: Path) -> Set[str]:
     return set(pattern.findall(path.read_text(encoding="utf-8")))
 
 
-def _op_names_from_overloads(overloads: Iterable[object]) -> Set[str]:
-    names: set[str] = set()
-    for overload in overloads:
-        schema_name = getattr(getattr(overload, "_schema", None), "name", "")
-        if schema_name.startswith("aten::"):
-            names.add(schema_name.split("::", 1)[1])
-    return names
+def _attribute_chain(node: ast.AST) -> list[str] | None:
+    parts: list[str] = []
+    current = node
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if isinstance(current, ast.Name):
+        parts.append(current.id)
+        return list(reversed(parts))
+    return None
+
+
+def _extract_aten_op_name(node: ast.AST, name_aliases: dict[str, str]) -> str | None:
+    parts = _attribute_chain(node)
+    if not parts:
+        return None
+    if len(parts) >= 4 and parts[:3] == ["torch", "ops", "aten"]:
+        return parts[3]
+    if len(parts) >= 2 and parts[0] in name_aliases:
+        return name_aliases[parts[0]]
+    return None
+
+
+def _alias_from_assignment(node: ast.Assign) -> tuple[str, str] | None:
+    if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+        return None
+    target_name = node.targets[0].id
+    value = node.value
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
+        if value.func.id == "getattr" and len(value.args) >= 2:
+            aten_root = value.args[0]
+            name_arg = value.args[1]
+            if (
+                isinstance(aten_root, ast.Attribute)
+                and isinstance(aten_root.value, ast.Attribute)
+                and isinstance(aten_root.value.value, ast.Name)
+                and aten_root.value.value.id == "torch"
+                and aten_root.value.attr == "ops"
+                and aten_root.attr == "aten"
+                and isinstance(name_arg, ast.Constant)
+                and isinstance(name_arg.value, str)
+            ):
+                return target_name, name_arg.value
+    return None
 
 
 def _ops_from_codegen_tests(path: Path) -> Set[str]:
     if not path.exists():
         return set()
-    spec = importlib.util.spec_from_file_location("test_codegen_ops", path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    if hasattr(module, "CODEGEN_ATEN_OPS"):
-        ops = _op_names_from_overloads(module.CODEGEN_ATEN_OPS)
-        if hasattr(module, "INPLACE_ATEN_OPS"):
-            ops |= _op_names_from_overloads(module.INPLACE_ATEN_OPS)
-        return ops
-    return set(getattr(module, "CODEGEN_OP_NAMES", []))
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    ops: set[str] = set()
+    aliases: dict[str, str] = {}
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            alias = _alias_from_assignment(node)
+            if alias:
+                aliases[alias[0]] = alias[1]
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in {
+                    "CODEGEN_ATEN_OPS",
+                    "INPLACE_ATEN_OPS",
+                }:
+                    if isinstance(node.value, ast.List):
+                        for elt in node.value.elts:
+                            op_name = _extract_aten_op_name(elt, aliases)
+                            if op_name:
+                                ops.add(op_name)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr != "append" or not node.args:
+                continue
+            if isinstance(node.func.value, ast.Name) and node.func.value.id in {
+                "CODEGEN_ATEN_OPS",
+                "INPLACE_ATEN_OPS",
+            }:
+                op_name = _extract_aten_op_name(node.args[0], aliases)
+                if op_name:
+                    ops.add(op_name)
+    return ops
 
 
 def _format_row(op_name: str, cref_supported: bool, codegen_supported: bool) -> str:

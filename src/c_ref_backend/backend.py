@@ -172,6 +172,28 @@ def _run_pow(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     return out
 
 
+def _run_pow_scalar(a: torch.Tensor, b: object) -> torch.Tensor:
+    if isinstance(a, torch.Tensor):
+        a_tensor = a
+    elif isinstance(b, torch.Tensor):
+        if isinstance(a, bool) or not isinstance(a, (int, float)):
+            raise RefBackendError("pow expects scalar base to be a number")
+        a_tensor = torch.full_like(b, float(a))
+    else:
+        if isinstance(a, bool) or not isinstance(a, (int, float)):
+            raise RefBackendError("pow expects scalar base to be a number")
+        a_tensor = torch.tensor(float(a))
+    if isinstance(b, torch.Tensor):
+        b_tensor = b
+    else:
+        if isinstance(b, bool) or not isinstance(b, (int, float)):
+            raise RefBackendError("pow expects scalar exponent to be a number")
+        b_tensor = torch.full_like(a_tensor, float(b))
+    out = torch.empty_like(a_tensor, memory_format=torch.contiguous_format)
+    run_pow(a_tensor, b_tensor, out)
+    return out
+
+
 def _run_remainder(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     out = torch.empty_like(a, memory_format=torch.contiguous_format)
     run_remainder(a, b, out)
@@ -205,6 +227,19 @@ def _run_fmin(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 def _run_copysign(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     out = torch.empty_like(a, memory_format=torch.contiguous_format)
     run_copysign(a, b, out)
+    return out
+
+
+def _run_copysign_scalar(a: torch.Tensor, b: object) -> torch.Tensor:
+    if isinstance(b, torch.Tensor):
+        scalar = b.item()
+    else:
+        scalar = b
+    if isinstance(scalar, bool) or not isinstance(scalar, (int, float)):
+        raise RefBackendError("copysign expects scalar sign to be a number")
+    b_tensor = torch.full_like(a, float(scalar))
+    out = torch.empty_like(a, memory_format=torch.contiguous_format)
+    run_copysign(a, b_tensor, out)
     return out
 
 
@@ -757,6 +792,8 @@ def _compile_graph(
         operator.pow: ("pow", _run_pow),
         torch.pow: ("pow", _run_pow),
         torch.ops.aten.pow.Tensor_Tensor: ("pow", _run_pow),
+        torch.ops.aten.pow.Tensor_Scalar: ("pow", _run_pow_scalar),
+        torch.ops.aten.pow.Scalar: ("pow", _run_pow_scalar),
         torch.remainder: ("remainder", _run_remainder),
         torch.ops.aten.remainder.Tensor: ("remainder", _run_remainder),
         torch.ops.aten.remainder: ("remainder", _run_remainder),
@@ -775,6 +812,7 @@ def _compile_graph(
         torch.copysign: ("copysign", _run_copysign),
         torch.ops.aten.copysign.default: ("copysign", _run_copysign),
         torch.ops.aten.copysign.Tensor: ("copysign", _run_copysign),
+        torch.ops.aten.copysign.Scalar: ("copysign", _run_copysign_scalar),
         torch.ops.aten.copysign: ("copysign", _run_copysign),
         torch.hypot: ("hypot", _run_hypot),
         torch.ops.aten.hypot.default: ("hypot", _run_hypot),
@@ -1250,9 +1288,13 @@ def _compile_graph(
                         groups,
                     )
                 else:
+                    scalar_arg_ops = {"copysign", "pow"}
                     args_values = []
                     for arg in node.args:
                         if not isinstance(arg, torch.fx.Node):
+                            if op_name in scalar_arg_ops:
+                                args_values.append(arg)
+                                continue
                             raise RefBackendError(f"{op_name} expects tensor inputs only")
                         args_values.append(env[arg.name])
                     if op_name in unary_ops:

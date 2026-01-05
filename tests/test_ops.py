@@ -246,6 +246,8 @@ OP_TEST_CONFIG = {
     },
     "digamma": {
         "allowed_dtypes": (torch.float32,),
+        "rtol": 3e-5,
+        "atol": 0.0,
     },
     "erfinv": {
         "allowed_dtypes": (torch.float32,),
@@ -316,6 +318,8 @@ DEFAULT_CONSTRAINTS = {
     "requires_same_shape": True,
     "requires_contiguous": False,
     "sample_filter": None,
+    "rtol": None,
+    "atol": None,
 }
 
 OPS_UNDER_TEST = [op for op in op_db if op.name in OP_TEST_CONFIG]
@@ -389,7 +393,11 @@ class TestElementwiseOpInfo(TestCase):
         for sample in _iter_supported_samples(op, device, dtype, constraints):
             inputs = (sample.input, *sample.args)
             result = compiled(*inputs)
-            torch.testing.assert_close(result, op(*inputs))
+            compare_kwargs = {}
+            if constraints["rtol"] is not None or constraints["atol"] is not None:
+                compare_kwargs["rtol"] = constraints["rtol"] or 0.0
+                compare_kwargs["atol"] = constraints["atol"] or 0.0
+            torch.testing.assert_close(result, op(*inputs), **compare_kwargs)
 
 
 instantiate_device_type_tests(TestElementwiseOpInfo, globals(), only_for="cpu")

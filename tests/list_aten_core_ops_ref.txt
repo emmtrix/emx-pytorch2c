@@ -1116,7 +1116,7 @@ log_normal_                              -     -
 log_sigmoid                              -     -      
 log_sigmoid_backward                     -     -      
 log_sigmoid_forward                      -     -      
-log_softmax                              -     -      
+log_softmax                              -     yes    
 logaddexp                                yes   yes    
 logaddexp2                               -     -      
 logcumsumexp                             -     -      
@@ -1485,7 +1485,7 @@ smooth_l1_loss                           -     -
 smooth_l1_loss_backward                  -     -      
 soft_margin_loss                         -     -      
 soft_margin_loss_backward                -     -      
-softmax                                  -     -      
+softmax                                  -     yes    
 softplus                                 -     -      
 softplus_backward                        -     -      
 softshrink                               -     -      
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 5
-supported by codegen only: 122
+supported by codegen only: 124
 supported by both: 77
-unsupported by either: 1510
-supported by codegen: 199 / 1714 (11.6 %)
+unsupported by either: 1508
+supported by codegen: 201 / 1714 (11.7 %)
 supported by c-ref: 82 / 1714 (4.8 %)

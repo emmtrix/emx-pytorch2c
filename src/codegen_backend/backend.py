@@ -1793,7 +1793,11 @@ def _iter_example_tensors(example_inputs: Sequence[object]) -> Iterable[torch.Te
 def _validate_example_inputs(
     example_inputs: Sequence[object],
 ) -> _CodegenDType:
-    tensor_examples = list(_iter_example_tensors(example_inputs))
+    tensor_examples = [
+        example
+        for example in _iter_example_tensors(example_inputs)
+        if example.dtype in _CODEGEN_DTYPES
+    ]
     if not tensor_examples:
         raise RefBackendError("codegen backend requires at least one example tensor input")
     non_bool_examples = [
@@ -2228,10 +2232,29 @@ def _parse_addmm_like_scalar(
     if value is None:
         return 1.0
     if isinstance(value, torch.fx.Node):
+        meta_value = value.meta.get("val") or value.meta.get("example_value")
+        if meta_value is None:
+            raise RefBackendError(f"codegen {op_name} expects {name} to be a number")
+        return _parse_addmm_like_scalar(op_name, name, meta_value)
+    if isinstance(value, bool):
         raise RefBackendError(f"codegen {op_name} expects {name} to be a number")
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise RefBackendError(f"codegen {op_name} expects {name} to be a number")
-    return float(value)
+    if isinstance(value, torch.Tensor):
+        if value.numel() != 1:
+            raise RefBackendError(f"codegen {op_name} expects {name} to be a number")
+        return float(value.item())
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError as exc:
+            raise RefBackendError(
+                f"codegen {op_name} expects {name} to be a number"
+            ) from exc
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise RefBackendError(
+            f"codegen {op_name} expects {name} to be a number"
+        ) from exc
 
 
 def _parse_addmm_like_args(
@@ -2647,6 +2670,8 @@ def _analyze_generic_graph(
                 ) from exc
             placeholders.append(node)
             if isinstance(example, torch.Tensor):
+                if example.dtype not in _CODEGEN_DTYPES and example.numel() == 1:
+                    continue
                 shapes[node] = tuple(example.shape)
                 strides[node] = tuple(example.stride())
                 dtypes[node] = example.dtype
@@ -2654,6 +2679,8 @@ def _analyze_generic_graph(
             continue
         if node.op in {"call_function", "call_method"}:
             if node.op == "call_method":
+                if node.target == "item":
+                    continue
                 if node.target not in {
                     "sum",
                     "prod",

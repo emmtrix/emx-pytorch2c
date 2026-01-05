@@ -613,6 +613,11 @@ CODEGEN_OP_TEST_CONFIG = {
         "allow_non_tensor_args": True,
         "allow_kwargs": True,
     },
+    torch.ops.aten.digamma.default: {
+        "allowed_dtypes": (torch.float32,),
+        "rtol": 3e-5,
+        "atol": 0.0,
+    },
     torch.ops.aten.mish_.default: {
         "allowed_dtypes": (torch.float32,),
     },
@@ -688,6 +693,8 @@ DEFAULT_CONSTRAINTS = {
     "requires_same_shape": True,
     "requires_contiguous": False,
     "sample_filter": None,
+    "rtol": None,
+    "atol": None,
 }
 
 
@@ -813,9 +820,11 @@ class TestCodegenOpInfo(TestCase):
             result = compiled(*inputs, **kwargs)
             if result.dtype is not expected.dtype:
                 expected = expected.to(result.dtype)
-            torch.testing.assert_close(
-                result, expected, equal_nan=dtype in (torch.int8, torch.int32)
-            )
+            compare_kwargs = {"equal_nan": dtype in (torch.int8, torch.int32)}
+            if constraints["rtol"] is not None or constraints["atol"] is not None:
+                compare_kwargs["rtol"] = constraints["rtol"] or 0.0
+                compare_kwargs["atol"] = constraints["atol"] or 0.0
+            torch.testing.assert_close(result, expected, **compare_kwargs)
 
 
 class TestCodegenAliasedOps(TestCase):
