@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 import sys
 from pathlib import Path
-from typing import Set
+from typing import Iterable, Set
 
 import torch
 
@@ -13,15 +14,77 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 
-def _aten_ops_from_schemas() -> Set[str]:
+def _torch_base_version() -> str:
+    return torch.__version__.split("+", 1)[0]
+
+
+def _native_functions_path() -> Path:
+    version = _torch_base_version()
+    path = REPO_ROOT / "scripts" / f"native_functions.{version}.yaml"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Expected native functions file at {path} for torch {version}, but it does not exist."
+        )
+    return path
+
+
+def _read_native_functions_lines(path: Path) -> list[str]:
+    content = path.read_text(encoding="utf-8")
+    marker = '<script type="application/json" data-target="react-app.embeddedData">'
+    if marker in content:
+        start = content.find(marker)
+        start = content.find(">", start) + 1
+        end = content.find("</script>", start)
+        data = json.loads(content[start:end])
+        return data["payload"]["blob"]["rawLines"]
+    return content.splitlines()
+
+
+def _core_ops_from_native_functions(path: Path) -> Set[str]:
+    lines = _read_native_functions_lines(path)
     ops: set[str] = set()
-    for schema in torch._C._jit_get_all_schemas():
-        if not schema.name.startswith("aten::"):
+    current_op: str | None = None
+    current_tags: list[str] = []
+    in_tags_block = False
+
+    def finalize() -> None:
+        if current_op and "core" in current_tags:
+            ops.add(current_op)
+
+    for line in lines:
+        if line.startswith("- func: "):
+            finalize()
+            func_sig = line[len("- func: ") :].strip()
+            current_op = func_sig.split("(", 1)[0].strip()
+            current_tags = []
+            in_tags_block = False
             continue
-        op_name = schema.name.split("::", 1)[1]
-        if op_name.endswith("Implicit"):
+
+        if current_op is None:
             continue
-        ops.add(op_name)
+
+        stripped = line.strip()
+        if stripped.startswith("tags:"):
+            in_tags_block = False
+            tag_value = stripped.split("tags:", 1)[1].strip()
+            if not tag_value:
+                current_tags = []
+                in_tags_block = True
+            elif tag_value.startswith("[") and tag_value.endswith("]"):
+                tag_items = tag_value[1:-1].split(",")
+                current_tags = [item.strip() for item in tag_items if item.strip()]
+            else:
+                current_tags = [item.strip() for item in tag_value.split(",") if item.strip()]
+            continue
+
+        if in_tags_block:
+            if stripped.startswith("- "):
+                current_tags.append(stripped[2:].strip())
+                continue
+            if stripped and not stripped.startswith("#"):
+                in_tags_block = False
+
+    finalize()
     return ops
 
 
@@ -139,7 +202,8 @@ def _summarize_ops(
 
 
 def main() -> None:
-    aten_ops = sorted(_aten_ops_from_schemas())
+    native_functions = _native_functions_path()
+    aten_ops = sorted(_core_ops_from_native_functions(native_functions))
     cref_ops = _ops_from_backend_source(REPO_ROOT / "src/c_ref_backend/backend.py")
     codegen_ops = _ops_from_codegen_tests(
         REPO_ROOT / "tests" / "test_codegen_ops.py"
