@@ -20,6 +20,7 @@ _VALID_KINDS = {
     "addmv",
     "addr",
     "matmul",
+    "conv1d",
     "conv2d",
 }
 
@@ -1311,6 +1312,10 @@ _REGISTRY.register_op("conv2d", kind="conv2d").targets(
     torch.ops.aten.convolution,
     torch.ops.aten.conv2d.default,
     torch.ops.aten.conv2d,
+).build()
+_REGISTRY.register_op("conv1d", kind="conv1d").targets(
+    torch.ops.aten.conv1d.default,
+    torch.ops.aten.conv1d,
 ).build()
 
 SUPPORTED_OPS = _REGISTRY.build()

@@ -1,0 +1,27 @@
+{{ signature }}
+    int64_t in_per_group = {{ in_channels }} / {{ groups }};
+    int64_t out_per_group = {{ out_channels }} / {{ groups }};
+    for (int64_t n = 0; n < {{ batch }}; ++n) {
+        for (int64_t oc = 0; oc < {{ out_channels }}; ++oc) {
+            int64_t group = oc / out_per_group;
+            for (int64_t ol = 0; ol < {{ out_l }}; ++ol) {
+                {{ c_type }} acc = 0.0f;
+                int64_t in_l_base = ol * {{ stride }} - {{ padding }};
+                for (int64_t ic = 0; ic < in_per_group; ++ic) {
+                    int64_t in_c = group * in_per_group + ic;
+                    for (int64_t kl = 0; kl < {{ k_l }}; ++kl) {
+                        int64_t in_l_idx = in_l_base + kl * {{ dilation }};
+                        if (in_l_idx < 0 || in_l_idx >= {{ in_l }}) {
+                            continue;
+                        }
+                        acc += input[n][in_c][in_l_idx] * weight[oc][ic][kl];
+                    }
+                }
+                {% if has_bias %}
+                acc += bias[oc];
+                {% endif %}
+                out[n][oc][ol] = acc;
+            }
+        }
+    }
+}

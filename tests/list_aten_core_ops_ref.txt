@@ -677,7 +677,7 @@ conj_physical                            yes   yes
 conj_physical_                           -     yes    
 constant_pad_nd                          -     -      
 contiguous                               -     -      
-conv1d                                   -     -      
+conv1d                                   -     yes    
 conv2d                                   yes   yes    
 conv3d                                   -     -      
 conv_depthwise3d                         -     -      
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 5
-supported by codegen only: 146
+supported by codegen only: 147
 supported by both: 77
-unsupported by either: 1486
-supported by codegen: 223 / 1714 (13.0 %)
+unsupported by either: 1485
+supported by codegen: 224 / 1714 (13.1 %)
 supported by c-ref: 82 / 1714 (4.8 %)
