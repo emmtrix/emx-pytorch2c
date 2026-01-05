@@ -495,6 +495,7 @@ _REGISTRY.register_binary("ldexp").targets(
 ).build()
 _REGISTRY.register_binary("clamp_min").targets(
     torch.clamp_min,
+    torch.ops.aten.clamp_min.Tensor,
     torch.ops.aten.clamp_min.default,
     torch.ops.aten.clamp_min,
     torch.ops.aten.clamp_min_.default,
@@ -507,6 +508,7 @@ _REGISTRY.register_binary("clamp_min").targets(
 ).build()
 _REGISTRY.register_binary("clamp_max").targets(
     torch.clamp_max,
+    torch.ops.aten.clamp_max.Tensor,
     torch.ops.aten.clamp_max.default,
     torch.ops.aten.clamp_max,
     torch.ops.aten.clamp_max_.default,
