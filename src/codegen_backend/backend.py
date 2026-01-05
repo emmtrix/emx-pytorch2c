@@ -1027,6 +1027,7 @@ def _write_addbmm_kernel(
     node_index: int,
     op_spec: _OpSpec,
     input_shape: Sequence[int],
+    output_shape: Sequence[int],
     batch1_shape: Sequence[int],
     batch2_shape: Sequence[int],
     input_strides: Sequence[int],
@@ -1039,10 +1040,9 @@ def _write_addbmm_kernel(
     beta: float,
 ) -> List[str]:
     addbmm_template = _get_template_env().get_template("addbmm_kernel.c.j2")
-    input_is_contiguous = _is_contiguous(input_shape, input_strides)
     batch1_is_contiguous = _is_contiguous(batch1_shape, batch1_strides)
     batch2_is_contiguous = _is_contiguous(batch2_shape, batch2_strides)
-    output_is_contiguous = _is_contiguous(input_shape, output_strides)
+    output_is_contiguous = _is_contiguous(output_shape, output_strides)
     acc_type = dtype.c_type
     acc_init = "0" if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES else "0.0f"
     batch, m, k = batch1_shape
@@ -1050,7 +1050,10 @@ def _write_addbmm_kernel(
     input_suffix = _format_array_suffix(input_shape)
     batch1_suffix = _format_array_suffix(batch1_shape)
     batch2_suffix = _format_array_suffix(batch2_shape)
-    out_suffix = _format_array_suffix(input_shape)
+    out_suffix = _format_array_suffix(output_shape)
+    output_indices = ("i", "j")
+    offset = len(output_indices) - len(input_shape)
+    input_indices = output_indices[offset:] if input_shape else ()
     rendered = addbmm_template.render(
         signature=(
             f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
@@ -1067,9 +1070,9 @@ def _write_addbmm_kernel(
         acc_init=acc_init,
         input_access=_emit_strided_access(
             "input",
-            ("i", "j"),
+            input_indices,
             input_strides,
-            input_is_contiguous,
+            False,
             sizes=input_shape,
             c_type=dtype.c_type,
         ),
@@ -1094,7 +1097,7 @@ def _write_addbmm_kernel(
             ("i", "j"),
             output_strides,
             output_is_contiguous,
-            sizes=input_shape,
+            sizes=output_shape,
             c_type=dtype.c_type,
         ),
         alpha=_format_scalar_literal(alpha, dtype),
@@ -2229,6 +2232,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 index,
                 op_node.spec,
                 graph.shapes[input_node],
+                graph.shapes[op_node.node],
                 graph.shapes[batch1_node],
                 graph.shapes[batch2_node],
                 graph.strides[input_node],
@@ -2436,19 +2440,21 @@ def _infer_output_shape(
     if op_spec.kind == "addbmm":
         input_shape, batch1_shape, batch2_shape = input_shapes
         if (
-            len(input_shape) != 2
+            len(input_shape) > 2
             or len(batch1_shape) != 3
             or len(batch2_shape) != 3
         ):
-            raise RefBackendError("codegen addbmm expects 2D input and 3D batches")
+            raise RefBackendError(
+                "codegen addbmm expects 0-2D input and 3D batches"
+            )
         if batch1_shape[0] != batch2_shape[0]:
             raise RefBackendError("codegen addbmm requires batch dimensions to match")
         if batch1_shape[2] != batch2_shape[1]:
             raise RefBackendError("codegen addbmm requires inner dimensions to match")
         expected_shape = (batch1_shape[1], batch2_shape[2])
-        if input_shape != expected_shape:
+        if _broadcast_output_shape(op_spec, input_shape, expected_shape) != expected_shape:
             raise RefBackendError(
-                "codegen addbmm expects input shape to match bmm output"
+                "codegen addbmm expects input shape to be broadcastable to bmm output"
             )
         return expected_shape
     if op_spec.kind == "addmv":
