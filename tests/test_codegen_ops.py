@@ -826,7 +826,6 @@ CODEGEN_OPINFO_LIST = [opinfo for _, opinfo in CODEGEN_OPS_UNDER_TEST]
 CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.add.Tensor: {
         "requires_same_shape": False,
-        "sample_filter": _broadcastable_sample_filter,
     },
     torch.ops.aten.amax.default: {
         "allow_kwargs": True,
