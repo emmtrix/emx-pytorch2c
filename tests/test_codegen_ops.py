@@ -890,7 +890,6 @@ CODEGEN_OP_TEST_CONFIG = {
         "allow_non_tensor_args": True,
         "allow_kwargs": True,
         "requires_same_shape": False,
-        "requires_contiguous": True,
         "sample_filter": _conv2d_sample_filter,
     },
     torch.ops.aten.avg_pool2d.default: {

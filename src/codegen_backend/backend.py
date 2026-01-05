@@ -3503,14 +3503,8 @@ def _handle_conv2d_node(
             raise RefBackendError(
                 "codegen conv2d expects bias shape to match output channels"
             )
-        if not _is_contiguous(bias_shape, strides[bias_node]):
-            raise RefBackendError("codegen conv2d requires contiguous bias")
     if len(input_shape) != 4 or len(weight_shape) != 4:
         raise RefBackendError("codegen conv2d requires 4D input and weight tensors")
-    if not _is_contiguous(input_shape, strides[input_arg]) or not _is_contiguous(
-        weight_shape, strides[weight_arg]
-    ):
-        raise RefBackendError("codegen conv2d requires contiguous tensors")
     stride_pair = _normalize_conv2d_param("stride", stride)
     padding_pair = _normalize_conv2d_param("padding", padding)
     dilation_pair = _normalize_conv2d_param("dilation", dilation)
@@ -4173,6 +4167,17 @@ def _compile_graph(
     ] = {
         (lib.input_shapes, lib.input_strides): lib,
     }
+    conv2d_contiguous_indices = tuple(
+        sorted(
+            {
+                graph.tensor_placeholders.index(input_node)
+                for op_node in graph.op_nodes
+                if op_node.spec.kind == "conv2d"
+                for input_node in op_node.inputs
+                if input_node in graph.tensor_placeholders
+            }
+        )
+    )
 
     def _recompile(new_inputs: Sequence[object]) -> None:
         nonlocal graph, lib, output_inplace_input
@@ -4212,8 +4217,16 @@ def _compile_graph(
         expected_dtypes = [graph.dtypes[node] for node in graph.tensor_placeholders]
         _validate_runtime_inputs(input_tensors, expected_dtypes, graph.dtype)
 
-        input_shapes = tuple(tuple(tensor.shape) for tensor in input_tensors)
-        input_strides = tuple(tuple(tensor.stride()) for tensor in input_tensors)
+        contiguous_inputs = list(input_tensors)
+        if conv2d_contiguous_indices:
+            for index in conv2d_contiguous_indices:
+                if not contiguous_inputs[index].is_contiguous():
+                    contiguous_inputs[index] = contiguous_inputs[
+                        index
+                    ].contiguous()
+
+        input_shapes = tuple(tuple(tensor.shape) for tensor in contiguous_inputs)
+        input_strides = tuple(tuple(tensor.stride()) for tensor in contiguous_inputs)
         cache_key = (input_shapes, input_strides)
         cached_lib = library_cache.get(cache_key)
         if cached_lib is None:
@@ -4221,7 +4234,6 @@ def _compile_graph(
             cached_lib = _compile_generic_library(updated_graph)
             library_cache[cache_key] = cached_lib
         lib = cached_lib
-        contiguous_inputs = list(input_tensors)
         if output_inplace_input is not None:
             original_input = env[output_inplace_input]
             if not isinstance(original_input, torch.Tensor):
