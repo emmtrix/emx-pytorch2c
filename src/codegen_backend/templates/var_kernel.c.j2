@@ -1,0 +1,39 @@
+{{ signature }}
+{% for dim in output_dims %}
+    for (int64_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
+{% endfor %}
+    {{ acc_type }} sum = 0;
+    {{ acc_type }} sumsq = 0;
+{% if input_rank == 0 %}
+    {{ acc_type }} val = {{ input_access }};
+    sum += val;
+    sumsq += val * val;
+{% else %}
+{% for dim in reduction_dims %}
+    for (int64_t r{{ dim.dim }} = 0; r{{ dim.dim }} < {{ dim.size }}; ++r{{ dim.dim }}) {
+{% endfor %}
+        {{ acc_type }} val = {{ input_access }};
+        sum += val;
+        sumsq += val * val;
+{% for dim in reduction_dims | reverse %}
+    }
+{% endfor %}
+{% endif %}
+    int64_t count = {{ reduction_count }};
+    if (count == 0 || ({{ unbiased }} && count <= 1)) {
+        {{ output_access }} = NAN;
+    } else {
+        {{ acc_type }} mean = sum / ({{ acc_type }})count;
+        {{ acc_type }} var = (sumsq / ({{ acc_type }})count) - (mean * mean);
+        if (var < 0) {
+            var = 0;
+        }
+        if ({{ unbiased }}) {
+            var *= ({{ acc_type }})count / ({{ acc_type }})(count - 1);
+        }
+        {{ output_access }} = var;
+    }
+{% for dim in output_dims | reverse %}
+    }
+{% endfor %}
+}

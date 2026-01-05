@@ -1,4 +1,5 @@
 import hashlib
+import math
 import operator
 import subprocess
 import tempfile
@@ -1235,6 +1236,172 @@ def _write_std_kernel(
     return rendered.strip().splitlines()
 
 
+def _write_var_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    input_shape: Sequence[int],
+    input_strides: Sequence[int],
+    output_shape: Sequence[int],
+    output_strides: Sequence[int],
+    reduction_dims: Tuple[int, ...],
+    keepdim: bool,
+    dtype: _CodegenDType,
+    *,
+    unbiased: bool,
+) -> List[str]:
+    var_template = _get_template_env().get_template("var_kernel.c.j2")
+    a_is_contiguous = _is_contiguous(input_shape, input_strides)
+    input_rank = len(input_shape)
+    output_rank = len(output_shape)
+    reduction_set = set(reduction_dims)
+    signature = (
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"const {dtype.c_type} a{_format_array_suffix(input_shape)}, "
+        f"{dtype.c_type} out{_format_array_suffix(output_shape)}) {{"
+    )
+    output_access = emit_output_access(
+        output_shape, output_strides, c_type=dtype.c_type
+    )
+    if input_rank == 0:
+        input_access = "a[0]"
+    else:
+        if keepdim:
+            input_indices = [
+                f"r{dim}" if dim in reduction_set else f"i{dim}"
+                for dim in range(input_rank)
+            ]
+        else:
+            dim_to_output: Dict[int, int] = {}
+            output_idx = 0
+            for dim in range(input_rank):
+                if dim in reduction_set:
+                    continue
+                dim_to_output[dim] = output_idx
+                output_idx += 1
+            input_indices = [
+                f"r{dim}" if dim in reduction_set else f"i{dim_to_output[dim]}"
+                for dim in range(input_rank)
+            ]
+        input_access = _emit_strided_access(
+            "a",
+            input_indices,
+            input_strides,
+            contig=a_is_contiguous,
+            sizes=input_shape,
+            c_type=dtype.c_type,
+        )
+    reduction_count = 1
+    for dim in reduction_dims:
+        reduction_count *= input_shape[dim]
+    acc_type = dtype.c_type
+    if dtype.torch_dtype is torch.bool or dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES:
+        acc_type = "float"
+    rendered = var_template.render(
+        signature=signature,
+        input_rank=input_rank,
+        output_rank=output_rank,
+        output_dims=[
+            {"dim": dim, "size": size} for dim, size in enumerate(output_shape)
+        ],
+        reduction_dims=[
+            {"dim": dim, "size": input_shape[dim]} for dim in reduction_dims
+        ],
+        input_access=input_access,
+        output_access=output_access,
+        acc_type=acc_type,
+        reduction_count=reduction_count,
+        unbiased=int(unbiased),
+    )
+    return rendered.strip().splitlines()
+
+
+def _write_norm_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    input_shape: Sequence[int],
+    input_strides: Sequence[int],
+    output_shape: Sequence[int],
+    output_strides: Sequence[int],
+    reduction_dims: Tuple[int, ...],
+    keepdim: bool,
+    dtype: _CodegenDType,
+    *,
+    p_value: float,
+) -> List[str]:
+    norm_template = _get_template_env().get_template("norm_kernel.c.j2")
+    a_is_contiguous = _is_contiguous(input_shape, input_strides)
+    input_rank = len(input_shape)
+    output_rank = len(output_shape)
+    reduction_set = set(reduction_dims)
+    signature = (
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"const {dtype.c_type} a{_format_array_suffix(input_shape)}, "
+        f"{dtype.c_type} out{_format_array_suffix(output_shape)}) {{"
+    )
+    output_access = emit_output_access(
+        output_shape, output_strides, c_type=dtype.c_type
+    )
+    if input_rank == 0:
+        input_access = "a[0]"
+    else:
+        if keepdim:
+            input_indices = [
+                f"r{dim}" if dim in reduction_set else f"i{dim}"
+                for dim in range(input_rank)
+            ]
+        else:
+            dim_to_output: Dict[int, int] = {}
+            output_idx = 0
+            for dim in range(input_rank):
+                if dim in reduction_set:
+                    continue
+                dim_to_output[dim] = output_idx
+                output_idx += 1
+            input_indices = [
+                f"r{dim}" if dim in reduction_set else f"i{dim_to_output[dim]}"
+                for dim in range(input_rank)
+            ]
+        input_access = _emit_strided_access(
+            "a",
+            input_indices,
+            input_strides,
+            contig=a_is_contiguous,
+            sizes=input_shape,
+            c_type=dtype.c_type,
+        )
+    acc_type = dtype.c_type
+    abs_fn = f"{dtype.scalar_prefix}abs"
+    pow_fn = f"{dtype.scalar_prefix}pow"
+    is_zero_p = math.isclose(p_value, 0.0)
+    if dtype.torch_dtype is torch.bool or dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES:
+        acc_type = "float"
+        abs_fn = "ref_scalar_f32_abs"
+        pow_fn = "ref_scalar_f32_pow"
+        input_access = f"(float){input_access}"
+    p_literal = f"{float(p_value)}f"
+    inv_p_literal = f"{(1.0 / p_value)}f" if not is_zero_p else "0.0f"
+    rendered = norm_template.render(
+        signature=signature,
+        input_rank=input_rank,
+        output_rank=output_rank,
+        output_dims=[
+            {"dim": dim, "size": size} for dim, size in enumerate(output_shape)
+        ],
+        reduction_dims=[
+            {"dim": dim, "size": input_shape[dim]} for dim in reduction_dims
+        ],
+        input_access=input_access,
+        output_access=output_access,
+        acc_type=acc_type,
+        abs_fn=abs_fn,
+        pow_fn=pow_fn,
+        p_value=p_literal,
+        inv_p_value=inv_p_literal,
+        is_zero_p=is_zero_p,
+    )
+    return rendered.strip().splitlines()
+
+
 def _write_reduction_kernel(
     node_index: int,
     op_spec: _OpSpec,
@@ -1653,6 +1820,32 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                     op_node.keepdim,
                     graph.dtype,
                     unbiased=bool(op_node.std_unbiased),
+                )
+            elif op_node.spec.name == "var":
+                kernel_lines = _write_var_kernel(
+                    index,
+                    op_node.spec,
+                    graph.shapes[input_node],
+                    graph.strides[input_node],
+                    op_node.output_shape,
+                    graph.strides[op_node.node],
+                    op_node.reduction_dims or (),
+                    op_node.keepdim,
+                    graph.dtype,
+                    unbiased=bool(op_node.std_unbiased),
+                )
+            elif op_node.spec.name == "norm":
+                kernel_lines = _write_norm_kernel(
+                    index,
+                    op_node.spec,
+                    graph.shapes[input_node],
+                    graph.strides[input_node],
+                    op_node.output_shape,
+                    graph.strides[op_node.node],
+                    op_node.reduction_dims or (),
+                    op_node.keepdim,
+                    graph.dtype,
+                    p_value=float(op_node.params["norm_p"]),
                 )
             else:
                 kernel_lines = _write_reduction_kernel(
@@ -2106,6 +2299,43 @@ def _parse_reduction_args(
         keepdim = False
         reduce_all = True
         return reduction_dims, keepdim, reduce_all, unbiased
+    if op_name == "var":
+        if len(node.args) > 4:
+            raise RefBackendError(
+                "codegen var expects at most four inputs (self, dim, unbiased, keepdim)"
+            )
+        dim = node.args[1] if len(node.args) > 1 else None
+        unbiased = node.args[2] if len(node.args) > 2 else True
+        keepdim = node.args[3] if len(node.args) > 3 else False
+        if node.kwargs:
+            if "dim" in node.kwargs:
+                if dim is not None:
+                    raise _error_kwarg_specified_once(op_name, "dim")
+                dim = node.kwargs["dim"]
+            if "unbiased" in node.kwargs:
+                if len(node.args) > 2:
+                    raise _error_kwarg_specified_once(op_name, "unbiased")
+                unbiased = node.kwargs["unbiased"]
+            if "keepdim" in node.kwargs:
+                if len(node.args) > 3:
+                    raise _error_kwarg_specified_once(op_name, "keepdim")
+                keepdim = node.kwargs["keepdim"]
+            extra = set(node.kwargs) - {"dim", "unbiased", "keepdim"}
+            if extra:
+                raise RefBackendError(
+                    f"codegen var got unexpected kwargs: {sorted(extra)}"
+                )
+        if isinstance(unbiased, torch.fx.Node):
+            raise RefBackendError("codegen var expects unbiased to be a bool")
+        if not isinstance(unbiased, bool):
+            raise RefBackendError("codegen var expects unbiased to be a bool")
+        if isinstance(keepdim, torch.fx.Node):
+            raise RefBackendError("codegen var expects keepdim to be a bool")
+        if not isinstance(keepdim, bool):
+            raise RefBackendError("codegen var expects keepdim to be a bool")
+        reduction_dims = _normalize_reduction_dims(op_name, dim, len(input_shape))
+        reduce_all = dim is None
+        return reduction_dims, keepdim, reduce_all, unbiased
     dim = node.args[1] if len(node.args) > 1 else None
     keepdim = node.args[2] if len(node.args) > 2 else False
     dtype = node.args[3] if len(node.args) > 3 else None
@@ -2143,6 +2373,57 @@ def _parse_reduction_args(
     reduction_dims = _normalize_reduction_dims(op_name, dim, len(input_shape))
     reduce_all = dim is None
     return reduction_dims, keepdim, reduce_all, None
+
+
+def _parse_norm_args(
+    op_name: str, node: torch.fx.Node, input_shape: Sequence[int]
+) -> Tuple[Tuple[int, ...], bool, bool, float]:
+    if not node.args:
+        raise RefBackendError(f"codegen {op_name} expects one input")
+    if len(node.args) > 4:
+        raise RefBackendError(
+            f"codegen {op_name} expects at most four inputs (self, p, dim, keepdim)"
+        )
+    p = node.args[1] if len(node.args) > 1 else None
+    dim = node.args[2] if len(node.args) > 2 else None
+    keepdim = node.args[3] if len(node.args) > 3 else False
+    if node.kwargs:
+        if "p" in node.kwargs:
+            if len(node.args) > 1:
+                raise _error_kwarg_specified_once(op_name, "p")
+            p = node.kwargs["p"]
+        if "dim" in node.kwargs:
+            if dim is not None:
+                raise _error_kwarg_specified_once(op_name, "dim")
+            dim = node.kwargs["dim"]
+        if "keepdim" in node.kwargs:
+            if len(node.args) > 3:
+                raise _error_kwarg_specified_once(op_name, "keepdim")
+            keepdim = node.kwargs["keepdim"]
+        extra = set(node.kwargs) - {"p", "dim", "keepdim"}
+        if extra:
+            raise RefBackendError(
+                f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
+            )
+    if isinstance(keepdim, torch.fx.Node):
+        raise RefBackendError(f"codegen {op_name} expects keepdim to be a bool")
+    if not isinstance(keepdim, bool):
+        raise RefBackendError(f"codegen {op_name} expects keepdim to be a bool")
+    if isinstance(p, torch.fx.Node):
+        raise RefBackendError(f"codegen {op_name} expects p to be a number")
+    if p is None:
+        p_value = 2.0
+    elif isinstance(p, bool):
+        p_value = float(p)
+    elif isinstance(p, (int, float)):
+        p_value = float(p)
+    else:
+        raise RefBackendError(f"codegen {op_name} expects p to be a number")
+    if math.isinf(p_value) or math.isnan(p_value):
+        raise RefBackendError(f"codegen {op_name} expects p to be finite")
+    reduction_dims = _normalize_reduction_dims(op_name, dim, len(input_shape))
+    reduce_all = dim is None
+    return reduction_dims, keepdim, reduce_all, p_value
 
 
 def _parse_argminmax_args(
@@ -3049,12 +3330,32 @@ def _analyze_generic_graph(
                     f"codegen {op_spec.name} expects inputs to share the graph dtype"
                 )
             if op_spec.kind == "reduction":
-                (
-                    reduction_dims,
-                    keepdim,
-                    reduce_all,
-                    std_unbiased,
-                ) = _parse_reduction_args(op_spec.name, node, input_shapes[0])
+                if op_spec.name == "norm":
+                    if dtype_info.torch_dtype is not torch.float32:
+                        raise RefBackendError(
+                            "codegen norm supports only torch.float32 tensors"
+                        )
+                    (
+                        reduction_dims,
+                        keepdim,
+                        reduce_all,
+                        norm_p,
+                    ) = _parse_norm_args(op_spec.name, node, input_shapes[0])
+                    param_values["norm_p"] = norm_p
+                else:
+                    (
+                        reduction_dims,
+                        keepdim,
+                        reduce_all,
+                        std_unbiased,
+                    ) = _parse_reduction_args(op_spec.name, node, input_shapes[0])
+                    if (
+                        op_spec.name == "var"
+                        and dtype_info.torch_dtype is not torch.float32
+                    ):
+                        raise RefBackendError(
+                            "codegen var supports only torch.float32 tensors"
+                        )
                 output_shape = _infer_reduction_output_shape(
                     input_shapes[0],
                     reduction_dims,

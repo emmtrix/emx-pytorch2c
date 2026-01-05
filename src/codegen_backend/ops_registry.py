@@ -1212,6 +1212,16 @@ _REGISTRY.register_op("std", kind="reduction").targets(
     torch.ops.aten.std.default,
     torch.ops.aten.std,
 ).build()
+_REGISTRY.register_op("var", kind="reduction").targets(
+    torch.var,
+    torch.ops.aten.var.default,
+    torch.ops.aten.var.dim,
+).build()
+_REGISTRY.register_op("norm", kind="reduction").targets(
+    torch.norm,
+    torch.ops.aten.norm.Scalar,
+    torch.ops.aten.norm.ScalarOpt_dim,
+).build()
 _REGISTRY.register_op("any", kind="reduction").targets(
     torch.any,
     torch.ops.aten.any.default,

@@ -1,0 +1,39 @@
+{{ signature }}
+{% for dim in output_dims %}
+    for (int64_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
+{% endfor %}
+    {{ acc_type }} acc = 0;
+{% if input_rank == 0 %}
+    {{ acc_type }} val = {{ input_access }};
+{% if is_zero_p %}
+    if (val != 0) {
+        acc += 1;
+    }
+{% else %}
+    acc += {{ pow_fn }}({{ abs_fn }}(val), {{ p_value }});
+{% endif %}
+{% else %}
+{% for dim in reduction_dims %}
+    for (int64_t r{{ dim.dim }} = 0; r{{ dim.dim }} < {{ dim.size }}; ++r{{ dim.dim }}) {
+{% endfor %}
+        {{ acc_type }} val = {{ input_access }};
+{% if is_zero_p %}
+        if (val != 0) {
+            acc += 1;
+        }
+{% else %}
+        acc += {{ pow_fn }}({{ abs_fn }}(val), {{ p_value }});
+{% endif %}
+{% for dim in reduction_dims | reverse %}
+    }
+{% endfor %}
+{% endif %}
+{% if is_zero_p %}
+    {{ output_access }} = acc;
+{% else %}
+    {{ output_access }} = {{ pow_fn }}(acc, {{ inv_p_value }});
+{% endif %}
+{% for dim in output_dims | reverse %}
+    }
+{% endfor %}
+}

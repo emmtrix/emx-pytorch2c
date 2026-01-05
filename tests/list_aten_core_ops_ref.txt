@@ -1271,7 +1271,7 @@ nll_loss_nd                              -     -
 nonzero                                  -     -      
 nonzero_numpy                            -     -      
 nonzero_static                           -     -      
-norm                                     -     -      
+norm                                     -     yes    
 norm_except_dim                          -     -      
 normal                                   -     -      
 normal_                                  -     -      
@@ -1692,7 +1692,7 @@ value_selecting_reduction_backward       -     -
 values                                   -     -      
 values_copy                              -     -      
 vander                                   -     -      
-var                                      -     -      
+var                                      -     yes    
 var_mean                                 -     -      
 vdot                                     -     -      
 view                                     -     yes    
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 5
-supported by codegen only: 146
+supported by codegen only: 148
 supported by both: 77
-unsupported by either: 1486
-supported by codegen: 223 / 1714 (13.0 %)
+unsupported by either: 1484
+supported by codegen: 225 / 1714 (13.1 %)
 supported by c-ref: 82 / 1714 (4.8 %)

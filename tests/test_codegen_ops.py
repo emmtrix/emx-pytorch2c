@@ -186,6 +186,14 @@ def _concat_sample_filter(sample):
     return True
 
 
+def _var_dim_sample_filter(sample):
+    return "correction" not in sample.kwargs
+
+
+def _norm_dim_sample_filter(sample):
+    return len(sample.args) >= 2
+
+
 def _normalize_conv2d_param(value):
     if isinstance(value, int):
         return (value, value)
@@ -383,6 +391,8 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.mul.Tensor,
     torch.ops.aten.mean.default,
     torch.ops.aten.std.default,
+    torch.ops.aten.var.dim,
+    torch.ops.aten.norm.ScalarOpt_dim,
     torch.ops.aten.nan_to_num.default,
     torch.ops.aten.neg.default,
     torch.ops.aten.nextafter.default,
@@ -551,6 +561,8 @@ CODEGEN_OPINFO_OVERRIDES = {
     torch.ops.aten.round.default: _lookup_opinfo("round", ""),
     torch.ops.aten.selu.default: _lookup_opinfo("nn.functional.selu", ""),
     torch.ops.aten.std.default: _lookup_opinfo("std", ""),
+    torch.ops.aten.var.dim: _lookup_opinfo("var", ""),
+    torch.ops.aten.norm.ScalarOpt_dim: _lookup_opinfo("norm", ""),
     torch.ops.aten.softmax.int: _lookup_opinfo("softmax", ""),
     torch.ops.aten.log_softmax.int: _lookup_opinfo("log_softmax", ""),
     torch.ops.aten.addmm.default: _lookup_opinfo("addmm", ""),
@@ -697,6 +709,17 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.std.default: {
         "allow_non_tensor_args": True,
+    },
+    torch.ops.aten.var.dim: {
+        "allowed_dtypes": (torch.float32,),
+        "allow_non_tensor_args": True,
+        "allow_kwargs": True,
+        "sample_filter": _var_dim_sample_filter,
+    },
+    torch.ops.aten.norm.ScalarOpt_dim: {
+        "allowed_dtypes": (torch.float32,),
+        "allow_non_tensor_args": True,
+        "sample_filter": _norm_dim_sample_filter,
     },
     torch.ops.aten.transpose.int: {
         "allow_non_tensor_args": True,
