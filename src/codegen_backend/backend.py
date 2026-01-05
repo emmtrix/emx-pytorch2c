@@ -1622,6 +1622,14 @@ def _normalize_reduction_dims(
     return tuple(sorted(normalized))
 
 
+def _error_expected_tensor(op_name: str) -> RefBackendError:
+    return RefBackendError(f"codegen {op_name} expects tensor inputs only")
+
+
+def _error_kwarg_specified_once(op_name: str, kwarg: str) -> RefBackendError:
+    return RefBackendError(f"codegen {op_name} expects {kwarg} to be specified once")
+
+
 def _infer_reduction_output_shape(
     input_shape: Sequence[int],
     reduction_dims: Tuple[int, ...],
@@ -1661,9 +1669,7 @@ def _parse_reduction_args(
         if node.kwargs:
             if "unbiased" in node.kwargs:
                 if len(node.args) > 1:
-                    raise RefBackendError(
-                        "codegen std expects unbiased to be specified once"
-                    )
+                    raise _error_kwarg_specified_once(op_name, "unbiased")
                 unbiased = node.kwargs["unbiased"]
             extra = set(node.kwargs) - {"unbiased"}
             if extra:
@@ -1684,21 +1690,15 @@ def _parse_reduction_args(
     if node.kwargs:
         if "dim" in node.kwargs:
             if dim is not None:
-                raise RefBackendError(
-                    f"codegen {op_name} expects dim to be specified once"
-                )
+                raise _error_kwarg_specified_once(op_name, "dim")
             dim = node.kwargs["dim"]
         if "keepdim" in node.kwargs:
             if len(node.args) > 2:
-                raise RefBackendError(
-                    f"codegen {op_name} expects keepdim to be specified once"
-                )
+                raise _error_kwarg_specified_once(op_name, "keepdim")
             keepdim = node.kwargs["keepdim"]
         if "dtype" in node.kwargs:
             if dtype is not None:
-                raise RefBackendError(
-                    f"codegen {op_name} expects dtype to be specified once"
-                )
+                raise _error_kwarg_specified_once(op_name, "dtype")
             dtype = node.kwargs["dtype"]
         extra = set(node.kwargs) - {"dim", "keepdim", "dtype"}
         if extra:
@@ -1735,15 +1735,11 @@ def _parse_argminmax_args(
     if node.kwargs:
         if "dim" in node.kwargs:
             if dim is not None:
-                raise RefBackendError(
-                    f"codegen {op_name} expects dim to be specified once"
-                )
+                raise _error_kwarg_specified_once(op_name, "dim")
             dim = node.kwargs["dim"]
         if "keepdim" in node.kwargs:
             if len(node.args) > 2:
-                raise RefBackendError(
-                    f"codegen {op_name} expects keepdim to be specified once"
-                )
+                raise _error_kwarg_specified_once(op_name, "keepdim")
             keepdim = node.kwargs["keepdim"]
         extra = set(node.kwargs) - {"dim", "keepdim"}
         if extra:
@@ -1794,11 +1790,11 @@ def _parse_addmm_args(
     if node.kwargs:
         if "beta" in node.kwargs:
             if beta is not None:
-                raise RefBackendError("codegen addmm expects beta to be specified once")
+                raise _error_kwarg_specified_once("addmm", "beta")
             beta = node.kwargs["beta"]
         if "alpha" in node.kwargs:
             if alpha is not None:
-                raise RefBackendError("codegen addmm expects alpha to be specified once")
+                raise _error_kwarg_specified_once("addmm", "alpha")
             alpha = node.kwargs["alpha"]
         extra = set(node.kwargs) - {"beta", "alpha"}
         if extra:
@@ -1824,7 +1820,7 @@ def _parse_concat_args(
     if node.kwargs:
         if "dim" in node.kwargs:
             if dim is not None:
-                raise RefBackendError("codegen cat expects dim to be specified once")
+                raise _error_kwarg_specified_once("cat", "dim")
             dim = node.kwargs["dim"]
         extra = set(node.kwargs) - {"dim"}
         if extra:
@@ -1844,7 +1840,7 @@ def _parse_concat_args(
         raise RefBackendError("codegen cat expects a non-empty tensor list input")
     for item in tensors_arg:
         if not isinstance(item, torch.fx.Node):
-            raise RefBackendError("codegen cat expects tensor inputs only")
+            raise _error_expected_tensor("cat")
     return list(tensors_arg), dim_value
 
 
@@ -1951,7 +1947,7 @@ def _handle_concat_node(
     input_shapes: List[Tuple[int, ...]] = []
     for arg in input_nodes:
         if arg not in shapes:
-            raise RefBackendError("codegen cat expects tensor inputs only")
+            raise _error_expected_tensor("cat")
         input_shapes.append(shapes[arg])
     if not input_shapes:
         raise RefBackendError("codegen cat expects a non-empty tensor list input")
@@ -2013,7 +2009,7 @@ def _handle_conv2d_node(
     if not isinstance(input_arg, torch.fx.Node) or not isinstance(
         weight_arg, torch.fx.Node
     ):
-        raise RefBackendError("codegen conv2d expects tensor inputs only")
+        raise _error_expected_tensor("conv2d")
     if bias is not None or isinstance(bias, torch.fx.Node):
         raise RefBackendError("codegen conv2d does not support bias")
     if isinstance(stride, torch.fx.Node) or isinstance(
@@ -2035,7 +2031,7 @@ def _handle_conv2d_node(
     if dtype_info.torch_dtype is not torch.float32:
         raise RefBackendError("codegen conv2d supports only torch.float32 tensors")
     if input_arg not in shapes or weight_arg not in shapes:
-        raise RefBackendError("codegen conv2d expects tensor inputs only")
+        raise _error_expected_tensor("conv2d")
     if dtypes[input_arg] is not torch.float32 or dtypes[weight_arg] is not torch.float32:
         raise RefBackendError("codegen conv2d supports only torch.float32 tensors")
     input_shape = shapes[input_arg]
@@ -2099,9 +2095,9 @@ def _handle_addmm_node(
     input_shapes = []
     for arg in input_nodes:
         if not isinstance(arg, torch.fx.Node):
-            raise RefBackendError("codegen addmm expects tensor inputs only")
+            raise _error_expected_tensor("addmm")
         if arg not in shapes:
-            raise RefBackendError("codegen addmm expects tensor inputs only")
+            raise _error_expected_tensor("addmm")
         input_shapes.append(shapes[arg])
     input_dtypes = [dtypes[arg] for arg in input_nodes]
     if dtype_info.torch_dtype is not torch.float32:
@@ -2243,13 +2239,9 @@ def _analyze_generic_graph(
                 args_to_check = node.args[:1]
             for arg in args_to_check:
                 if not isinstance(arg, torch.fx.Node):
-                    raise RefBackendError(
-                        f"codegen {op_spec.name} expects tensor inputs only"
-                    )
+                    raise _error_expected_tensor(op_spec.name)
                 if arg not in shapes:
-                    raise RefBackendError(
-                        f"codegen {op_spec.name} expects tensor inputs only"
-                    )
+                    raise _error_expected_tensor(op_spec.name)
                 input_nodes.append(arg)
                 input_shapes.append(shapes[arg])
             input_dtypes = [dtypes[arg] for arg in input_nodes]
