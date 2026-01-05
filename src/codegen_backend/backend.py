@@ -79,6 +79,8 @@ _BITWISE_BOOL_OPS = {
     "bitwise_xor",
     "bitwise_not",
 }
+_PARAMETRIC_UNARY_OPS = {"gelu", "elu", "leaky_relu", "softplus"}
+_FLOAT_ONLY_UNARY_OPS = _PARAMETRIC_UNARY_OPS
 
 _TEMPLATE_ENV: Environment | None = None
 
@@ -137,6 +139,7 @@ class _OpNode:
     conv2d_groups: int | None = None
     addmm_alpha: float | None = None
     addmm_beta: float | None = None
+    params: Dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
@@ -466,8 +469,64 @@ def emit_input_access(
     )
 
 
+def _emit_parametric_unary(
+    op_name: str,
+    input_access: str,
+    output_access: str,
+    indent: str,
+    dtype: _CodegenDType,
+    params: Dict[str, object],
+) -> List[str]:
+    if dtype.torch_dtype is not torch.float32:
+        raise RefBackendError(
+            f"codegen {op_name} supports only torch.float32 tensors"
+        )
+    one = _format_scalar_literal(1.0, dtype)
+    half = _format_scalar_literal(0.5, dtype)
+    if op_name == "gelu":
+        approximate = params.get("approximate", "none")
+        if approximate == "tanh":
+            sqrt_2_over_pi = _format_scalar_literal(0.7978845608028654, dtype)
+            coeff = _format_scalar_literal(0.044715, dtype)
+            return [
+                f"{indent}{output_access} = {half} * {input_access} * "
+                f"({one} + tanhf({sqrt_2_over_pi} * "
+                f"({input_access} + {coeff} * {input_access} * {input_access} * {input_access})));"
+            ]
+        inv_sqrt2 = _format_scalar_literal(0.7071067811865475, dtype)
+        return [
+            f"{indent}{output_access} = {half} * {input_access} * "
+            f"({one} + erff({input_access} * {inv_sqrt2}));"
+        ]
+    if op_name == "elu":
+        alpha = _format_scalar_literal(params.get("alpha", 1.0), dtype)
+        scale = _format_scalar_literal(params.get("scale", 1.0), dtype)
+        input_scale = _format_scalar_literal(params.get("input_scale", 1.0), dtype)
+        return [
+            f"{indent}{output_access} = ({input_access} > 0.0f) ? "
+            f"({scale} * {input_access}) : "
+            f"({scale} * {alpha} * (expf({input_scale} * {input_access}) - {one}));"
+        ]
+    if op_name == "leaky_relu":
+        negative_slope = _format_scalar_literal(
+            params.get("negative_slope", 0.01), dtype
+        )
+        return [
+            f"{indent}{output_access} = ({input_access} > 0.0f) ? "
+            f"{input_access} : ({negative_slope} * {input_access});"
+        ]
+    if op_name == "softplus":
+        beta = _format_scalar_literal(params.get("beta", 1.0), dtype)
+        threshold = _format_scalar_literal(params.get("threshold", 20.0), dtype)
+        return [
+            f"{indent}{output_access} = ({beta} * {input_access} > {threshold}) ? "
+            f"{input_access} : (log1pf(expf({beta} * {input_access})) / {beta});"
+        ]
+    raise RefBackendError(f"Unsupported parametric unary op: {op_name}")
+
+
 def emit_body(
-    op_spec: _OpSpec,
+    op_node: _OpNode,
     output_access: str,
     input_shapes: Sequence[Sequence[int]],
     input_strides: Sequence[Sequence[int]],
@@ -476,6 +535,7 @@ def emit_body(
     indent: str,
     dtype: _CodegenDType,
 ) -> List[str]:
+    op_spec = op_node.spec
     scalar_fn = f"{dtype.scalar_prefix}{op_spec.name}"
     if op_spec.kind == "binary":
         a_shape, b_shape = input_shapes
@@ -539,6 +599,15 @@ def emit_body(
         broadcast_contiguous=False,
         c_type=_input_c_type(input_dtypes[0], dtype),
     )
+    if op_spec.name in _PARAMETRIC_UNARY_OPS:
+        return _emit_parametric_unary(
+            op_spec.name,
+            input_access,
+            output_access,
+            indent,
+            dtype,
+            op_node.params,
+        )
     return [f"{indent}{output_access} = {scalar_fn}({input_access});"]
 
 
@@ -550,7 +619,7 @@ def emit_footer(output_shape: Sequence[int], indent: str) -> List[str]:
 
 def _write_elementwise_kernel(
     node_index: int,
-    op_spec: _OpSpec,
+    op_node: _OpNode,
     output_shape: Sequence[int],
     input_shapes: Sequence[Sequence[int]],
     input_strides: Sequence[Sequence[int]],
@@ -560,7 +629,12 @@ def _write_elementwise_kernel(
 ) -> List[str]:
     lines = [
         emit_signature(
-            node_index, op_spec, output_shape, input_shapes, input_dtypes, dtype
+            node_index,
+            op_node.spec,
+            output_shape,
+            input_shapes,
+            input_dtypes,
+            dtype,
         )
     ]
     loop_lines, indent = emit_loops(output_shape)
@@ -570,7 +644,7 @@ def _write_elementwise_kernel(
     )
     lines.extend(
         emit_body(
-            op_spec,
+            op_node,
             output_access,
             input_shapes,
             input_strides,
@@ -1550,7 +1624,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
             output_strides = graph.strides[op_node.node]
             kernel_lines = _write_elementwise_kernel(
                 index,
-                op_node.spec,
+                op_node,
                 op_node.output_shape,
                 input_shapes,
                 input_strides,
@@ -2107,6 +2181,127 @@ def _parse_argminmax_args(
     if dim_value < 0 or dim_value >= len(input_shape):
         raise RefBackendError(f"codegen {op_name} dim is out of range")
     return (dim_value,), keepdim, False
+
+
+def _parse_constant_float(op_name: str, name: str, value: object) -> float:
+    if isinstance(value, torch.fx.Node):
+        raise RefBackendError(f"codegen {op_name} expects {name} to be constant")
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    raise RefBackendError(f"codegen {op_name} expects {name} to be numeric")
+
+
+def _parse_parametric_unary_args(
+    op_name: str, node: torch.fx.Node
+) -> Tuple[torch.fx.Node, Dict[str, object]]:
+    if not node.args:
+        raise RefBackendError(f"codegen {op_name} expects one input")
+    input_node = node.args[0]
+    params: Dict[str, object] = {}
+    if op_name == "gelu":
+        if len(node.args) > 2:
+            raise RefBackendError("codegen gelu expects one input")
+        if len(node.args) > 1:
+            params["approximate"] = node.args[1]
+        if "approximate" in node.kwargs:
+            if len(node.args) > 1:
+                raise RefBackendError("codegen gelu expects approximate as a keyword")
+            params["approximate"] = node.kwargs["approximate"]
+        extra = set(node.kwargs) - {"approximate"}
+        if extra:
+            raise RefBackendError(
+                f"codegen gelu got unexpected kwargs: {sorted(extra)}"
+            )
+        approximate = params.get("approximate", "none")
+        if isinstance(approximate, torch.fx.Node):
+            raise RefBackendError("codegen gelu expects approximate to be constant")
+        if approximate is None:
+            approximate = "none"
+        if approximate not in {"none", "tanh"}:
+            raise RefBackendError(
+                "codegen gelu expects approximate to be 'none' or 'tanh'"
+            )
+        params["approximate"] = approximate
+        return input_node, params
+    if op_name == "elu":
+        if len(node.args) > 4:
+            raise RefBackendError("codegen elu expects one input")
+        args = list(node.args[1:])
+        kwargs = dict(node.kwargs)
+        for name in ("alpha", "scale", "input_scale"):
+            if name in kwargs and args:
+                raise RefBackendError(f"codegen elu got multiple values for {name}")
+            if args:
+                params[name] = args.pop(0)
+            elif name in kwargs:
+                params[name] = kwargs[name]
+        extra = set(kwargs) - {"alpha", "scale", "input_scale"}
+        if extra:
+            raise RefBackendError(
+                f"codegen elu got unexpected kwargs: {sorted(extra)}"
+            )
+        params["alpha"] = _parse_constant_float(
+            op_name, "alpha", params.get("alpha", 1.0)
+        )
+        params["scale"] = _parse_constant_float(
+            op_name, "scale", params.get("scale", 1.0)
+        )
+        params["input_scale"] = _parse_constant_float(
+            op_name, "input_scale", params.get("input_scale", 1.0)
+        )
+        return input_node, params
+    if op_name == "leaky_relu":
+        if len(node.args) > 2:
+            raise RefBackendError("codegen leaky_relu expects one input")
+        if len(node.args) > 1:
+            params["negative_slope"] = node.args[1]
+        if "negative_slope" in node.kwargs:
+            if len(node.args) > 1:
+                raise RefBackendError(
+                    "codegen leaky_relu expects negative_slope as a keyword"
+                )
+            params["negative_slope"] = node.kwargs["negative_slope"]
+        extra = set(node.kwargs) - {"negative_slope"}
+        if extra:
+            raise RefBackendError(
+                f"codegen leaky_relu got unexpected kwargs: {sorted(extra)}"
+            )
+        params["negative_slope"] = _parse_constant_float(
+            op_name, "negative_slope", params.get("negative_slope", 0.01)
+        )
+        return input_node, params
+    if op_name == "softplus":
+        if len(node.args) > 3:
+            raise RefBackendError("codegen softplus expects one input")
+        if len(node.args) > 1:
+            params["beta"] = node.args[1]
+        if len(node.args) > 2:
+            params["threshold"] = node.args[2]
+        if "beta" in node.kwargs:
+            if len(node.args) > 1:
+                raise RefBackendError("codegen softplus expects beta as a keyword")
+            params["beta"] = node.kwargs["beta"]
+        if "threshold" in node.kwargs:
+            if len(node.args) > 2:
+                raise RefBackendError(
+                    "codegen softplus expects threshold as a keyword"
+                )
+            params["threshold"] = node.kwargs["threshold"]
+        extra = set(node.kwargs) - {"beta", "threshold"}
+        if extra:
+            raise RefBackendError(
+                f"codegen softplus got unexpected kwargs: {sorted(extra)}"
+            )
+        params["beta"] = _parse_constant_float(
+            op_name, "beta", params.get("beta", 1.0)
+        )
+        params["threshold"] = _parse_constant_float(
+            op_name, "threshold", params.get("threshold", 20.0)
+        )
+        return input_node, params
+    raise RefBackendError(f"Unsupported parametric op: {op_name}")
 
 
 def _parse_softmax_args(
@@ -2740,11 +2935,18 @@ def _analyze_generic_graph(
             keepdim = False
             reduce_all = False
             std_unbiased = None
+            param_values: Dict[str, object] = {}
             if op_spec.kind in {"reduction", "arg_reduction"}:
                 if len(node.args) < 1:
                     raise RefBackendError(
                         f"codegen {op_spec.name} expects one input"
                     )
+                args_to_check = node.args[:1]
+            elif op_spec.kind == "unary" and op_spec.name in _PARAMETRIC_UNARY_OPS:
+                input_node, param_values = _parse_parametric_unary_args(
+                    op_spec.name, node
+                )
+                args_to_check = (input_node,)
             else:
                 if node.kwargs:
                     raise RefBackendError(
@@ -2770,11 +2972,9 @@ def _analyze_generic_graph(
                     raise RefBackendError(
                         f"codegen {op_spec.name} expects exactly three inputs"
                     )
+                args_to_check = node.args
             input_nodes: List[torch.fx.Node] = []
             input_shapes: List[Tuple[int, ...]] = []
-            args_to_check = node.args
-            if op_spec.kind in {"reduction", "arg_reduction"}:
-                args_to_check = node.args[:1]
             for arg in args_to_check:
                 if not isinstance(arg, torch.fx.Node):
                     raise _error_expected_tensor(op_spec.name)
@@ -2794,6 +2994,15 @@ def _analyze_generic_graph(
                 else:
                     raise RefBackendError(
                         f"codegen {op_spec.name} expects integer tensors"
+                    )
+            if op_spec.name in _FLOAT_ONLY_UNARY_OPS:
+                if dtype_info.torch_dtype is not torch.float32:
+                    raise RefBackendError(
+                        f"codegen {op_spec.name} supports only torch.float32 tensors"
+                    )
+                if any(dtype is not torch.float32 for dtype in input_dtypes):
+                    raise RefBackendError(
+                        f"codegen {op_spec.name} supports only torch.float32 tensors"
                     )
             if op_spec.kind == "where":
                 if input_dtypes[0] is not torch.bool:
@@ -2868,6 +3077,7 @@ def _analyze_generic_graph(
                     keepdim=keepdim,
                     reduce_all=reduce_all,
                     std_unbiased=std_unbiased,
+                    params=param_values,
                 )
             )
             continue

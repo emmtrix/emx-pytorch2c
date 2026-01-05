@@ -770,8 +770,8 @@ dsplit                                   -     -
 dstack                                   -     -      
 einsum                                   -     -      
 element_size                             -     -      
-elu                                      -     -      
-elu_                                     -     -      
+elu                                      -     yes    
+elu_                                     -     yes    
 elu_backward                             -     -      
 embedding                                -     -      
 embedding_backward                       -     -      
@@ -892,8 +892,8 @@ gcd                                      -     -
 gcd_                                     -     -      
 ge                                       -     yes    
 ge_                                      -     -      
-gelu                                     -     -      
-gelu_                                    -     -      
+gelu                                     -     yes    
+gelu_                                    -     yes    
 gelu_backward                            -     -      
 geometric                                -     -      
 geometric_                               -     -      
@@ -1041,8 +1041,8 @@ ldexp                                    yes   yes
 ldexp_                                   -     yes    
 le                                       -     yes    
 le_                                      -     -      
-leaky_relu                               -     -      
-leaky_relu_                              -     -      
+leaky_relu                               -     yes    
+leaky_relu_                              -     yes    
 leaky_relu_backward                      -     -      
 len                                      -     -      
 lerp                                     -     -      
@@ -1486,7 +1486,7 @@ smooth_l1_loss_backward                  -     -
 soft_margin_loss                         -     -      
 soft_margin_loss_backward                -     -      
 softmax                                  -     yes    
-softplus                                 -     -      
+softplus                                 -     yes    
 softplus_backward                        -     -      
 softshrink                               -     -      
 softshrink_backward                      -     -      
@@ -1718,8 +1718,8 @@ zfill                                    -     -
 Summary
 total aten ops: 1714
 supported by cref only: 5
-supported by codegen only: 139
+supported by codegen only: 146
 supported by both: 77
-unsupported by either: 1493
-supported by codegen: 216 / 1714 (12.6 %)
+unsupported by either: 1486
+supported by codegen: 223 / 1714 (13.0 %)
 supported by c-ref: 82 / 1714 (4.8 %)

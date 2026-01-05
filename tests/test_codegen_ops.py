@@ -370,6 +370,10 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.logaddexp.default,
     torch.ops.aten.logaddexp2.default,
     torch.ops.aten.log_sigmoid.default,
+    torch.ops.aten.gelu.default,
+    torch.ops.aten.elu.default,
+    torch.ops.aten.leaky_relu.default,
+    torch.ops.aten.softplus.default,
     torch.ops.aten.log_softmax.int,
     torch.ops.aten.logit.default,
     torch.ops.aten.addmm.default,
@@ -515,6 +519,15 @@ INPLACE_ATEN_OPS = [
 aten_cbrt_inplace = getattr(torch.ops.aten, "cbrt_", None)
 if aten_cbrt_inplace is not None:
     INPLACE_ATEN_OPS.append(aten_cbrt_inplace.default)
+aten_gelu_inplace = getattr(torch.ops.aten, "gelu_", None)
+if aten_gelu_inplace is not None:
+    INPLACE_ATEN_OPS.append(aten_gelu_inplace.default)
+aten_elu_inplace = getattr(torch.ops.aten, "elu_", None)
+if aten_elu_inplace is not None:
+    INPLACE_ATEN_OPS.append(aten_elu_inplace.default)
+aten_leaky_relu_inplace = getattr(torch.ops.aten, "leaky_relu_", None)
+if aten_leaky_relu_inplace is not None:
+    INPLACE_ATEN_OPS.append(aten_leaky_relu_inplace.default)
 
 
 def _lookup_opinfo(aten_name, variant_test_name):
@@ -536,6 +549,8 @@ CODEGEN_OPINFO_OVERRIDES = {
     torch.ops.aten.hardsigmoid.default: _lookup_opinfo(
         "nn.functional.hardsigmoid", ""
     ),
+    torch.ops.aten.elu.default: _lookup_opinfo("nn.functional.elu", ""),
+    torch.ops.aten.softplus.default: _lookup_opinfo("nn.functional.softplus", ""),
     torch.ops.aten.round.default: _lookup_opinfo("round", ""),
     torch.ops.aten.selu.default: _lookup_opinfo("nn.functional.selu", ""),
     torch.ops.aten.std.default: _lookup_opinfo("std", ""),
@@ -642,6 +657,26 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.log_sigmoid.default: {
         "allowed_dtypes": (torch.float32,),
+    },
+    torch.ops.aten.gelu.default: {
+        "allowed_dtypes": (torch.float32,),
+        "allow_non_tensor_args": True,
+        "allow_kwargs": True,
+    },
+    torch.ops.aten.elu.default: {
+        "allowed_dtypes": (torch.float32,),
+        "allow_non_tensor_args": True,
+        "allow_kwargs": True,
+    },
+    torch.ops.aten.leaky_relu.default: {
+        "allowed_dtypes": (torch.float32,),
+        "allow_non_tensor_args": True,
+        "allow_kwargs": True,
+    },
+    torch.ops.aten.softplus.default: {
+        "allowed_dtypes": (torch.float32,),
+        "allow_non_tensor_args": True,
+        "allow_kwargs": True,
     },
     torch.ops.aten.digamma.default: {
         "allowed_dtypes": (torch.float32,),

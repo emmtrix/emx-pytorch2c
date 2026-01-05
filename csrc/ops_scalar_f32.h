@@ -335,6 +335,35 @@ static inline float ref_scalar_f32_log_sigmoid(float a) {
     return a - log1pf(expf(a));
 }
 
+static inline float ref_scalar_f32_gelu(float a) {
+    const float inv_sqrt2 = 0.7071067811865475f;
+    return 0.5f * a * (1.0f + erff(a * inv_sqrt2));
+}
+
+static inline float ref_scalar_f32_elu(float a) {
+    const float alpha = 1.0f;
+    const float scale = 1.0f;
+    const float input_scale = 1.0f;
+    if (a > 0.0f) {
+        return scale * a;
+    }
+    return scale * alpha * (expf(input_scale * a) - 1.0f);
+}
+
+static inline float ref_scalar_f32_leaky_relu(float a) {
+    const float negative_slope = 0.01f;
+    return a > 0.0f ? a : negative_slope * a;
+}
+
+static inline float ref_scalar_f32_softplus(float a) {
+    const float beta = 1.0f;
+    const float threshold = 20.0f;
+    if (beta * a > threshold) {
+        return a;
+    }
+    return log1pf(expf(beta * a)) / beta;
+}
+
 static inline float ref_scalar_f32_silu(float a) {
     return a / (1.0f + expf(-a));
 }

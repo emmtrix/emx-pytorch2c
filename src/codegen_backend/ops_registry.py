@@ -836,6 +836,41 @@ _REGISTRY.register_unary("log_sigmoid").targets(
     torch.ops.aten.log_sigmoid.default,
     torch.ops.aten.log_sigmoid,
 ).build()
+_REGISTRY.register_unary("gelu").targets(
+    F.gelu,
+    torch.ops.aten.gelu.default,
+    torch.ops.aten.gelu,
+    torch.ops.aten.gelu_.default,
+    torch.ops.aten.gelu_,
+).inplace(
+    torch.ops.aten.gelu_.default,
+    torch.ops.aten.gelu_,
+).build()
+_REGISTRY.register_unary("elu").targets(
+    F.elu,
+    torch.ops.aten.elu.default,
+    torch.ops.aten.elu,
+    torch.ops.aten.elu_.default,
+    torch.ops.aten.elu_,
+).inplace(
+    torch.ops.aten.elu_.default,
+    torch.ops.aten.elu_,
+).build()
+_REGISTRY.register_unary("leaky_relu").targets(
+    F.leaky_relu,
+    torch.ops.aten.leaky_relu.default,
+    torch.ops.aten.leaky_relu,
+    torch.ops.aten.leaky_relu_.default,
+    torch.ops.aten.leaky_relu_,
+).inplace(
+    torch.ops.aten.leaky_relu_.default,
+    torch.ops.aten.leaky_relu_,
+).build()
+_REGISTRY.register_unary("softplus").targets(
+    F.softplus,
+    torch.ops.aten.softplus.default,
+    torch.ops.aten.softplus,
+).build()
 _REGISTRY.register_unary("selu").targets(
     F.selu,
     torch.ops.aten.selu.default,
