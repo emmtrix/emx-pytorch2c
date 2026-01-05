@@ -13,6 +13,7 @@ _VALID_KINDS = {
     "where",
     "arg_reduction",
     "reduction",
+    "softmax",
     "concat",
     "addmm",
     "addbmm",
@@ -1098,6 +1099,18 @@ _REGISTRY.register_op("amin", kind="reduction").targets(
     torch.amin,
     torch.ops.aten.amin.default,
     torch.ops.aten.amin,
+).build()
+_REGISTRY.register_op("softmax", kind="softmax").targets(
+    torch.softmax,
+    F.softmax,
+    torch.ops.aten.softmax.int,
+    torch.ops.aten.softmax,
+).build()
+_REGISTRY.register_op("log_softmax", kind="softmax").targets(
+    torch.log_softmax,
+    F.log_softmax,
+    torch.ops.aten.log_softmax.int,
+    torch.ops.aten.log_softmax,
 ).build()
 _REGISTRY.register_op("cat", kind="concat").targets(
     torch.cat,

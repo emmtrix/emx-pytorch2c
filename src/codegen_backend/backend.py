@@ -129,6 +129,7 @@ class _OpNode:
     keepdim: bool = False
     reduce_all: bool = False
     std_unbiased: bool | None = None
+    softmax_dim: int | None = None
     concat_dim: int | None = None
     conv2d_stride: Tuple[int, int] | None = None
     conv2d_padding: Tuple[int, int] | None = None
@@ -1598,6 +1599,17 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 op_node.reduce_all,
                 graph.dtype,
             )
+        elif op_node.spec.kind == "softmax":
+            input_node = op_node.inputs[0]
+            kernel_lines = _write_softmax_kernel(
+                index,
+                op_node.spec,
+                graph.shapes[input_node],
+                graph.strides[input_node],
+                graph.strides[op_node.node],
+                op_node.softmax_dim,
+                graph.dtype,
+            )
         elif op_node.spec.kind == "concat":
             input_shapes = [graph.shapes[arg] for arg in op_node.inputs]
             input_strides = [graph.strides[arg] for arg in op_node.inputs]
@@ -1824,6 +1836,8 @@ def _infer_output_shape(
     if op_spec.kind == "where":
         return _broadcast_output_shape(op_spec, *input_shapes)
     if op_spec.kind == "unary":
+        return input_shapes[0]
+    if op_spec.kind == "softmax":
         return input_shapes[0]
     if op_spec.kind == "reduction":
         return ()
@@ -2089,6 +2103,125 @@ def _parse_argminmax_args(
     if dim_value < 0 or dim_value >= len(input_shape):
         raise RefBackendError(f"codegen {op_name} dim is out of range")
     return (dim_value,), keepdim, False
+
+
+def _parse_softmax_args(
+    op_name: str, node: torch.fx.Node, input_shape: Sequence[int]
+) -> Tuple[int, object | None]:
+    if not node.args:
+        raise RefBackendError(f"codegen {op_name} expects one input")
+    if len(node.args) > 3:
+        raise RefBackendError(f"codegen {op_name} expects at most three inputs")
+    dim = node.args[1] if len(node.args) > 1 else None
+    dtype = node.args[2] if len(node.args) > 2 else None
+    if node.kwargs:
+        if "dim" in node.kwargs:
+            if dim is not None:
+                raise _error_kwarg_specified_once(op_name, "dim")
+            dim = node.kwargs["dim"]
+        if "dtype" in node.kwargs:
+            if dtype is not None:
+                raise _error_kwarg_specified_once(op_name, "dtype")
+            dtype = node.kwargs["dtype"]
+        extra = set(node.kwargs) - {"dim", "dtype"}
+        if extra:
+            raise RefBackendError(
+                f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
+            )
+    if dim is None:
+        raise RefBackendError(f"codegen {op_name} expects dim to be an int")
+    if isinstance(dim, torch.fx.Node):
+        raise RefBackendError(f"codegen {op_name} expects dim to be an int")
+    if isinstance(dim, (tuple, list)):
+        raise RefBackendError(f"codegen {op_name} expects dim to be an int")
+    try:
+        dim_value = operator.index(dim)
+    except TypeError as exc:
+        raise RefBackendError(f"codegen {op_name} expects dim to be an int") from exc
+    rank = len(input_shape)
+    if dim_value < 0:
+        dim_value += rank
+    if dim_value < 0 or dim_value >= rank:
+        raise RefBackendError(f"codegen {op_name} dim is out of range")
+    if dtype is not None:
+        if isinstance(dtype, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_name} expects dtype to be torch.float32 or None"
+            )
+        if dtype is not torch.float32:
+            raise RefBackendError(
+                f"codegen {op_name} expects dtype to be torch.float32 or None"
+            )
+    return dim_value, dtype
+
+
+def _write_softmax_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    input_shape: Sequence[int],
+    input_strides: Sequence[int],
+    output_strides: Sequence[int],
+    softmax_dim: int | None,
+    dtype: _CodegenDType,
+) -> List[str]:
+    if softmax_dim is None:
+        raise RefBackendError("codegen softmax expects a reduction dimension")
+    softmax_template = _get_template_env().get_template("softmax_kernel.c.j2")
+    rank = len(input_shape)
+    input_suffix = _format_array_suffix(input_shape)
+    output_suffix = _format_array_suffix(input_shape)
+    signature = (
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"const {dtype.c_type} input{input_suffix}, "
+        f"{dtype.c_type} out{output_suffix}) {{"
+    )
+    output_dims = [{"dim": dim, "size": size} for dim, size in enumerate(input_shape)]
+    input_contig = _is_contiguous(input_shape, input_strides)
+    current_indices = [f"i{dim}" for dim in range(rank)]
+    r_indices = current_indices.copy()
+    r_indices[softmax_dim] = f"r{softmax_dim}"
+    zero_indices = current_indices.copy()
+    zero_indices[softmax_dim] = "0"
+    input_access_r = _emit_strided_access(
+        "input",
+        r_indices,
+        input_strides,
+        input_contig,
+        sizes=input_shape,
+        c_type=dtype.c_type,
+    )
+    input_access_zero = _emit_strided_access(
+        "input",
+        zero_indices,
+        input_strides,
+        input_contig,
+        sizes=input_shape,
+        c_type=dtype.c_type,
+    )
+    input_access_current = _emit_strided_access(
+        "input",
+        current_indices,
+        input_strides,
+        input_contig,
+        sizes=input_shape,
+        c_type=dtype.c_type,
+    )
+    output_access = _format_output_access(
+        "out", input_shape, output_strides, c_type=dtype.c_type
+    )
+    rendered = softmax_template.render(
+        signature=signature,
+        output_dims=output_dims,
+        softmax_dim=softmax_dim,
+        softmax_size=input_shape[softmax_dim],
+        c_type=dtype.c_type,
+        input_access_zero=input_access_zero,
+        input_access_r=input_access_r,
+        input_access_current=input_access_current,
+        output_access=output_access,
+        is_log=op_spec.name == "log_softmax",
+    )
+    return rendered.strip().splitlines()
 def _parse_addmm_like_scalar(
     op_name: str, name: str, value: object | None
 ) -> float:
@@ -2451,6 +2584,46 @@ def _handle_addmm_like_node(
     )
 
 
+def _handle_softmax_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> _OpNode:
+    if not node.args:
+        raise RefBackendError(f"codegen {op_spec.name} expects one input")
+    input_arg = node.args[0]
+    if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if dtype_info.torch_dtype is not torch.float32:
+        raise RefBackendError(
+            f"codegen {op_spec.name} supports only torch.float32 tensors"
+        )
+    if dtypes[input_arg] is not torch.float32:
+        raise RefBackendError(
+            f"codegen {op_spec.name} supports only torch.float32 tensors"
+        )
+    dim, dtype = _parse_softmax_args(op_spec.name, node, shapes[input_arg])
+    if dtype is not None and dtype is not torch.float32:
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects dtype to be torch.float32 or None"
+        )
+    output_shape = shapes[input_arg]
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=(input_arg,),
+        output_shape=output_shape,
+        inplace_input=None,
+        softmax_dim=dim,
+    )
+
+
 def _analyze_generic_graph(
     gm: torch.fx.GraphModule, example_inputs: Sequence[object]
 ) -> _GenericGraph:
@@ -2490,6 +2663,8 @@ def _analyze_generic_graph(
                     "all",
                     "argmax",
                     "argmin",
+                    "softmax",
+                    "log_softmax",
                 }:
                     raise RefBackendError(f"Unsupported call_method: {node.target}")
                 op_spec = SUPPORTED_OPS[node.target]
@@ -2524,6 +2699,13 @@ def _analyze_generic_graph(
                         strides,
                         dtypes,
                         inplace_input,
+                    )
+                )
+                continue
+            elif op_spec.kind == "softmax":
+                op_nodes.append(
+                    _handle_softmax_node(
+                        node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue

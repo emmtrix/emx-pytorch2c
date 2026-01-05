@@ -363,6 +363,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.log1p.default,
     torch.ops.aten.log2.default,
     torch.ops.aten.logaddexp.default,
+    torch.ops.aten.log_softmax.int,
     torch.ops.aten.logit.default,
     torch.ops.aten.addmm.default,
     torch.ops.aten.addbmm.default,
@@ -390,6 +391,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.sgn.default,
     torch.ops.aten.sigmoid.default,
     torch.ops.aten.sign.default,
+    torch.ops.aten.softmax.int,
     torch.ops.aten.hardswish.default,
     torch.ops.aten.sin.default,
     torch.ops.aten.sinc.default,
@@ -512,6 +514,8 @@ CODEGEN_OPINFO_OVERRIDES = {
     torch.ops.aten.div.Tensor: _lookup_opinfo("div", "no_rounding_mode"),
     torch.ops.aten.round.default: _lookup_opinfo("round", ""),
     torch.ops.aten.std.default: _lookup_opinfo("std", ""),
+    torch.ops.aten.softmax.int: _lookup_opinfo("softmax", ""),
+    torch.ops.aten.log_softmax.int: _lookup_opinfo("log_softmax", ""),
     torch.ops.aten.addmm.default: _lookup_opinfo("addmm", ""),
     torch.ops.aten.addbmm.default: _lookup_opinfo("addbmm", ""),
     torch.ops.aten.addmv.default: _lookup_opinfo("addmv", ""),
@@ -592,6 +596,16 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.argmin.default: {
         "allow_non_tensor_args": True,
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
+    },
+    torch.ops.aten.softmax.int: {
+        "allowed_dtypes": (torch.float32,),
+        "allow_non_tensor_args": True,
+        "allow_kwargs": True,
+    },
+    torch.ops.aten.log_softmax.int: {
+        "allowed_dtypes": (torch.float32,),
+        "allow_non_tensor_args": True,
+        "allow_kwargs": True,
     },
     torch.ops.aten.mish_.default: {
         "allowed_dtypes": (torch.float32,),
