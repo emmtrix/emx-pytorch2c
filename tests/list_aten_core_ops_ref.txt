@@ -686,7 +686,7 @@ conv_tbc_backward                        -     -
 conv_transpose1d                         -     -      
 conv_transpose2d                         -     -      
 conv_transpose3d                         -     -      
-convolution                              yes   -      
+convolution                              yes   yes    
 convolution_backward                     -     -      
 convolution_backward_overrideable        -     -      
 convolution_overrideable                 -     -      
@@ -1717,9 +1717,9 @@ zfill                                    -     -
 
 Summary
 total aten ops: 1714
-supported by cref only: 5
+supported by cref only: 4
 supported by codegen only: 151
-supported by both: 77
+supported by both: 78
 unsupported by either: 1481
-supported by codegen: 228 / 1714 (13.3 %)
+supported by codegen: 229 / 1714 (13.4 %)
 supported by c-ref: 82 / 1714 (4.8 %)

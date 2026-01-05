@@ -1,3 +1,5 @@
+import copy
+
 import pytest
 import torch
 from codegen_backend import codegen_generic_backend
@@ -303,6 +305,57 @@ def _conv2d_sample_filter(sample):
     return True
 
 
+def _convolution_sample_filter(sample):
+    if not isinstance(sample.input, torch.Tensor):
+        return False
+    if not sample.args:
+        return False
+    args = list(sample.args)
+    weight = args[0] if len(args) > 0 else sample.kwargs.get("weight")
+    if not isinstance(weight, torch.Tensor):
+        return False
+    stride = sample.kwargs.get("stride", args[2] if len(args) > 2 else 1)
+    padding = sample.kwargs.get("padding", args[3] if len(args) > 3 else 0)
+    dilation = sample.kwargs.get("dilation", args[4] if len(args) > 4 else 1)
+    transposed = sample.kwargs.get(
+        "transposed", args[5] if len(args) > 5 else False
+    )
+    output_padding = sample.kwargs.get(
+        "output_padding", args[6] if len(args) > 6 else 0
+    )
+    groups = sample.kwargs.get("groups", args[7] if len(args) > 7 else 1)
+    if transposed:
+        return False
+    output_padding_pair = _normalize_conv2d_param(output_padding)
+    if output_padding_pair is None or output_padding_pair != (0, 0):
+        return False
+    stride_pair = _normalize_conv2d_param(stride)
+    padding_pair = _normalize_conv2d_param(padding)
+    dilation_pair = _normalize_conv2d_param(dilation)
+    if stride_pair is None or padding_pair is None or dilation_pair is None:
+        return False
+    if (
+        stride_pair[0] <= 0
+        or stride_pair[1] <= 0
+        or dilation_pair[0] <= 0
+        or dilation_pair[1] <= 0
+        or padding_pair[0] < 0
+        or padding_pair[1] < 0
+    ):
+        return False
+    if not isinstance(groups, int) or groups <= 0:
+        return False
+    if sample.input.ndim != 4 or weight.ndim != 4:
+        return False
+    if not sample.input.is_contiguous() or not weight.is_contiguous():
+        return False
+    if sample.input.shape[1] != weight.shape[1] * groups:
+        return False
+    if weight.shape[0] % groups != 0:
+        return False
+    return True
+
+
 def _max_pool2d_sample_filter(sample):
     if not isinstance(sample.input, torch.Tensor):
         return False
@@ -481,6 +534,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.copysign.Tensor,
     torch.ops.aten.conv1d.default,
     torch.ops.aten.conv2d.default,
+    torch.ops.aten.convolution.default,
     torch.ops.aten.avg_pool2d.default,
     torch.ops.aten.cos.default,
     torch.ops.aten.cosh.default,
@@ -703,6 +757,13 @@ def _lookup_opinfo(aten_name, variant_test_name):
     return matches[0]
 
 
+def _clone_opinfo(opinfo, *, name, aten_name):
+    cloned = copy.deepcopy(opinfo)
+    cloned.name = name
+    cloned.aten_name = aten_name
+    return cloned
+
+
 CODEGEN_OPINFO_OVERRIDES = {
     torch.ops.aten.div.Tensor: _lookup_opinfo("div", "no_rounding_mode"),
     torch.ops.aten.hardsigmoid.default: _lookup_opinfo(
@@ -721,6 +782,11 @@ CODEGEN_OPINFO_OVERRIDES = {
     torch.ops.aten.addbmm.default: _lookup_opinfo("addbmm", ""),
     torch.ops.aten.addmv.default: _lookup_opinfo("addmv", ""),
     torch.ops.aten.addr.default: _lookup_opinfo("addr", ""),
+    torch.ops.aten.convolution.default: _clone_opinfo(
+        _lookup_opinfo("conv2d", ""),
+        name="aten.convolution",
+        aten_name="convolution",
+    ),
 }
 
 
@@ -892,6 +958,14 @@ CODEGEN_OP_TEST_CONFIG = {
         "requires_same_shape": False,
         "requires_contiguous": True,
         "sample_filter": _conv2d_sample_filter,
+    },
+    torch.ops.aten.convolution.default: {
+        "allowed_dtypes": (torch.float32,),
+        "allow_non_tensor_args": True,
+        "allow_kwargs": True,
+        "requires_same_shape": False,
+        "requires_contiguous": True,
+        "sample_filter": _convolution_sample_filter,
     },
     torch.ops.aten.avg_pool2d.default: {
         "allowed_dtypes": (torch.float32,),
