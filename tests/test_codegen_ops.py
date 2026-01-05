@@ -51,19 +51,6 @@ def _update_sample(sample, updated_tensors):
     return SampleInput(new_input, args=tuple(new_args), kwargs=sample.kwargs)
 
 
-def _bmm_sample_filter(sample):
-    tensors = _extract_tensors(sample)
-    if len(tensors) != 2:
-        return False
-    a, b = tensors
-    return (
-        a.ndim == 3
-        and b.ndim == 3
-        and a.shape[0] == b.shape[0]
-        and a.shape[2] == b.shape[1]
-    )
-
-
 def _addmm_sample_filter(sample):
     tensors = _extract_tensors(sample)
     if len(tensors) != 3:
@@ -876,7 +863,6 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.bmm.default: {
         "allow_noncontiguous": True,
         "requires_same_shape": False,
-        "sample_filter": _bmm_sample_filter,
     },
     torch.ops.aten.hardsigmoid.default: {
         "allowed_dtypes": (torch.float32,),
