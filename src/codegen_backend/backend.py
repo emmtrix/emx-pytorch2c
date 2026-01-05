@@ -1786,11 +1786,10 @@ def _validate_example_inputs(
     non_bool_examples = [
         example for example in tensor_examples if example.dtype is not torch.bool
     ]
-    if not non_bool_examples:
-        raise RefBackendError(
-            "codegen backend requires at least one non-boolean tensor input"
-        )
-    first_dtype = non_bool_examples[0].dtype
+    if non_bool_examples:
+        first_dtype = non_bool_examples[0].dtype
+    else:
+        first_dtype = torch.bool
     dtype_info = _CODEGEN_DTYPES.get(first_dtype)
     if dtype_info is None:
         raise RefBackendError(

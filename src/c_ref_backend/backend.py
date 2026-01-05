@@ -1179,7 +1179,13 @@ def _compile_graph(
                         raise RefBackendError("expand expects tensor input only")
                     if isinstance(shape, torch.fx.Node):
                         raise RefBackendError("expand expects constant shape")
-                    result = op_fn(env[input_arg.name], list(shape))
+                    resolved_shape = []
+                    for dim in shape:
+                        if isinstance(dim, torch.fx.Node):
+                            resolved_shape.append(env[dim.name])
+                        else:
+                            resolved_shape.append(dim)
+                    result = op_fn(env[input_arg.name], resolved_shape)
                 elif op_name == "conv2d":
                     if node.kwargs:
                         raise RefBackendError("conv2d expects positional arguments only")
