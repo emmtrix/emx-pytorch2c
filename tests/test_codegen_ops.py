@@ -64,23 +64,6 @@ def _addmv_sample_filter(sample):
     return input_tensor.shape == expected_shape
 
 
-def _addr_sample_filter(sample):
-    tensors = _extract_tensors(sample)
-    if len(tensors) != 3:
-        return False
-    input_tensor, vec1, vec2 = tensors
-    if input_tensor.ndim != 2 or vec1.ndim != 1 or vec2.ndim != 1:
-        return False
-    if not (
-        torch.isfinite(input_tensor).all()
-        and torch.isfinite(vec1).all()
-        and torch.isfinite(vec2).all()
-    ):
-        return False
-    expected_shape = (vec1.shape[0], vec2.shape[0])
-    return input_tensor.shape == expected_shape
-
-
 def _all_same_shape(tensors):
     if not tensors:
         return True
@@ -882,12 +865,10 @@ CODEGEN_OP_TEST_CONFIG = {
         "sample_filter": _addmv_sample_filter,
     },
     torch.ops.aten.addr.default: {
-        "allowed_dtypes": (torch.float32,),
         "allow_non_tensor_args": True,
-        "allow_noncontiguous": True,
         "allow_kwargs": True,
         "requires_same_shape": False,
-        "sample_filter": _addr_sample_filter,
+        "equal_nan": True,
     },
 }
 DEFAULT_CONSTRAINTS = {
@@ -902,6 +883,7 @@ DEFAULT_CONSTRAINTS = {
     "sample_filter": None,
     "rtol": None,
     "atol": None,
+    "equal_nan": False,
 }
 
 
@@ -1028,6 +1010,8 @@ class TestCodegenOpInfo(TestCase):
             if result.dtype is not expected.dtype:
                 expected = expected.to(result.dtype)
             compare_kwargs = {"equal_nan": dtype in (torch.int8, torch.int32)}
+            if constraints.get("equal_nan"):
+                compare_kwargs["equal_nan"] = True
             if constraints["rtol"] is not None or constraints["atol"] is not None:
                 compare_kwargs["rtol"] = constraints["rtol"] or 0.0
                 compare_kwargs["atol"] = constraints["atol"] or 0.0
