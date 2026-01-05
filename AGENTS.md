@@ -11,8 +11,11 @@ PYTHONPATH=src python -m c_ref_backend.build
 Run the test suite with:
 
 ```bash
-PYTHONPATH=src pytest -q
+PYTHONPATH=src pytest -p no:terminal
 ```
+
+When reporting executed tests, include the test duration in your feedback.
+Do not emit test progress output when running tests.
 
 ### Codegen reference updates
 
