@@ -58,6 +58,13 @@ _CODEGEN_DTYPES = {
 }
 
 _INTEGER_CODEGEN_DTYPES = {torch.int8, torch.int32}
+_C_TYPE_BY_DTYPE = {
+    torch.bool: "uint8_t",
+    torch.int8: "int8_t",
+    torch.int32: "int32_t",
+    torch.int64: "int64_t",
+    torch.float32: "float",
+}
 _BITWISE_OPS = {
     "bitwise_and",
     "bitwise_or",
@@ -327,7 +334,7 @@ def _input_c_type(dtype: torch.dtype, graph_dtype: _CodegenDType) -> str:
     if dtype is graph_dtype.torch_dtype:
         return graph_dtype.c_type
     if dtype is torch.bool:
-        return "uint8_t"
+        return _C_TYPE_BY_DTYPE[torch.bool]
     raise RefBackendError(
         "codegen backend supports only torch.float32, torch.int8, torch.int32, or torch.bool tensors"
     )
@@ -336,22 +343,20 @@ def _input_c_type(dtype: torch.dtype, graph_dtype: _CodegenDType) -> str:
 def _dtype_to_c_type(dtype: torch.dtype, graph_dtype: _CodegenDType) -> str:
     if dtype is graph_dtype.torch_dtype:
         return graph_dtype.c_type
-    if dtype is torch.bool:
-        return "uint8_t"
-    if dtype is torch.int8:
-        return "int8_t"
-    if dtype is torch.int32:
-        return "int32_t"
-    if dtype is torch.float32:
-        return "float"
-    if dtype is torch.int64:
-        return "int64_t"
+    c_type = _C_TYPE_BY_DTYPE.get(dtype)
+    if c_type is not None:
+        return c_type
     raise RefBackendError(
         "codegen backend supports only torch.float32, torch.int8, torch.int32, torch.int64, or torch.bool tensors"
     )
 
+
+def _is_integer_dtype(dtype: torch.dtype) -> bool:
+    return dtype in _INTEGER_CODEGEN_DTYPES
+
+
 def _format_scalar_literal(value: float, dtype: _CodegenDType) -> str:
-    if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES:
+    if _is_integer_dtype(dtype.torch_dtype):
         return str(int(value))
     if dtype.torch_dtype is torch.float32:
         return f"{float(value)}f"
@@ -1932,6 +1937,193 @@ def _parse_conv2d_args(
     )
 
 
+def _handle_concat_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> _OpNode:
+    input_nodes, concat_dim = _parse_concat_args(node)
+    input_shapes: List[Tuple[int, ...]] = []
+    for arg in input_nodes:
+        if arg not in shapes:
+            raise RefBackendError("codegen cat expects tensor inputs only")
+        input_shapes.append(shapes[arg])
+    if not input_shapes:
+        raise RefBackendError("codegen cat expects a non-empty tensor list input")
+    rank = len(input_shapes[0])
+    if rank == 0:
+        raise RefBackendError("codegen cat expects inputs with rank >= 1")
+    if concat_dim < 0:
+        concat_dim += rank
+    if concat_dim < 0 or concat_dim >= rank:
+        raise RefBackendError("codegen cat dim is out of range")
+    for shape in input_shapes:
+        if len(shape) != rank:
+            raise RefBackendError("codegen cat expects inputs with the same rank")
+        for dim, size in enumerate(shape):
+            if dim == concat_dim:
+                continue
+            if size != input_shapes[0][dim]:
+                raise RefBackendError(
+                    "codegen cat expects input shapes to match except in the concat dimension"
+                )
+    input_dtypes = [dtypes[arg] for arg in input_nodes]
+    if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
+        raise RefBackendError("codegen cat expects inputs to share the graph dtype")
+    output_shape = list(input_shapes[0])
+    output_shape[concat_dim] = sum(shape[concat_dim] for shape in input_shapes)
+    output_shape = tuple(output_shape)
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=tuple(input_nodes),
+        output_shape=output_shape,
+        inplace_input=None,
+        concat_dim=concat_dim,
+    )
+
+
+def _handle_conv2d_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> _OpNode:
+    (
+        input_arg,
+        weight_arg,
+        bias,
+        stride,
+        padding,
+        dilation,
+        transposed,
+        output_padding,
+        groups,
+    ) = _parse_conv2d_args(node)
+    if not isinstance(input_arg, torch.fx.Node) or not isinstance(
+        weight_arg, torch.fx.Node
+    ):
+        raise RefBackendError("codegen conv2d expects tensor inputs only")
+    if bias is not None or isinstance(bias, torch.fx.Node):
+        raise RefBackendError("codegen conv2d does not support bias")
+    if isinstance(stride, torch.fx.Node) or isinstance(
+        padding, torch.fx.Node
+    ) or isinstance(dilation, torch.fx.Node):
+        raise RefBackendError(
+            "codegen conv2d expects constant stride, padding, and dilation"
+        )
+    if isinstance(transposed, torch.fx.Node) or transposed:
+        raise RefBackendError("codegen conv2d does not support transposed")
+    if isinstance(output_padding, torch.fx.Node) or output_padding not in (
+        (0, 0),
+        [0, 0],
+        0,
+    ):
+        raise RefBackendError("codegen conv2d expects zero output padding")
+    if isinstance(groups, torch.fx.Node):
+        raise RefBackendError("codegen conv2d expects constant groups")
+    if dtype_info.torch_dtype is not torch.float32:
+        raise RefBackendError("codegen conv2d supports only torch.float32 tensors")
+    if input_arg not in shapes or weight_arg not in shapes:
+        raise RefBackendError("codegen conv2d expects tensor inputs only")
+    if dtypes[input_arg] is not torch.float32 or dtypes[weight_arg] is not torch.float32:
+        raise RefBackendError("codegen conv2d supports only torch.float32 tensors")
+    input_shape = shapes[input_arg]
+    weight_shape = shapes[weight_arg]
+    if len(input_shape) != 4 or len(weight_shape) != 4:
+        raise RefBackendError("codegen conv2d requires 4D input and weight tensors")
+    if not _is_contiguous(input_shape, strides[input_arg]) or not _is_contiguous(
+        weight_shape, strides[weight_arg]
+    ):
+        raise RefBackendError("codegen conv2d requires contiguous tensors")
+    stride_pair = _normalize_conv2d_param("stride", stride)
+    padding_pair = _normalize_conv2d_param("padding", padding)
+    dilation_pair = _normalize_conv2d_param("dilation", dilation)
+    if (
+        stride_pair[0] <= 0
+        or stride_pair[1] <= 0
+        or dilation_pair[0] <= 0
+        or dilation_pair[1] <= 0
+        or padding_pair[0] < 0
+        or padding_pair[1] < 0
+    ):
+        raise RefBackendError(
+            "codegen conv2d expects stride and dilation to be positive and padding to be non-negative"
+        )
+    if not isinstance(groups, int) or groups <= 0:
+        raise RefBackendError("codegen conv2d requires positive groups")
+    output_shape = _conv2d_output_shape_from_shapes(
+        input_shape,
+        weight_shape,
+        stride_pair,
+        padding_pair,
+        dilation_pair,
+        groups,
+    )
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=(input_arg, weight_arg),
+        output_shape=output_shape,
+        inplace_input=None,
+        conv2d_stride=stride_pair,
+        conv2d_padding=padding_pair,
+        conv2d_dilation=dilation_pair,
+        conv2d_groups=groups,
+    )
+
+
+def _handle_addmm_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+    inplace_input: int | None,
+) -> _OpNode:
+    input_nodes, alpha, beta = _parse_addmm_args(node)
+    input_shapes = []
+    for arg in input_nodes:
+        if not isinstance(arg, torch.fx.Node):
+            raise RefBackendError("codegen addmm expects tensor inputs only")
+        if arg not in shapes:
+            raise RefBackendError("codegen addmm expects tensor inputs only")
+        input_shapes.append(shapes[arg])
+    input_dtypes = [dtypes[arg] for arg in input_nodes]
+    if dtype_info.torch_dtype is not torch.float32:
+        raise RefBackendError("codegen addmm supports only torch.float32 tensors")
+    if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
+        raise RefBackendError("codegen addmm expects inputs to share the graph dtype")
+    output_shape = _infer_output_shape(op_spec, input_shapes)
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    if inplace_input is not None:
+        strides[node] = strides[input_nodes[inplace_input]]
+    else:
+        strides[node] = _contiguous_strides(output_shape)
+    return _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=tuple(input_nodes),
+        output_shape=output_shape,
+        inplace_input=inplace_input,
+        addmm_alpha=alpha,
+        addmm_beta=beta,
+    )
+
+
 def _analyze_generic_graph(
     gm: torch.fx.GraphModule, example_inputs: Sequence[object]
 ) -> _GenericGraph:
@@ -1982,191 +2174,29 @@ def _analyze_generic_graph(
                 op_spec = target_info.op_spec
                 inplace_input = target_info.inplace_arg_index
             if op_spec.kind == "concat":
-                input_nodes, concat_dim = _parse_concat_args(node)
-                input_shapes: List[Tuple[int, ...]] = []
-                for arg in input_nodes:
-                    if arg not in shapes:
-                        raise RefBackendError("codegen cat expects tensor inputs only")
-                    input_shapes.append(shapes[arg])
-                if not input_shapes:
-                    raise RefBackendError("codegen cat expects a non-empty tensor list input")
-                rank = len(input_shapes[0])
-                if rank == 0:
-                    raise RefBackendError("codegen cat expects inputs with rank >= 1")
-                if concat_dim < 0:
-                    concat_dim += rank
-                if concat_dim < 0 or concat_dim >= rank:
-                    raise RefBackendError("codegen cat dim is out of range")
-                for shape in input_shapes:
-                    if len(shape) != rank:
-                        raise RefBackendError("codegen cat expects inputs with the same rank")
-                    for dim, size in enumerate(shape):
-                        if dim == concat_dim:
-                            continue
-                        if size != input_shapes[0][dim]:
-                            raise RefBackendError(
-                                "codegen cat expects input shapes to match except in the concat dimension"
-                            )
-                input_dtypes = [dtypes[arg] for arg in input_nodes]
-                if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
-                    raise RefBackendError(
-                        "codegen cat expects inputs to share the graph dtype"
-                    )
-                output_shape = list(input_shapes[0])
-                output_shape[concat_dim] = sum(
-                    shape[concat_dim] for shape in input_shapes
-                )
-                output_shape = tuple(output_shape)
-                shapes[node] = output_shape
-                dtypes[node] = dtype_info.torch_dtype
-                strides[node] = _contiguous_strides(output_shape)
                 op_nodes.append(
-                    _OpNode(
-                        node=node,
-                        spec=op_spec,
-                        inputs=tuple(input_nodes),
-                        output_shape=output_shape,
-                        inplace_input=None,
-                        concat_dim=concat_dim,
+                    _handle_concat_node(
+                        node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
             if op_spec.kind == "conv2d":
-                (
-                    input_arg,
-                    weight_arg,
-                    bias,
-                    stride,
-                    padding,
-                    dilation,
-                    transposed,
-                    output_padding,
-                    groups,
-                ) = _parse_conv2d_args(node)
-                if not isinstance(input_arg, torch.fx.Node) or not isinstance(
-                    weight_arg, torch.fx.Node
-                ):
-                    raise RefBackendError("codegen conv2d expects tensor inputs only")
-                if bias is not None or isinstance(bias, torch.fx.Node):
-                    raise RefBackendError("codegen conv2d does not support bias")
-                if isinstance(stride, torch.fx.Node) or isinstance(
-                    padding, torch.fx.Node
-                ) or isinstance(dilation, torch.fx.Node):
-                    raise RefBackendError(
-                        "codegen conv2d expects constant stride, padding, and dilation"
-                    )
-                if isinstance(transposed, torch.fx.Node) or transposed:
-                    raise RefBackendError("codegen conv2d does not support transposed")
-                if isinstance(output_padding, torch.fx.Node) or output_padding not in (
-                    (0, 0),
-                    [0, 0],
-                    0,
-                ):
-                    raise RefBackendError("codegen conv2d expects zero output padding")
-                if isinstance(groups, torch.fx.Node):
-                    raise RefBackendError("codegen conv2d expects constant groups")
-                if dtype_info.torch_dtype is not torch.float32:
-                    raise RefBackendError(
-                        "codegen conv2d supports only torch.float32 tensors"
-                    )
-                if input_arg not in shapes or weight_arg not in shapes:
-                    raise RefBackendError("codegen conv2d expects tensor inputs only")
-                if (
-                    dtypes[input_arg] is not torch.float32
-                    or dtypes[weight_arg] is not torch.float32
-                ):
-                    raise RefBackendError(
-                        "codegen conv2d supports only torch.float32 tensors"
-                    )
-                input_shape = shapes[input_arg]
-                weight_shape = shapes[weight_arg]
-                if len(input_shape) != 4 or len(weight_shape) != 4:
-                    raise RefBackendError(
-                        "codegen conv2d requires 4D input and weight tensors"
-                    )
-                if not _is_contiguous(input_shape, strides[input_arg]) or not _is_contiguous(
-                    weight_shape, strides[weight_arg]
-                ):
-                    raise RefBackendError(
-                        "codegen conv2d requires contiguous tensors"
-                    )
-                stride_pair = _normalize_conv2d_param("stride", stride)
-                padding_pair = _normalize_conv2d_param("padding", padding)
-                dilation_pair = _normalize_conv2d_param("dilation", dilation)
-                if (
-                    stride_pair[0] <= 0
-                    or stride_pair[1] <= 0
-                    or dilation_pair[0] <= 0
-                    or dilation_pair[1] <= 0
-                    or padding_pair[0] < 0
-                    or padding_pair[1] < 0
-                ):
-                    raise RefBackendError(
-                        "codegen conv2d expects stride and dilation to be positive and padding to be non-negative"
-                    )
-                if not isinstance(groups, int) or groups <= 0:
-                    raise RefBackendError(
-                        "codegen conv2d requires positive groups"
-                    )
-                output_shape = _conv2d_output_shape_from_shapes(
-                    input_shape,
-                    weight_shape,
-                    stride_pair,
-                    padding_pair,
-                    dilation_pair,
-                    groups,
-                )
-                shapes[node] = output_shape
-                dtypes[node] = dtype_info.torch_dtype
-                strides[node] = _contiguous_strides(output_shape)
                 op_nodes.append(
-                    _OpNode(
-                        node=node,
-                        spec=op_spec,
-                        inputs=(input_arg, weight_arg),
-                        output_shape=output_shape,
-                        inplace_input=None,
-                        conv2d_stride=stride_pair,
-                        conv2d_padding=padding_pair,
-                        conv2d_dilation=dilation_pair,
-                        conv2d_groups=groups,
+                    _handle_conv2d_node(
+                        node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
             elif op_spec.kind == "addmm":
-                input_nodes, alpha, beta = _parse_addmm_args(node)
-                input_shapes = []
-                for arg in input_nodes:
-                    if not isinstance(arg, torch.fx.Node):
-                        raise RefBackendError("codegen addmm expects tensor inputs only")
-                    if arg not in shapes:
-                        raise RefBackendError("codegen addmm expects tensor inputs only")
-                    input_shapes.append(shapes[arg])
-                input_dtypes = [dtypes[arg] for arg in input_nodes]
-                if dtype_info.torch_dtype is not torch.float32:
-                    raise RefBackendError(
-                        "codegen addmm supports only torch.float32 tensors"
-                    )
-                if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
-                    raise RefBackendError(
-                        "codegen addmm expects inputs to share the graph dtype"
-                    )
-                output_shape = _infer_output_shape(op_spec, input_shapes)
-                shapes[node] = output_shape
-                dtypes[node] = dtype_info.torch_dtype
-                if inplace_input is not None:
-                    strides[node] = strides[input_nodes[inplace_input]]
-                else:
-                    strides[node] = _contiguous_strides(output_shape)
                 op_nodes.append(
-                    _OpNode(
-                        node=node,
-                        spec=op_spec,
-                        inputs=tuple(input_nodes),
-                        output_shape=output_shape,
-                        inplace_input=inplace_input,
-                        addmm_alpha=alpha,
-                        addmm_beta=beta,
+                    _handle_addmm_node(
+                        node,
+                        op_spec,
+                        dtype_info,
+                        shapes,
+                        strides,
+                        dtypes,
+                        inplace_input,
                     )
                 )
                 continue
