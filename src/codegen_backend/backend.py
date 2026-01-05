@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -125,35 +125,15 @@ TARGET_REGISTRY = _build_target_registry()
 class _OpNode:
     node: torch.fx.Node
     spec: _OpSpec
-    inputs: Tuple[torch.fx.Node, ...]
-    output_shape: Tuple[int, ...]
+    inputs: List[torch.fx.Node]
+    output_shape: Tuple[int, ...] | List[int]
     inplace_input: int | None = None
     reduction_dims: Tuple[int, ...] | None = None
     keepdim: bool = False
-    reduce_all: bool = False
-    std_unbiased: bool | None = None
-    softmax_dim: int | None = None
-    concat_dim: int | None = None
-    conv1d_stride: int | None = None
-    conv1d_padding: int | None = None
-    conv1d_dilation: int | None = None
-    conv1d_groups: int | None = None
-    conv1d_has_bias: bool = False
-    conv2d_stride: Tuple[int, int] | None = None
-    conv2d_padding: Tuple[int, int] | None = None
-    conv2d_dilation: Tuple[int, int] | None = None
-    conv2d_groups: int | None = None
-    conv2d_has_bias: bool = False
-    pool2d_kernel_size: Tuple[int, int] | None = None
-    pool2d_stride: Tuple[int, int] | None = None
-    pool2d_padding: Tuple[int, int] | None = None
-    pool2d_dilation: Tuple[int, int] | None = None
-    pool2d_ceil_mode: bool = False
-    pool2d_count_include_pad: bool = False
-    pool2d_divisor_override: int | None = None
-    addmm_alpha: float | None = None
-    addmm_beta: float | None = None
-    params: Dict[str, object] = field(default_factory=dict)
+    params: Dict[str, Any] = field(default_factory=dict)
+
+    def p(self, key: str, default: Any = None) -> Any:
+        return self.params.get(key, default)
 
 
 @dataclass
@@ -2001,7 +1981,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                     op_node.reduction_dims or (),
                     op_node.keepdim,
                     graph.dtype,
-                    unbiased=bool(op_node.std_unbiased),
+                    unbiased=bool(op_node.p("unbiased", True)),
                 )
             elif op_node.spec.name == "var":
                 kernel_lines = _write_var_kernel(
@@ -2014,7 +1994,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                     op_node.reduction_dims or (),
                     op_node.keepdim,
                     graph.dtype,
-                    unbiased=bool(op_node.std_unbiased),
+                    unbiased=bool(op_node.p("unbiased", True)),
                 )
             elif op_node.spec.name == "norm":
                 kernel_lines = _write_norm_kernel(
@@ -2027,7 +2007,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                     op_node.reduction_dims or (),
                     op_node.keepdim,
                     graph.dtype,
-                    p_value=float(op_node.params["norm_p"]),
+                    p_value=float(op_node.p("norm_p", 2.0)),
                 )
             else:
                 kernel_lines = _write_reduction_kernel(
@@ -2052,7 +2032,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 graph.strides[op_node.node],
                 op_node.reduction_dims or (),
                 op_node.keepdim,
-                op_node.reduce_all,
+                bool(op_node.p("reduce_all", False)),
                 graph.dtype,
             )
         elif op_node.spec.kind == "softmax":
@@ -2063,7 +2043,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 graph.shapes[input_node],
                 graph.strides[input_node],
                 graph.strides[op_node.node],
-                op_node.softmax_dim,
+                op_node.p("dim"),
                 graph.dtype,
             )
         elif op_node.spec.kind == "concat":
@@ -2076,7 +2056,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 input_strides,
                 op_node.output_shape,
                 graph.strides[op_node.node],
-                op_node.concat_dim if op_node.concat_dim is not None else 0,
+                op_node.p("dim", 0),
                 graph.dtype,
             )
         elif op_node.spec.kind == "pool2d":
@@ -2086,14 +2066,14 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 op_node.spec,
                 graph.shapes[input_node],
                 op_node.output_shape,
-                op_node.pool2d_kernel_size or (1, 1),
-                op_node.pool2d_stride or (1, 1),
-                op_node.pool2d_padding or (0, 0),
-                op_node.pool2d_dilation or (1, 1),
+                op_node.p("kernel_size", (1, 1)),
+                op_node.p("stride", (1, 1)),
+                op_node.p("padding", (0, 0)),
+                op_node.p("dilation", (1, 1)),
                 graph.dtype,
-                op_node.pool2d_ceil_mode,
-                op_node.pool2d_count_include_pad,
-                op_node.pool2d_divisor_override,
+                bool(op_node.p("ceil_mode", False)),
+                bool(op_node.p("count_include_pad", False)),
+                op_node.p("divisor_override"),
             )
         elif op_node.spec.kind == "conv1d":
             input_node, weight_node, *bias_nodes = op_node.inputs
@@ -2103,12 +2083,12 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 graph.shapes[input_node],
                 graph.shapes[weight_node],
                 op_node.output_shape,
-                op_node.conv1d_stride or 1,
-                op_node.conv1d_padding or 0,
-                op_node.conv1d_dilation or 1,
-                op_node.conv1d_groups or 1,
+                op_node.p("stride", 1),
+                op_node.p("padding", 0),
+                op_node.p("dilation", 1),
+                op_node.p("groups", 1),
                 graph.dtype,
-                op_node.conv1d_has_bias,
+                bool(op_node.p("has_bias", False)),
             )
         elif op_node.spec.kind == "conv2d":
             input_node, weight_node, *bias_nodes = op_node.inputs
@@ -2118,12 +2098,12 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 graph.shapes[input_node],
                 graph.shapes[weight_node],
                 op_node.output_shape,
-                op_node.conv2d_stride or (1, 1),
-                op_node.conv2d_padding or (0, 0),
-                op_node.conv2d_dilation or (1, 1),
-                op_node.conv2d_groups or 1,
+                op_node.p("stride", (1, 1)),
+                op_node.p("padding", (0, 0)),
+                op_node.p("dilation", (1, 1)),
+                op_node.p("groups", 1),
                 graph.dtype,
-                op_node.conv2d_has_bias,
+                bool(op_node.p("has_bias", False)),
             )
         elif op_node.spec.kind == "addmm":
             input_node, mat1_node, mat2_node = op_node.inputs
@@ -2138,8 +2118,8 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 graph.strides[mat2_node],
                 graph.strides[op_node.node],
                 graph.dtype,
-                alpha=op_node.addmm_alpha if op_node.addmm_alpha is not None else 1.0,
-                beta=op_node.addmm_beta if op_node.addmm_beta is not None else 1.0,
+                alpha=float(op_node.p("alpha", 1.0)),
+                beta=float(op_node.p("beta", 1.0)),
             )
         elif op_node.spec.kind == "addbmm":
             input_node, batch1_node, batch2_node = op_node.inputs
@@ -2154,8 +2134,8 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 graph.strides[batch2_node],
                 graph.strides[op_node.node],
                 graph.dtype,
-                alpha=op_node.addmm_alpha if op_node.addmm_alpha is not None else 1.0,
-                beta=op_node.addmm_beta if op_node.addmm_beta is not None else 1.0,
+                alpha=float(op_node.p("alpha", 1.0)),
+                beta=float(op_node.p("beta", 1.0)),
             )
         elif op_node.spec.kind == "addmv":
             input_node, mat_node, vec_node = op_node.inputs
@@ -2170,8 +2150,8 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 graph.strides[vec_node],
                 graph.strides[op_node.node],
                 graph.dtype,
-                alpha=op_node.addmm_alpha if op_node.addmm_alpha is not None else 1.0,
-                beta=op_node.addmm_beta if op_node.addmm_beta is not None else 1.0,
+                alpha=float(op_node.p("alpha", 1.0)),
+                beta=float(op_node.p("beta", 1.0)),
             )
         elif op_node.spec.kind == "addr":
             input_node, vec1_node, vec2_node = op_node.inputs
@@ -2186,8 +2166,8 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 graph.strides[vec2_node],
                 graph.strides[op_node.node],
                 graph.dtype,
-                alpha=op_node.addmm_alpha if op_node.addmm_alpha is not None else 1.0,
-                beta=op_node.addmm_beta if op_node.addmm_beta is not None else 1.0,
+                alpha=float(op_node.p("alpha", 1.0)),
+                beta=float(op_node.p("beta", 1.0)),
             )
         else:
             lhs, rhs = op_node.inputs
@@ -3333,10 +3313,10 @@ def _handle_concat_node(
     return _OpNode(
         node=node,
         spec=op_spec,
-        inputs=tuple(input_nodes),
+        inputs=list(input_nodes),
         output_shape=output_shape,
         inplace_input=None,
-        concat_dim=concat_dim,
+        params={"dim": concat_dim},
     )
 
 
@@ -3428,14 +3408,16 @@ def _handle_conv1d_node(
     return _OpNode(
         node=node,
         spec=op_spec,
-        inputs=inputs,
+        inputs=list(inputs),
         output_shape=output_shape,
         inplace_input=None,
-        conv1d_stride=stride_value,
-        conv1d_padding=padding_value,
-        conv1d_dilation=dilation_value,
-        conv1d_groups=groups,
-        conv1d_has_bias=bias_node is not None,
+        params={
+            "stride": stride_value,
+            "padding": padding_value,
+            "dilation": dilation_value,
+            "groups": groups,
+            "has_bias": bias_node is not None,
+        },
     )
 
 
@@ -3538,14 +3520,16 @@ def _handle_conv2d_node(
     return _OpNode(
         node=node,
         spec=op_spec,
-        inputs=inputs,
+        inputs=list(inputs),
         output_shape=output_shape,
         inplace_input=None,
-        conv2d_stride=stride_pair,
-        conv2d_padding=padding_pair,
-        conv2d_dilation=dilation_pair,
-        conv2d_groups=groups,
-        conv2d_has_bias=bias_node is not None,
+        params={
+            "stride": stride_pair,
+            "padding": padding_pair,
+            "dilation": dilation_pair,
+            "groups": groups,
+            "has_bias": bias_node is not None,
+        },
     )
 
 
@@ -3666,16 +3650,18 @@ def _handle_pool2d_node(
     return _OpNode(
         node=node,
         spec=op_spec,
-        inputs=(input_arg,),
+        inputs=[input_arg],
         output_shape=output_shape,
         inplace_input=None,
-        pool2d_kernel_size=kernel_pair,
-        pool2d_stride=stride_pair,
-        pool2d_padding=padding_pair,
-        pool2d_dilation=dilation_pair,
-        pool2d_ceil_mode=bool(ceil_mode),
-        pool2d_count_include_pad=count_include_pad,
-        pool2d_divisor_override=divisor_override,
+        params={
+            "kernel_size": kernel_pair,
+            "stride": stride_pair,
+            "padding": padding_pair,
+            "dilation": dilation_pair,
+            "ceil_mode": bool(ceil_mode),
+            "count_include_pad": count_include_pad,
+            "divisor_override": divisor_override,
+        },
     )
 
 
@@ -3716,11 +3702,10 @@ def _handle_addmm_like_node(
     return _OpNode(
         node=node,
         spec=op_spec,
-        inputs=tuple(input_nodes),
+        inputs=list(input_nodes),
         output_shape=output_shape,
         inplace_input=inplace_input,
-        addmm_alpha=alpha,
-        addmm_beta=beta,
+        params={"alpha": alpha, "beta": beta},
     )
 
 
@@ -3757,10 +3742,10 @@ def _handle_softmax_node(
     return _OpNode(
         node=node,
         spec=op_spec,
-        inputs=(input_arg,),
+        inputs=[input_arg],
         output_shape=output_shape,
         inplace_input=None,
-        softmax_dim=dim,
+        params={"dim": dim},
     )
 
 
@@ -3870,7 +3855,6 @@ def _analyze_generic_graph(
             reduction_dims: Tuple[int, ...] | None = None
             keepdim = False
             reduce_all = False
-            std_unbiased = None
             param_values: Dict[str, object] = {}
             if op_spec.kind in {"reduction", "arg_reduction"}:
                 if len(node.args) < 1:
@@ -3973,8 +3957,10 @@ def _analyze_generic_graph(
                         reduction_dims,
                         keepdim,
                         reduce_all,
-                        std_unbiased,
+                        unbiased,
                     ) = _parse_reduction_args(op_spec.name, node, input_shapes[0])
+                    if unbiased is not None:
+                        param_values["unbiased"] = unbiased
                     if (
                         op_spec.name == "var"
                         and dtype_info.torch_dtype is not torch.float32
@@ -4013,6 +3999,8 @@ def _analyze_generic_graph(
                 )
             else:
                 output_shape = _infer_output_shape(op_spec, input_shapes)
+            if op_spec.kind in {"reduction", "arg_reduction"}:
+                param_values["reduce_all"] = reduce_all
             shapes[node] = output_shape
             if op_spec.kind == "arg_reduction":
                 dtypes[node] = torch.int64
@@ -4026,13 +4014,11 @@ def _analyze_generic_graph(
                 _OpNode(
                     node=node,
                     spec=op_spec,
-                    inputs=tuple(input_nodes),
+                    inputs=list(input_nodes),
                     output_shape=output_shape,
                     inplace_input=inplace_input,
                     reduction_dims=reduction_dims,
                     keepdim=keepdim,
-                    reduce_all=reduce_all,
-                    std_unbiased=std_unbiased,
                     params=param_values,
                 )
             )
