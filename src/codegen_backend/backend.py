@@ -360,7 +360,9 @@ def _format_scalar_literal(value: float, dtype: _CodegenDType) -> str:
         return str(int(value))
     if dtype.torch_dtype is torch.float32:
         return f"{float(value)}f"
-    raise RefBackendError("codegen addmm supports only floating point tensors")
+    raise RefBackendError(
+        "codegen addmm-like ops support only floating point tensors"
+    )
 
 
 def emit_signature(
@@ -773,6 +775,236 @@ def _write_addmm_kernel(
             mat2_strides,
             mat2_is_contiguous,
             sizes=mat2_shape,
+            c_type=dtype.c_type,
+        ),
+        out_access=_emit_strided_access(
+            "out",
+            ("i", "j"),
+            output_strides,
+            output_is_contiguous,
+            sizes=input_shape,
+            c_type=dtype.c_type,
+        ),
+        alpha=_format_scalar_literal(alpha, dtype),
+        beta=_format_scalar_literal(beta, dtype),
+    )
+    return rendered.strip().splitlines()
+
+
+def _write_addbmm_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    input_shape: Sequence[int],
+    batch1_shape: Sequence[int],
+    batch2_shape: Sequence[int],
+    input_strides: Sequence[int],
+    batch1_strides: Sequence[int],
+    batch2_strides: Sequence[int],
+    output_strides: Sequence[int],
+    dtype: _CodegenDType,
+    *,
+    alpha: float,
+    beta: float,
+) -> List[str]:
+    addbmm_template = _get_template_env().get_template("addbmm_kernel.c.j2")
+    input_is_contiguous = _is_contiguous(input_shape, input_strides)
+    batch1_is_contiguous = _is_contiguous(batch1_shape, batch1_strides)
+    batch2_is_contiguous = _is_contiguous(batch2_shape, batch2_strides)
+    output_is_contiguous = _is_contiguous(input_shape, output_strides)
+    acc_type = dtype.c_type
+    acc_init = "0" if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES else "0.0f"
+    batch, m, k = batch1_shape
+    _, _, n = batch2_shape
+    input_suffix = _format_array_suffix(input_shape)
+    batch1_suffix = _format_array_suffix(batch1_shape)
+    batch2_suffix = _format_array_suffix(batch2_shape)
+    out_suffix = _format_array_suffix(input_shape)
+    rendered = addbmm_template.render(
+        signature=(
+            f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+            f"const {dtype.c_type} input{input_suffix}, "
+            f"const {dtype.c_type} batch1{batch1_suffix}, "
+            f"const {dtype.c_type} batch2{batch2_suffix}, "
+            f"{dtype.c_type} out{out_suffix}) {{"
+        ),
+        batch=batch,
+        m=m,
+        n=n,
+        k=k,
+        acc_type=acc_type,
+        acc_init=acc_init,
+        input_access=_emit_strided_access(
+            "input",
+            ("i", "j"),
+            input_strides,
+            input_is_contiguous,
+            sizes=input_shape,
+            c_type=dtype.c_type,
+        ),
+        batch1_access=_emit_strided_access(
+            "batch1",
+            ("b_idx", "i", "t"),
+            batch1_strides,
+            batch1_is_contiguous,
+            sizes=batch1_shape,
+            c_type=dtype.c_type,
+        ),
+        batch2_access=_emit_strided_access(
+            "batch2",
+            ("b_idx", "t", "j"),
+            batch2_strides,
+            batch2_is_contiguous,
+            sizes=batch2_shape,
+            c_type=dtype.c_type,
+        ),
+        out_access=_emit_strided_access(
+            "out",
+            ("i", "j"),
+            output_strides,
+            output_is_contiguous,
+            sizes=input_shape,
+            c_type=dtype.c_type,
+        ),
+        alpha=_format_scalar_literal(alpha, dtype),
+        beta=_format_scalar_literal(beta, dtype),
+    )
+    return rendered.strip().splitlines()
+
+
+def _write_addmv_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    input_shape: Sequence[int],
+    mat_shape: Sequence[int],
+    vec_shape: Sequence[int],
+    input_strides: Sequence[int],
+    mat_strides: Sequence[int],
+    vec_strides: Sequence[int],
+    output_strides: Sequence[int],
+    dtype: _CodegenDType,
+    *,
+    alpha: float,
+    beta: float,
+) -> List[str]:
+    addmv_template = _get_template_env().get_template("addmv_kernel.c.j2")
+    input_is_contiguous = _is_contiguous(input_shape, input_strides)
+    mat_is_contiguous = _is_contiguous(mat_shape, mat_strides)
+    vec_is_contiguous = _is_contiguous(vec_shape, vec_strides)
+    output_is_contiguous = _is_contiguous(input_shape, output_strides)
+    acc_type = dtype.c_type
+    acc_init = "0" if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES else "0.0f"
+    m, n = mat_shape
+    input_suffix = _format_array_suffix(input_shape)
+    mat_suffix = _format_array_suffix(mat_shape)
+    vec_suffix = _format_array_suffix(vec_shape)
+    out_suffix = _format_array_suffix(input_shape)
+    rendered = addmv_template.render(
+        signature=(
+            f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+            f"const {dtype.c_type} input{input_suffix}, "
+            f"const {dtype.c_type} mat{mat_suffix}, "
+            f"const {dtype.c_type} vec{vec_suffix}, "
+            f"{dtype.c_type} out{out_suffix}) {{"
+        ),
+        m=m,
+        n=n,
+        acc_type=acc_type,
+        acc_init=acc_init,
+        input_access=_emit_strided_access(
+            "input",
+            ("i",),
+            input_strides,
+            input_is_contiguous,
+            sizes=input_shape,
+            c_type=dtype.c_type,
+        ),
+        mat_access=_emit_strided_access(
+            "mat",
+            ("i", "t"),
+            mat_strides,
+            mat_is_contiguous,
+            sizes=mat_shape,
+            c_type=dtype.c_type,
+        ),
+        vec_access=_emit_strided_access(
+            "vec",
+            ("t",),
+            vec_strides,
+            vec_is_contiguous,
+            sizes=vec_shape,
+            c_type=dtype.c_type,
+        ),
+        out_access=_emit_strided_access(
+            "out",
+            ("i",),
+            output_strides,
+            output_is_contiguous,
+            sizes=input_shape,
+            c_type=dtype.c_type,
+        ),
+        alpha=_format_scalar_literal(alpha, dtype),
+        beta=_format_scalar_literal(beta, dtype),
+    )
+    return rendered.strip().splitlines()
+
+
+def _write_addr_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    input_shape: Sequence[int],
+    vec1_shape: Sequence[int],
+    vec2_shape: Sequence[int],
+    input_strides: Sequence[int],
+    vec1_strides: Sequence[int],
+    vec2_strides: Sequence[int],
+    output_strides: Sequence[int],
+    dtype: _CodegenDType,
+    *,
+    alpha: float,
+    beta: float,
+) -> List[str]:
+    addr_template = _get_template_env().get_template("addr_kernel.c.j2")
+    input_is_contiguous = _is_contiguous(input_shape, input_strides)
+    vec1_is_contiguous = _is_contiguous(vec1_shape, vec1_strides)
+    vec2_is_contiguous = _is_contiguous(vec2_shape, vec2_strides)
+    output_is_contiguous = _is_contiguous(input_shape, output_strides)
+    m, n = input_shape
+    input_suffix = _format_array_suffix(input_shape)
+    vec1_suffix = _format_array_suffix(vec1_shape)
+    vec2_suffix = _format_array_suffix(vec2_shape)
+    out_suffix = _format_array_suffix(input_shape)
+    rendered = addr_template.render(
+        signature=(
+            f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+            f"const {dtype.c_type} input{input_suffix}, "
+            f"const {dtype.c_type} vec1{vec1_suffix}, "
+            f"const {dtype.c_type} vec2{vec2_suffix}, "
+            f"{dtype.c_type} out{out_suffix}) {{"
+        ),
+        m=m,
+        n=n,
+        input_access=_emit_strided_access(
+            "input",
+            ("i", "j"),
+            input_strides,
+            input_is_contiguous,
+            sizes=input_shape,
+            c_type=dtype.c_type,
+        ),
+        vec1_access=_emit_strided_access(
+            "vec1",
+            ("i",),
+            vec1_strides,
+            vec1_is_contiguous,
+            sizes=vec1_shape,
+            c_type=dtype.c_type,
+        ),
+        vec2_access=_emit_strided_access(
+            "vec2",
+            ("j",),
+            vec2_strides,
+            vec2_is_contiguous,
+            sizes=vec2_shape,
             c_type=dtype.c_type,
         ),
         out_access=_emit_strided_access(
@@ -1408,6 +1640,54 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 alpha=op_node.addmm_alpha if op_node.addmm_alpha is not None else 1.0,
                 beta=op_node.addmm_beta if op_node.addmm_beta is not None else 1.0,
             )
+        elif op_node.spec.kind == "addbmm":
+            input_node, batch1_node, batch2_node = op_node.inputs
+            kernel_lines = _write_addbmm_kernel(
+                index,
+                op_node.spec,
+                graph.shapes[input_node],
+                graph.shapes[batch1_node],
+                graph.shapes[batch2_node],
+                graph.strides[input_node],
+                graph.strides[batch1_node],
+                graph.strides[batch2_node],
+                graph.strides[op_node.node],
+                graph.dtype,
+                alpha=op_node.addmm_alpha if op_node.addmm_alpha is not None else 1.0,
+                beta=op_node.addmm_beta if op_node.addmm_beta is not None else 1.0,
+            )
+        elif op_node.spec.kind == "addmv":
+            input_node, mat_node, vec_node = op_node.inputs
+            kernel_lines = _write_addmv_kernel(
+                index,
+                op_node.spec,
+                graph.shapes[input_node],
+                graph.shapes[mat_node],
+                graph.shapes[vec_node],
+                graph.strides[input_node],
+                graph.strides[mat_node],
+                graph.strides[vec_node],
+                graph.strides[op_node.node],
+                graph.dtype,
+                alpha=op_node.addmm_alpha if op_node.addmm_alpha is not None else 1.0,
+                beta=op_node.addmm_beta if op_node.addmm_beta is not None else 1.0,
+            )
+        elif op_node.spec.kind == "addr":
+            input_node, vec1_node, vec2_node = op_node.inputs
+            kernel_lines = _write_addr_kernel(
+                index,
+                op_node.spec,
+                graph.shapes[input_node],
+                graph.shapes[vec1_node],
+                graph.shapes[vec2_node],
+                graph.strides[input_node],
+                graph.strides[vec1_node],
+                graph.strides[vec2_node],
+                graph.strides[op_node.node],
+                graph.dtype,
+                alpha=op_node.addmm_alpha if op_node.addmm_alpha is not None else 1.0,
+                beta=op_node.addmm_beta if op_node.addmm_beta is not None else 1.0,
+            )
         else:
             lhs, rhs = op_node.inputs
             lhs_shape = graph.shapes[lhs]
@@ -1561,6 +1841,48 @@ def _infer_output_shape(
         if input_shape != expected_shape:
             raise RefBackendError(
                 "codegen addmm expects input shape to match matmul output"
+            )
+        return expected_shape
+    if op_spec.kind == "addbmm":
+        input_shape, batch1_shape, batch2_shape = input_shapes
+        if (
+            len(input_shape) != 2
+            or len(batch1_shape) != 3
+            or len(batch2_shape) != 3
+        ):
+            raise RefBackendError("codegen addbmm expects 2D input and 3D batches")
+        if batch1_shape[0] != batch2_shape[0]:
+            raise RefBackendError("codegen addbmm requires batch dimensions to match")
+        if batch1_shape[2] != batch2_shape[1]:
+            raise RefBackendError("codegen addbmm requires inner dimensions to match")
+        expected_shape = (batch1_shape[1], batch2_shape[2])
+        if input_shape != expected_shape:
+            raise RefBackendError(
+                "codegen addbmm expects input shape to match bmm output"
+            )
+        return expected_shape
+    if op_spec.kind == "addmv":
+        input_shape, mat_shape, vec_shape = input_shapes
+        if len(input_shape) != 1 or len(mat_shape) != 2 or len(vec_shape) != 1:
+            raise RefBackendError(
+                "codegen addmv expects 1D input and 2D matrix/1D vector"
+            )
+        if mat_shape[1] != vec_shape[0]:
+            raise RefBackendError("codegen addmv requires inner dimensions to match")
+        expected_shape = (mat_shape[0],)
+        if input_shape != expected_shape:
+            raise RefBackendError(
+                "codegen addmv expects input shape to match mat-vec output"
+            )
+        return expected_shape
+    if op_spec.kind == "addr":
+        input_shape, vec1_shape, vec2_shape = input_shapes
+        if len(input_shape) != 2 or len(vec1_shape) != 1 or len(vec2_shape) != 1:
+            raise RefBackendError("codegen addr expects 2D input and 1D vectors")
+        expected_shape = (vec1_shape[0], vec2_shape[0])
+        if input_shape != expected_shape:
+            raise RefBackendError(
+                "codegen addr expects input shape to match outer product output"
             )
         return expected_shape
     a_shape, b_shape = input_shapes
@@ -1767,44 +2089,46 @@ def _parse_argminmax_args(
     if dim_value < 0 or dim_value >= len(input_shape):
         raise RefBackendError(f"codegen {op_name} dim is out of range")
     return (dim_value,), keepdim, False
-def _parse_addmm_scalar(name: str, value: object | None) -> float:
+def _parse_addmm_like_scalar(
+    op_name: str, name: str, value: object | None
+) -> float:
     if value is None:
         return 1.0
     if isinstance(value, torch.fx.Node):
-        raise RefBackendError(f"codegen addmm expects {name} to be a number")
+        raise RefBackendError(f"codegen {op_name} expects {name} to be a number")
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise RefBackendError(f"codegen addmm expects {name} to be a number")
+        raise RefBackendError(f"codegen {op_name} expects {name} to be a number")
     return float(value)
 
 
-def _parse_addmm_args(
-    node: torch.fx.Node,
+def _parse_addmm_like_args(
+    op_name: str, node: torch.fx.Node
 ) -> Tuple[Sequence[torch.fx.Node], float, float]:
     if len(node.args) < 3:
-        raise RefBackendError("codegen addmm expects at least three inputs")
+        raise RefBackendError(f"codegen {op_name} expects at least three inputs")
     if len(node.args) > 5:
-        raise RefBackendError("codegen addmm expects at most five inputs")
+        raise RefBackendError(f"codegen {op_name} expects at most five inputs")
     input_node, mat1_node, mat2_node = node.args[:3]
     beta = node.args[3] if len(node.args) > 3 else None
     alpha = node.args[4] if len(node.args) > 4 else None
     if node.kwargs:
         if "beta" in node.kwargs:
             if beta is not None:
-                raise _error_kwarg_specified_once("addmm", "beta")
+                raise _error_kwarg_specified_once(op_name, "beta")
             beta = node.kwargs["beta"]
         if "alpha" in node.kwargs:
             if alpha is not None:
-                raise _error_kwarg_specified_once("addmm", "alpha")
+                raise _error_kwarg_specified_once(op_name, "alpha")
             alpha = node.kwargs["alpha"]
         extra = set(node.kwargs) - {"beta", "alpha"}
         if extra:
             raise RefBackendError(
-                f"codegen addmm got unexpected kwargs: {sorted(extra)}"
+                f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
             )
     return (
         (input_node, mat1_node, mat2_node),
-        _parse_addmm_scalar("alpha", alpha),
-        _parse_addmm_scalar("beta", beta),
+        _parse_addmm_like_scalar(op_name, "alpha", alpha),
+        _parse_addmm_like_scalar(op_name, "beta", beta),
     )
 
 
@@ -2082,7 +2406,7 @@ def _handle_conv2d_node(
     )
 
 
-def _handle_addmm_node(
+def _handle_addmm_like_node(
     node: torch.fx.Node,
     op_spec: _OpSpec,
     dtype_info: _CodegenDType,
@@ -2091,19 +2415,24 @@ def _handle_addmm_node(
     dtypes: Dict[torch.fx.Node, torch.dtype],
     inplace_input: int | None,
 ) -> _OpNode:
-    input_nodes, alpha, beta = _parse_addmm_args(node)
+    op_name = op_spec.name
+    input_nodes, alpha, beta = _parse_addmm_like_args(op_name, node)
     input_shapes = []
     for arg in input_nodes:
         if not isinstance(arg, torch.fx.Node):
-            raise _error_expected_tensor("addmm")
+            raise _error_expected_tensor(op_name)
         if arg not in shapes:
-            raise _error_expected_tensor("addmm")
+            raise _error_expected_tensor(op_name)
         input_shapes.append(shapes[arg])
     input_dtypes = [dtypes[arg] for arg in input_nodes]
     if dtype_info.torch_dtype is not torch.float32:
-        raise RefBackendError("codegen addmm supports only torch.float32 tensors")
+        raise RefBackendError(
+            f"codegen {op_name} supports only torch.float32 tensors"
+        )
     if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
-        raise RefBackendError("codegen addmm expects inputs to share the graph dtype")
+        raise RefBackendError(
+            f"codegen {op_name} expects inputs to share the graph dtype"
+        )
     output_shape = _infer_output_shape(op_spec, input_shapes)
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
@@ -2185,9 +2514,9 @@ def _analyze_generic_graph(
                     )
                 )
                 continue
-            elif op_spec.kind == "addmm":
+            elif op_spec.kind in {"addmm", "addbmm", "addmv", "addr"}:
                 op_nodes.append(
-                    _handle_addmm_node(
+                    _handle_addmm_like_node(
                         node,
                         op_spec,
                         dtype_info,
