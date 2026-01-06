@@ -126,7 +126,6 @@ def _ops_from_codegen_tests(path: Path) -> Set[str]:
                 if isinstance(target, ast.Name) and target.id in {
                     "CODEGEN_ATEN_OPS",
                     "INPLACE_ATEN_OPS",
-                    "CODEGEN_EXTRA_ATEN_OPS",
                 }:
                     if isinstance(node.value, ast.List):
                         for elt in node.value.elts:

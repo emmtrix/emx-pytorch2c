@@ -1,5 +1,7 @@
 import copy
 import operator
+from pathlib import Path
+import sys
 
 import pytest
 import torch
@@ -741,8 +743,6 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.xlogy.Tensor,
     torch.ops.aten.where.self,
     torch.ops.aten.where.Scalar,
-]
-CODEGEN_EXTRA_ATEN_OPS = [
     torch.ops.aten._log_softmax.default,
     torch.ops.aten.alias.default,
     torch.ops.aten.col2im.default,
@@ -761,9 +761,11 @@ CODEGEN_EXTRA_ATEN_OPS = [
     torch.ops.aten._native_batch_norm_legit_no_training.default,
     torch.ops.aten._pdist_forward.default,
 ]
+OPTIONAL_DEFAULT_ATEN_OPS: list[torch._ops.OpOverload] = []
 aten_cbrt = getattr(torch.ops.aten, "cbrt", None)
 if aten_cbrt is not None:
     CODEGEN_ATEN_OPS.append(aten_cbrt.default)
+    OPTIONAL_DEFAULT_ATEN_OPS.append(aten_cbrt.default)
 INPLACE_ATEN_OPS = [
     torch.ops.aten.add_.Tensor,
     torch.ops.aten.abs_.default,
@@ -852,18 +854,30 @@ INPLACE_ATEN_OPS = [
     torch.ops.aten.trunc_.default,
     torch.ops.aten.xlogy_.Tensor,
 ]
+OPTIONAL_DEFAULT_INPLACE_OPS: list[torch._ops.OpOverload] = []
 aten_cbrt_inplace = getattr(torch.ops.aten, "cbrt_", None)
 if aten_cbrt_inplace is not None:
     INPLACE_ATEN_OPS.append(aten_cbrt_inplace.default)
+    OPTIONAL_DEFAULT_INPLACE_OPS.append(aten_cbrt_inplace.default)
 aten_gelu_inplace = getattr(torch.ops.aten, "gelu_", None)
 if aten_gelu_inplace is not None:
     INPLACE_ATEN_OPS.append(aten_gelu_inplace.default)
+    OPTIONAL_DEFAULT_INPLACE_OPS.append(aten_gelu_inplace.default)
 aten_elu_inplace = getattr(torch.ops.aten, "elu_", None)
 if aten_elu_inplace is not None:
     INPLACE_ATEN_OPS.append(aten_elu_inplace.default)
+    OPTIONAL_DEFAULT_INPLACE_OPS.append(aten_elu_inplace.default)
 aten_leaky_relu_inplace = getattr(torch.ops.aten, "leaky_relu_", None)
 if aten_leaky_relu_inplace is not None:
     INPLACE_ATEN_OPS.append(aten_leaky_relu_inplace.default)
+    OPTIONAL_DEFAULT_INPLACE_OPS.append(aten_leaky_relu_inplace.default)
+OPTIONAL_DEFAULT_OP_ALIASES = {
+    "cbrt",
+    "cbrt_",
+    "elu_",
+    "gelu_",
+    "leaky_relu_",
+}
 
 
 def _lookup_opinfo(aten_name, variant_test_name):
@@ -949,6 +963,12 @@ CODEGEN_OPINFO_OVERRIDES = {
         name="aten.convolution",
         aten_name="convolution",
     ),
+    torch.ops.aten.as_strided.default: _lookup_opinfo("as_strided", ""),
+    torch.ops.aten.prod.dim_int: _clone_opinfo(
+        _lookup_opinfo("prod", ""),
+        name="prod_dim_int",
+        aten_name="prod",
+    ),
 }
 
 
@@ -972,6 +992,16 @@ def _find_opinfo_for_overload(aten_overload):
     return candidates[0]
 
 
+def _aten_overload_name(aten_overload: torch._ops.OpOverload) -> str:
+    base_name = aten_overload._schema.name.split("::")[-1]
+    overload = aten_overload._schema.overload_name or "default"
+    return f"{base_name}.{overload}"
+
+
+def _aten_overload_names(overloads: list[torch._ops.OpOverload]) -> set[str]:
+    return {_aten_overload_name(aten_overload) for aten_overload in overloads}
+
+
 ALIASED_CODEGEN_OPS = {
     torch.ops.aten.absolute.default,
     torch.ops.aten.arccos.default,
@@ -984,12 +1014,34 @@ ALIASED_CODEGEN_OPS = {
     torch.ops.aten.mean.dim,
     torch.ops.aten.sum.dim_IntList,
 }
-CODEGEN_OPS_UNDER_TEST = [
-    (aten_overload, _find_opinfo_for_overload(aten_overload))
-    for aten_overload in CODEGEN_ATEN_OPS
-    if aten_overload not in ALIASED_CODEGEN_OPS
-]
+CODEGEN_OPS_WITHOUT_OPINFO: list[torch._ops.OpOverload] = []
+CODEGEN_OPS_UNDER_TEST = []
+for aten_overload in CODEGEN_ATEN_OPS:
+    if aten_overload in ALIASED_CODEGEN_OPS:
+        continue
+    try:
+        opinfo = _find_opinfo_for_overload(aten_overload)
+    except RuntimeError:
+        CODEGEN_OPS_WITHOUT_OPINFO.append(aten_overload)
+        continue
+    CODEGEN_OPS_UNDER_TEST.append((aten_overload, opinfo))
 CODEGEN_OPINFO_LIST = [opinfo for _, opinfo in CODEGEN_OPS_UNDER_TEST]
+CODEGEN_SPECIAL_TEST_OPS = [
+    torch.ops.aten._log_softmax.default,
+    torch.ops.aten.alias.default,
+    torch.ops.aten.col2im.default,
+    torch.ops.aten.copy.default,
+    torch.ops.aten.div.Tensor_mode,
+    torch.ops.aten.div.Scalar_mode,
+    torch.ops.aten.squeeze.dim,
+    torch.ops.aten.squeeze.dims,
+    torch.ops.aten._softmax.default,
+    torch.ops.aten._to_copy.default,
+    torch.ops.aten.adaptive_avg_pool1d.default,
+    torch.ops.aten._adaptive_avg_pool2d.default,
+    torch.ops.aten._native_batch_norm_legit_no_training.default,
+    torch.ops.aten._pdist_forward.default,
+]
 CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.embedding.default: {
         "allowed_dtypes": (torch.float32,),
@@ -1164,6 +1216,33 @@ DEFAULT_CONSTRAINTS = {
     "atol": None,
     "equal_nan": False,
 }
+
+
+class TestCodegenOpLists(TestCase):
+    def test_codegen_supported_ops_come_from_tested_lists(self):
+        assert "CODEGEN_EXTRA_ATEN_OPS" not in globals()
+
+        repo_root = Path(__file__).resolve().parents[1]
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from scripts import list_aten_core_ops
+
+        codegen_ops = list_aten_core_ops._ops_from_codegen_tests(Path(__file__))
+        expected_names = _aten_overload_names(CODEGEN_ATEN_OPS + INPLACE_ATEN_OPS)
+        optional_default_names = _aten_overload_names(
+            OPTIONAL_DEFAULT_ATEN_OPS + OPTIONAL_DEFAULT_INPLACE_OPS
+        )
+        for name in optional_default_names:
+            expected_names.discard(name)
+            expected_names.add(name.split(".", 1)[0])
+        expected_names.update(OPTIONAL_DEFAULT_OP_ALIASES)
+        expected_ops = list_aten_core_ops._expand_op_names(expected_names)
+        assert codegen_ops == expected_ops
+
+    def test_codegen_missing_opinfo_ops_have_tests(self):
+        missing_names = _aten_overload_names(CODEGEN_OPS_WITHOUT_OPINFO)
+        expected_names = _aten_overload_names(CODEGEN_SPECIAL_TEST_OPS)
+        assert missing_names == expected_names
 
 
 def _constraints_for_codegen(aten_overload):
@@ -1402,6 +1481,59 @@ class TestCodegenAliasedOps(TestCase):
 
 
 class TestCodegenAdditionalOps(TestCase):
+    def test_codegen__log_softmax_matches_eager(self):
+        aten_overload = torch.ops.aten._log_softmax.default
+        compiled = _compile_codegen_op(aten_overload)
+        inputs = (torch.rand(2, 3, dtype=torch.float32), 1, False)
+        expected = aten_overload(*inputs)
+        result = compiled(*inputs)
+        torch.testing.assert_close(result, expected)
+
+    def test_codegen_alias_matches_eager(self):
+        aten_overload = torch.ops.aten.alias.default
+        compiled = _compile_codegen_op(aten_overload)
+        inputs = (torch.rand(2, 3, dtype=torch.float32),)
+        expected = aten_overload(*inputs)
+        result = compiled(*inputs)
+        torch.testing.assert_close(result, expected)
+
+    def test_codegen_copy_matches_eager(self):
+        aten_overload = torch.ops.aten.copy.default
+        compiled = _compile_codegen_op(aten_overload)
+        destination = torch.zeros(2, 3, dtype=torch.float32)
+        source = torch.rand(2, 3, dtype=torch.float32)
+        expected = aten_overload(destination.clone(), source)
+        result = compiled(destination.clone(), source)
+        torch.testing.assert_close(result, expected)
+
+    def test_codegen_div_rounding_modes_match_eager(self):
+        test_cases = [
+            (torch.ops.aten.div.Tensor_mode, (torch.randn(2, 3), torch.randn(2, 3))),
+            (torch.ops.aten.div.Scalar_mode, (torch.randn(2, 3), 2.5)),
+        ]
+        for aten_overload, inputs in test_cases:
+            compiled = _compile_codegen_op(aten_overload)
+            for rounding_mode in ("trunc", "floor"):
+                expected = aten_overload(*inputs, rounding_mode=rounding_mode)
+                result = compiled(*inputs, rounding_mode=rounding_mode)
+                torch.testing.assert_close(result, expected)
+
+    def test_codegen_squeeze_dim_matches_eager(self):
+        aten_overload = torch.ops.aten.squeeze.dim
+        compiled = _compile_codegen_op(aten_overload)
+        inputs = (torch.rand(2, 1, 3, dtype=torch.float32), 1)
+        expected = aten_overload(*inputs)
+        result = compiled(*inputs)
+        torch.testing.assert_close(result, expected)
+
+    def test_codegen_squeeze_dims_matches_eager(self):
+        aten_overload = torch.ops.aten.squeeze.dims
+        compiled = _compile_codegen_op(aten_overload)
+        inputs = (torch.rand(2, 1, 1, 3, dtype=torch.float32), (1, 2))
+        expected = aten_overload(*inputs)
+        result = compiled(*inputs)
+        torch.testing.assert_close(result, expected)
+
     def test_codegen__softmax_matches_eager(self):
         aten_overload = torch.ops.aten._softmax.default
         compiled = _compile_codegen_op(aten_overload)
@@ -1521,9 +1653,14 @@ class TestCodegenAdditionalOps(TestCase):
 
     def test_codegen_pdist_forward_matches_eager(self):
         aten_overload = torch.ops.aten._pdist_forward.default
-        compiled = _compile_codegen_op(aten_overload)
-        inputs = (torch.rand(4, 5, dtype=torch.float32), 2.0)
-        expected = aten_overload(*inputs)
+        p_value = 2.0
+
+        def compiled_fn(input_tensor: torch.Tensor) -> torch.Tensor:
+            return aten_overload(input_tensor, p_value)
+
+        compiled = torch.compile(compiled_fn, backend=codegen_generic_backend)
+        inputs = (torch.rand(4, 5, dtype=torch.float32),)
+        expected = aten_overload(inputs[0], p_value)
         result = compiled(*inputs)
         torch.testing.assert_close(result, expected)
 
