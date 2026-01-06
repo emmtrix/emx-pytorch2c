@@ -534,7 +534,12 @@ def _normalize_scalar_value(op_name: str, value: object) -> float | int | bool:
         value = value.item()
     if isinstance(value, numbers.Number):
         return value
-    raise RefBackendError(f"codegen {op_name} expects a scalar value")
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise RefBackendError(
+            f"codegen {op_name} expects a scalar value"
+        ) from exc
 
 
 def _resolve_scalar_arg(
@@ -545,6 +550,11 @@ def _resolve_scalar_arg(
     if isinstance(value, torch.fx.Node):
         if value in scalar_values:
             return _normalize_scalar_value(op_name, scalar_values[value])
+        meta_value = value.meta.get("val")
+        if meta_value is None:
+            meta_value = value.meta.get("example_value")
+        if meta_value is not None:
+            return _normalize_scalar_value(op_name, meta_value)
         raise RefBackendError(f"codegen {op_name} expects a scalar value")
     return _normalize_scalar_value(op_name, value)
 
@@ -3118,8 +3128,10 @@ def _unwrap_output_node(output_node: torch.fx.Node) -> Tuple[torch.fx.Node, obje
     output_value = output_node.args[0]
     output_structure = output_value
     if isinstance(output_value, (tuple, list, immutable_list)):
-        if len(output_value) != 1 or not isinstance(output_value[0], torch.fx.Node):
-            raise RefBackendError("codegen backend expects a single output node")
+        if not output_value:
+            raise RefBackendError("codegen backend expects a non-empty output list")
+        if not all(isinstance(item, torch.fx.Node) for item in output_value):
+            raise RefBackendError("codegen backend expects output nodes only")
         output_value = output_value[0]
     if not isinstance(output_value, torch.fx.Node):
         raise RefBackendError("codegen backend expects a single output node")
@@ -5899,6 +5911,7 @@ def _handle_batch_norm_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    scalar_values: Dict[torch.fx.Node, object],
 ) -> _OpNode:
     has_training_flag = op_spec.name == "_native_batch_norm_legit"
     expected_inputs = 8 if has_training_flag else 7
@@ -6004,12 +6017,9 @@ def _handle_batch_norm_node(
             raise RefBackendError(
                 f"codegen {op_spec.name} supports only torch.float32"
             )
-    if isinstance(momentum, torch.fx.Node) or isinstance(eps, torch.fx.Node):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects constant momentum and eps"
-        )
     try:
-        eps_value = float(eps)
+        _ = float(_resolve_scalar_arg(op_spec.name, momentum, scalar_values))
+        eps_value = float(_resolve_scalar_arg(op_spec.name, eps, scalar_values))
     except (TypeError, ValueError) as exc:
         raise RefBackendError(
             f"codegen {op_spec.name} expects eps to be a float"
@@ -7255,6 +7265,7 @@ def _analyze_generic_graph(
     dtypes: Dict[torch.fx.Node, torch.dtype] = {}
     scalar_values: Dict[torch.fx.Node, object] = {}
     alias_map: Dict[torch.fx.Node, torch.fx.Node] = {}
+    empty_outputs: set[torch.fx.Node] = set()
     input_iter = iter(example_inputs)
 
     for node in gm.graph.nodes:
@@ -7304,9 +7315,13 @@ def _analyze_generic_graph(
                     raise RefBackendError(
                         "codegen backend expects getitem source to be a tensor op"
                     )
-                if isinstance(index, torch.fx.Node) or index not in (0, 0.0):
+                if isinstance(index, torch.fx.Node):
                     raise RefBackendError(
-                        "codegen backend supports only getitem[0]"
+                        "codegen backend supports only constant getitem indices"
+                    )
+                if index not in (0, 0.0, 1, 1.0, 2, 2.0):
+                    raise RefBackendError(
+                        "codegen backend supports only getitem[0], getitem[1], or getitem[2]"
                     )
                 if source not in shapes:
                     raise RefBackendError(
@@ -7321,10 +7336,16 @@ def _analyze_generic_graph(
                     raise RefBackendError(
                         "codegen backend supports getitem only for _native_batch_norm_legit* ops"
                     )
-                alias_map[node] = source
-                shapes[node] = shapes[source]
-                strides[node] = strides[source]
-                dtypes[node] = dtypes[source]
+                if index in (0, 0.0):
+                    alias_map[node] = source
+                    shapes[node] = shapes[source]
+                    strides[node] = strides[source]
+                    dtypes[node] = dtypes[source]
+                else:
+                    shapes[node] = (0,)
+                    strides[node] = _contiguous_strides(shapes[node])
+                    dtypes[node] = dtypes[source]
+                    empty_outputs.add(node)
                 continue
             if node.op == "call_method":
                 if node.target == "item":
@@ -7413,7 +7434,13 @@ def _analyze_generic_graph(
             if op_spec.kind == "batch_norm":
                 op_nodes.append(
                     _handle_batch_norm_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
+                        node,
+                        op_spec,
+                        dtype_info,
+                        shapes,
+                        strides,
+                        dtypes,
+                        scalar_values,
                     )
                 )
                 continue
@@ -8054,6 +8081,7 @@ def _analyze_generic_graph(
         dtypes=dtypes,
         dtype=dtype_info,
         alias_map=alias_map,
+        empty_outputs=empty_outputs,
     )
 
 
@@ -8250,6 +8278,19 @@ def _compile_graph(
                 resolved = _resolve_alias(source, graph.alias_map)
                 if resolved in env:
                     env[alias] = env[resolved]
+        if graph.empty_outputs:
+            device = (
+                contiguous_inputs[0].device
+                if contiguous_inputs
+                else torch.device("cpu")
+            )
+            for node in graph.empty_outputs:
+                if node not in env:
+                    env[node] = torch.empty(
+                        graph.shapes[node],
+                        dtype=graph.dtypes[node],
+                        device=device,
+                    )
         return resolve_output(output_structure, env)
 
     return compiled

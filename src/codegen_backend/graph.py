@@ -41,6 +41,7 @@ class _GenericGraph:
     dtypes: Dict[torch.fx.Node, torch.dtype]
     dtype: _CodegenDType
     alias_map: Dict[torch.fx.Node, torch.fx.Node]
+    empty_outputs: set[torch.fx.Node]
 
 
 @dataclass

@@ -8,7 +8,7 @@ _embedding_bag                           -     -
 _fft_r2c                                 -     -      
 _local_scalar_dense                      -     -      
 _log_softmax                             -     yes    
-_native_batch_norm_legit                 -     -      
+_native_batch_norm_legit                 -     yes    
 _native_batch_norm_legit.no_stats        -     -      
 _native_batch_norm_legit_no_training     -     yes    
 _pdist_forward                           -     yes    
@@ -196,8 +196,8 @@ where.self                               -     yes
 Summary
 total aten ops: 192
 supported by cref only: 0
-supported by codegen only: 88
+supported by codegen only: 89
 supported by both: 49
-unsupported by either: 55
-supported by codegen: 137 / 192 (71.4 %)
+unsupported by either: 54
+supported by codegen: 138 / 192 (71.9 %)
 supported by c-ref: 49 / 192 (25.5 %)

@@ -1,4 +1,5 @@
 import copy
+import numbers
 import operator
 from pathlib import Path
 import sys
@@ -345,7 +346,13 @@ def _native_batch_norm_legit_sample_filter(sample):
     if len(sample.args) < 5:
         return False
     training = sample.args[4]
-    return training in (False, 0)
+    if training not in (False, 0):
+        return False
+    if len(sample.args) < 7:
+        return False
+    momentum = sample.args[5]
+    eps = sample.args[6]
+    return isinstance(momentum, numbers.Number) and isinstance(eps, numbers.Number)
 
 
 def _sample_matches_constraints(sample, dtype, constraints):
@@ -606,6 +613,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten._adaptive_avg_pool2d.default,
     torch.ops.aten._adaptive_avg_pool2d_backward.default,
     torch.ops.aten._adaptive_avg_pool3d.default,
+    torch.ops.aten._native_batch_norm_legit.default,
     torch.ops.aten._native_batch_norm_legit_no_training.default,
     torch.ops.aten._cdist_forward.default,
     torch.ops.aten._pdist_forward.default,
@@ -1027,6 +1035,8 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten._native_batch_norm_legit.default: {
         "allowed_dtypes": (torch.float32,),
+        "allow_noncontiguous": False,
+        "requires_contiguous": True,
         "sample_filter": _native_batch_norm_legit_sample_filter,
     },
     torch.ops.aten.conv1d.default: {
@@ -1171,6 +1181,22 @@ def _reference_for_dtype(
     return expected
 
 
+def _match_expected_dtype(result, expected):
+    if isinstance(result, torch.Tensor):
+        if isinstance(expected, torch.Tensor) and result.dtype is not expected.dtype:
+            return expected.to(result.dtype)
+        return expected
+    if isinstance(result, (tuple, list)):
+        if not isinstance(expected, (tuple, list)):
+            return expected
+        coerced = [
+            _match_expected_dtype(res_item, exp_item)
+            for res_item, exp_item in zip(result, expected)
+        ]
+        return type(expected)(coerced)
+    return expected
+
+
 class TestCodegenOpInfo(TestCase):
     @ops(CODEGEN_OPINFO_LIST)
     def test_codegen_backend_matches_eager(self, device, dtype, op):
@@ -1196,8 +1222,7 @@ class TestCodegenOpInfo(TestCase):
             except Exception:
                 continue
             result = compiled(*inputs, **kwargs)
-            if result.dtype is not expected.dtype:
-                expected = expected.to(result.dtype)
+            expected = _match_expected_dtype(result, expected)
             compare_kwargs = {"equal_nan": dtype in (torch.int8, torch.int32)}
             if constraints.get("equal_nan"):
                 compare_kwargs["equal_nan"] = True
