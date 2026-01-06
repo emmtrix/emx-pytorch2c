@@ -117,6 +117,11 @@ def _get_template_env() -> Environment:
     return _TEMPLATE_ENV
 
 
+def _is_out_overload(target: object) -> bool:
+    schema = getattr(target, "_schema", None)
+    return schema is not None and schema.overload_name == "out"
+
+
 @dataclass(frozen=True)
 class _TargetInfo:
     op_spec: _OpSpec
@@ -137,6 +142,10 @@ def _build_target_registry() -> Dict[object, _TargetInfo]:
 
 
 TARGET_REGISTRY = _build_target_registry()
+TARGET_REGISTRY[torch.ops.aten.atan2.out] = _TargetInfo(
+    op_spec=SUPPORTED_OPS["atan2"],
+    inplace_arg_index=2,
+)
 
 
 @dataclass
@@ -2710,6 +2719,16 @@ def _resolve_alias(
     return node
 
 
+def _kernel_inputs(op_node: _OpNode) -> List[torch.fx.Node]:
+    if _is_out_overload(op_node.node.target) and op_node.inplace_input is not None:
+        return [
+            arg
+            for index, arg in enumerate(op_node.inputs)
+            if index != op_node.inplace_input
+        ]
+    return list(op_node.inputs)
+
+
 def _write_generic_source(graph: _GenericGraph) -> str:
     placeholders = graph.tensor_placeholders
     op_nodes = graph.op_nodes
@@ -2721,9 +2740,10 @@ def _write_generic_source(graph: _GenericGraph) -> str:
     kernels: List[str] = []
     for index, op_node in enumerate(op_nodes, start=1):
         if op_node.spec.kind in {"binary", "unary", "where", "fill"}:
-            input_shapes = [graph.shapes[arg] for arg in op_node.inputs]
-            input_strides = [graph.strides[arg] for arg in op_node.inputs]
-            input_dtypes = [graph.dtypes[arg] for arg in op_node.inputs]
+            kernel_inputs = _kernel_inputs(op_node)
+            input_shapes = [graph.shapes[arg] for arg in kernel_inputs]
+            input_strides = [graph.strides[arg] for arg in kernel_inputs]
+            input_dtypes = [graph.dtypes[arg] for arg in kernel_inputs]
             output_strides = graph.strides[op_node.node]
             kernel_lines = _write_elementwise_kernel(
                 index,
@@ -3127,7 +3147,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
     for index, op_node in enumerate(op_nodes, start=1):
         input_names = [
             name_map[_resolve_alias(arg, graph.alias_map)]
-            for arg in op_node.inputs
+            for arg in _kernel_inputs(op_node)
         ]
         output_name = name_map[op_node.node]
         args = ", ".join([*input_names, output_name])
@@ -6826,6 +6846,7 @@ def _analyze_generic_graph(
             param_values: Dict[str, object] = {}
             input_nodes: List[torch.fx.Node] = []
             input_shapes: List[Tuple[int, ...]] = []
+            out_arg: torch.fx.Node | None = None
             if op_spec.kind == "binary" and len(node.args) == 2:
                 lhs, rhs = node.args
                 if isinstance(lhs, torch.fx.Node) ^ isinstance(rhs, torch.fx.Node):
@@ -6864,10 +6885,13 @@ def _analyze_generic_graph(
                         args_to_check = (input_node,)
                     else:
                         allowed_kwargs = set()
+                        is_out_overload = _is_out_overload(node.target)
                         if op_spec.name == "div":
                             allowed_kwargs = {"rounding_mode"}
                         elif op_spec.name == "copy":
                             allowed_kwargs = {"non_blocking"}
+                        if is_out_overload:
+                            allowed_kwargs.add("out")
                         if node.kwargs and set(node.kwargs) - allowed_kwargs:
                             raise RefBackendError(
                                 "codegen backend expects positional args only"
@@ -6880,7 +6904,36 @@ def _analyze_generic_graph(
                             expected_arity = 3
                         else:
                             expected_arity = 2
-                        if op_spec.name == "copy":
+                        if is_out_overload:
+                            if inplace_input is None:
+                                raise RefBackendError(
+                                    f"codegen {op_spec.name} expects out to be provided"
+                                )
+                            if "out" in node.kwargs:
+                                if len(node.args) > expected_arity:
+                                    raise _error_kwarg_specified_once(
+                                        op_spec.name, "out"
+                                    )
+                                out_arg = node.kwargs["out"]
+                            elif len(node.args) == expected_arity + 1:
+                                out_arg = node.args[inplace_input]
+                            elif len(node.args) != expected_arity:
+                                if expected_arity == 1:
+                                    raise RefBackendError(
+                                        f"codegen {op_spec.name} expects one input"
+                                    )
+                                if expected_arity == 2:
+                                    raise RefBackendError(
+                                        f"codegen {op_spec.name} expects exactly two inputs"
+                                    )
+                                raise RefBackendError(
+                                    f"codegen {op_spec.name} expects exactly three inputs"
+                                )
+                            if out_arg is None:
+                                raise RefBackendError(
+                                    f"codegen {op_spec.name} expects out to be provided"
+                                )
+                        elif op_spec.name == "copy":
                             if len(node.args) not in {2, 3}:
                                 raise RefBackendError(
                                     "codegen copy expects two inputs and optional non_blocking"
@@ -6928,6 +6981,13 @@ def _analyze_generic_graph(
                             raise _error_expected_tensor(op_spec.name)
                         input_nodes.append(arg)
                         input_shapes.append(shapes[arg])
+                    if out_arg is not None and out_arg not in input_nodes:
+                        if not isinstance(out_arg, torch.fx.Node):
+                            raise _error_expected_tensor(op_spec.name)
+                        if out_arg not in shapes:
+                            raise _error_expected_tensor(op_spec.name)
+                        input_nodes.append(out_arg)
+                        input_shapes.append(shapes[out_arg])
             else:
                 if op_spec.kind in {"reduction", "arg_reduction"}:
                     if len(node.args) < 1:
@@ -6945,10 +7005,13 @@ def _analyze_generic_graph(
                     args_to_check = (input_node,)
                 else:
                     allowed_kwargs = set()
+                    is_out_overload = _is_out_overload(node.target)
                     if op_spec.name == "div":
                         allowed_kwargs = {"rounding_mode"}
                     elif op_spec.name == "copy":
                         allowed_kwargs = {"non_blocking"}
+                    if is_out_overload:
+                        allowed_kwargs.add("out")
                     if node.kwargs and set(node.kwargs) - allowed_kwargs:
                         raise RefBackendError(
                             "codegen backend expects positional args only"
@@ -6961,7 +7024,36 @@ def _analyze_generic_graph(
                         expected_arity = 3
                     else:
                         expected_arity = 2
-                    if op_spec.name == "copy":
+                    if is_out_overload:
+                        if inplace_input is None:
+                            raise RefBackendError(
+                                f"codegen {op_spec.name} expects out to be provided"
+                            )
+                        if "out" in node.kwargs:
+                            if len(node.args) > expected_arity:
+                                raise _error_kwarg_specified_once(
+                                    op_spec.name, "out"
+                                )
+                            out_arg = node.kwargs["out"]
+                        elif len(node.args) == expected_arity + 1:
+                            out_arg = node.args[inplace_input]
+                        elif len(node.args) != expected_arity:
+                            if expected_arity == 1:
+                                raise RefBackendError(
+                                    f"codegen {op_spec.name} expects one input"
+                                )
+                            if expected_arity == 2:
+                                raise RefBackendError(
+                                    f"codegen {op_spec.name} expects exactly two inputs"
+                                )
+                            raise RefBackendError(
+                                f"codegen {op_spec.name} expects exactly three inputs"
+                            )
+                        if out_arg is None:
+                            raise RefBackendError(
+                                f"codegen {op_spec.name} expects out to be provided"
+                            )
+                    elif op_spec.name == "copy":
                         if len(node.args) not in {2, 3}:
                             raise RefBackendError(
                                 "codegen copy expects two inputs and optional non_blocking"
@@ -7009,6 +7101,18 @@ def _analyze_generic_graph(
                         raise _error_expected_tensor(op_spec.name)
                     input_nodes.append(arg)
                     input_shapes.append(shapes[arg])
+                if out_arg is not None and out_arg not in input_nodes:
+                    if not isinstance(out_arg, torch.fx.Node):
+                        raise _error_expected_tensor(op_spec.name)
+                    if out_arg not in shapes:
+                        raise _error_expected_tensor(op_spec.name)
+                    input_nodes.append(out_arg)
+                    input_shapes.append(shapes[out_arg])
+            shape_input_shapes = [
+                shape
+                for arg, shape in zip(input_nodes, input_shapes)
+                if out_arg is None or arg is not out_arg
+            ]
             input_dtypes = [dtypes[arg] for arg in input_nodes]
             if op_spec.name in _BITWISE_OPS:
                 if dtype_info.torch_dtype in _INTEGER_CODEGEN_DTYPES:
@@ -7073,7 +7177,9 @@ def _analyze_generic_graph(
                         keepdim,
                         reduce_all,
                         norm_p,
-                    ) = _parse_norm_args(op_spec.name, node, input_shapes[0])
+                    ) = _parse_norm_args(
+                        op_spec.name, node, shape_input_shapes[0]
+                    )
                     param_values["norm_p"] = norm_p
                 else:
                     (
@@ -7081,7 +7187,9 @@ def _analyze_generic_graph(
                         keepdim,
                         reduce_all,
                         unbiased,
-                    ) = _parse_reduction_args(op_spec.name, node, input_shapes[0])
+                    ) = _parse_reduction_args(
+                        op_spec.name, node, shape_input_shapes[0]
+                    )
                     if unbiased is not None:
                         param_values["unbiased"] = unbiased
                     if (
@@ -7092,7 +7200,7 @@ def _analyze_generic_graph(
                             "codegen var supports only torch.float32 tensors"
                         )
                 output_shape = _infer_reduction_output_shape(
-                    input_shapes[0],
+                    shape_input_shapes[0],
                     reduction_dims,
                     keepdim,
                     reduce_all=reduce_all,
@@ -7102,26 +7210,32 @@ def _analyze_generic_graph(
                     reduction_dims,
                     keepdim,
                     reduce_all,
-                ) = _parse_argminmax_args(op_spec.name, node, input_shapes[0])
+                ) = _parse_argminmax_args(
+                    op_spec.name, node, shape_input_shapes[0]
+                )
                 reduction_count = 1
                 if reduce_all:
-                    for size in input_shapes[0]:
+                    for size in shape_input_shapes[0]:
                         reduction_count *= size
                 else:
                     for dim in reduction_dims:
-                        reduction_count *= input_shapes[0][dim]
+                        reduction_count *= shape_input_shapes[0][dim]
                 if reduction_count == 0:
                     raise RefBackendError(
                         f"codegen {op_spec.name} expects a non-empty reduction dimension"
                     )
                 output_shape = _infer_reduction_output_shape(
-                    input_shapes[0],
+                    shape_input_shapes[0],
                     reduction_dims,
                     keepdim,
                     reduce_all=reduce_all,
                 )
             else:
-                output_shape = _infer_output_shape(op_spec, input_shapes)
+                output_shape = _infer_output_shape(op_spec, shape_input_shapes)
+            if out_arg is not None and shapes[out_arg] != output_shape:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects out to match output shape"
+                )
             if op_spec.kind in {"reduction", "arg_reduction"}:
                 param_values["reduce_all"] = reduce_all
             shapes[node] = output_shape

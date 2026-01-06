@@ -562,6 +562,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.asinh.default,
     torch.ops.aten.atan.default,
     torch.ops.aten.atan2.default,
+    torch.ops.aten.atan2.out,
     torch.ops.aten.atanh.default,
     torch.ops.aten.arccos.default,
     torch.ops.aten.arcsin.default,
@@ -961,6 +962,7 @@ ALIASED_CODEGEN_OPS = {
     torch.ops.aten.arcsin.default,
     torch.ops.aten.arcsinh.default,
     torch.ops.aten.arctan.default,
+    torch.ops.aten.atan2.out,
     torch.ops.aten.any.dim,
     torch.ops.aten.any.dims,
     torch.ops.aten.mean.dim,
@@ -1311,6 +1313,25 @@ class TestCodegenAliasedOps(TestCase):
             expected = aten_overload(*inputs)
             result = compiled(*inputs)
             torch.testing.assert_close(result, expected)
+
+    def test_codegen_atan2_out_matches_eager(self):
+        aten_overload = torch.ops.aten.atan2.out
+
+        def compiled_fn(
+            lhs: torch.Tensor, rhs: torch.Tensor, out: torch.Tensor
+        ) -> torch.Tensor:
+            return aten_overload(lhs, rhs, out=out)
+
+        compiled = torch.compile(compiled_fn, backend=codegen_generic_backend)
+        lhs = torch.randn(2, 3, dtype=torch.float32)
+        rhs = torch.randn(2, 3, dtype=torch.float32)
+        expected_out = torch.empty_like(lhs)
+        expected = aten_overload(lhs, rhs, out=expected_out)
+        result_out = torch.empty_like(lhs)
+        result = compiled(lhs, rhs, out=result_out)
+        torch.testing.assert_close(result, expected)
+        torch.testing.assert_close(result_out, expected_out)
+        assert result is result_out
 
     def test_codegen_aliases_match_eager(self):
         aliased_ops = [

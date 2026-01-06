@@ -35,7 +35,7 @@ asin                                     yes   yes
 asinh                                    yes   yes    
 atan                                     yes   yes    
 atan2                                    yes   yes    
-atan2.out                                -     -      
+atan2.out                                -     yes    
 atanh                                    yes   yes    
 avg_pool1d                               -     yes    
 avg_pool2d                               -     yes    
