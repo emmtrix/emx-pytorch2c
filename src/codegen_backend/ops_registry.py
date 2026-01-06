@@ -1519,6 +1519,10 @@ _REGISTRY.register_op("max_pool2d", kind="pool2d").targets(
     torch.ops.aten.max_pool2d.default,
     torch.ops.aten.max_pool2d,
 ).build()
+_REGISTRY.register_op("_native_batch_norm_legit", kind="batch_norm").targets(
+    torch.ops.aten._native_batch_norm_legit,
+    torch.ops.aten._native_batch_norm_legit.default,
+).build()
 _REGISTRY.register_op("_native_batch_norm_legit_no_training", kind="batch_norm").targets(
     torch.ops.aten._native_batch_norm_legit_no_training,
     torch.ops.aten._native_batch_norm_legit_no_training.default,
