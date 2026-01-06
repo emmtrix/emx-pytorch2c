@@ -1,0 +1,55 @@
+{{ signature }}
+{% set loop_count = output_dims | length %}
+{% for dim in output_dims %}
+{{ "    " * (loop.index0 + 1) }}for (int64_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
+{% endfor %}
+{% set body_indent = "    " * (loop_count + 1) %}
+{% if op_kind == "binary" %}
+{% if has_scalar %}
+{{ body_indent }}{{ output_access }} = {{ scalar_fn }}({{ a_access }}, {{ scalar_literal }});
+{% elif is_copy %}
+{{ body_indent }}{{ output_access }} = {{ b_access }};
+{% else %}
+{{ body_indent }}{{ output_access }} = {{ scalar_fn }}({{ a_access }}, {{ b_access }});
+{% endif %}
+{% elif op_kind == "where" %}
+{{ body_indent }}{{ output_access }} = ({{ cond_access }} != 0) ? {{ a_access }} : {{ b_access }};
+{% elif op_kind == "fill" %}
+{{ body_indent }}{{ output_access }} = {{ fill_value }};
+{% else %}
+{% if is_alias %}
+{{ body_indent }}{{ output_access }} = {{ input_access }};
+{% elif is_parametric %}
+{% if op_name == "gelu" %}
+{% if gelu_approximate == "tanh" %}
+{{ body_indent }}{{ output_access }} = {{ half }} * {{ input_access }} * ({{ one }} + tanhf({{ sqrt_2_over_pi }} * ({{ input_access }} + {{ coeff }} * {{ input_access }} * {{ input_access }} * {{ input_access }})));
+{% else %}
+{{ body_indent }}{{ output_access }} = {{ half }} * {{ input_access }} * ({{ one }} + erff({{ input_access }} * {{ inv_sqrt2 }}));
+{% endif %}
+{% elif op_name == "elu" %}
+{{ body_indent }}{{ output_access }} = ({{ input_access }} > 0.0f) ? ({{ scale }} * {{ input_access }}) : ({{ scale }} * {{ alpha }} * (expf({{ input_scale }} * {{ input_access }}) - {{ one }}));
+{% elif op_name == "leaky_relu" %}
+{{ body_indent }}{{ output_access }} = ({{ input_access }} > 0.0f) ? {{ input_access }} : ({{ negative_slope }} * {{ input_access }});
+{% elif op_name == "softplus" %}
+{{ body_indent }}{{ output_access }} = ({{ beta }} * {{ input_access }} > {{ threshold }}) ? {{ input_access }} : (log1pf(expf({{ beta }} * {{ input_access }})) / {{ beta }});
+{% elif op_name == "clamp" %}
+{% if not clamp_has_min and not clamp_has_max %}
+{{ body_indent }}{{ output_access }} = {{ input_access }};
+{% elif not clamp_has_min %}
+{{ body_indent }}{{ output_access }} = fminf({{ input_access }}, {{ clamp_max }});
+{% elif not clamp_has_max %}
+{{ body_indent }}{{ output_access }} = fmaxf({{ input_access }}, {{ clamp_min }});
+{% else %}
+{{ body_indent }}{{ output_access }} = fminf(fmaxf({{ input_access }}, {{ clamp_min }}), {{ clamp_max }});
+{% endif %}
+{% elif op_name == "hardtanh" %}
+{{ body_indent }}{{ output_access }} = fminf(fmaxf({{ input_access }}, {{ min_val }}), {{ max_val }});
+{% endif %}
+{% else %}
+{{ body_indent }}{{ output_access }} = {{ scalar_fn }}({{ input_access }});
+{% endif %}
+{% endif %}
+{% for dim in output_dims | reverse %}
+{{ "    " * (loop_count - loop.index0) }}}
+{% endfor %}
+}

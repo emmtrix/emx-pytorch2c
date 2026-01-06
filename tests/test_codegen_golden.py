@@ -103,6 +103,18 @@ def cat_fn(a, b):
     return torch.cat([a, b], dim=1)
 
 
+def conv2d_fn(a, weight, bias):
+    return torch.ops.aten.conv2d.default(
+        a, weight, bias, stride=(1, 1), padding=(0, 0), dilation=(1, 1), groups=1
+    )
+
+
+def max_pool2d_fn(a):
+    return torch.ops.aten.max_pool2d.default(
+        a, (2, 2), (1, 1), (0, 0), (1, 1), False
+    )
+
+
 @pytest.mark.parametrize(
     ("reference_name", "fn", "source_fn", "backend"),
     [
@@ -174,6 +186,28 @@ def test_codegen_generic_handles_strided_inputs():
     compiled = torch.compile(add_strided_fn, backend=codegen_generic_backend)
     result = compiled(a, b)
     torch.testing.assert_close(result, add_strided_fn(a, b))
+
+
+def test_codegen_generic_handles_conv2d():
+    a = torch.randn(1, 2, 5, 5, dtype=torch.float32)
+    weight = torch.randn(3, 2, 3, 3, dtype=torch.float32)
+    bias = torch.randn(3, dtype=torch.float32)
+    _assert_codegen_source_matches(
+        "conv2d.c", get_generic_source, conv2d_fn, (a, weight, bias)
+    )
+    compiled = torch.compile(conv2d_fn, backend=codegen_generic_backend)
+    result = compiled(a, weight, bias)
+    torch.testing.assert_close(result, conv2d_fn(a, weight, bias))
+
+
+def test_codegen_generic_handles_max_pool2d():
+    a = torch.randn(1, 2, 4, 4, dtype=torch.float32)
+    _assert_codegen_source_matches(
+        "max_pool2d.c", get_generic_source, max_pool2d_fn, (a,)
+    )
+    compiled = torch.compile(max_pool2d_fn, backend=codegen_generic_backend)
+    result = compiled(a)
+    torch.testing.assert_close(result, max_pool2d_fn(a))
 
 
 def test_codegen_generic_handles_atan():

@@ -471,6 +471,18 @@ def _normalize_scalar_value(op_name: str, value: object) -> float | int | bool:
     raise RefBackendError(f"codegen {op_name} expects a scalar value")
 
 
+def _resolve_scalar_arg(
+    op_name: str,
+    value: object,
+    scalar_values: Dict[torch.fx.Node, object],
+) -> float | int | bool:
+    if isinstance(value, torch.fx.Node):
+        if value in scalar_values:
+            return _normalize_scalar_value(op_name, scalar_values[value])
+        raise RefBackendError(f"codegen {op_name} expects a scalar value")
+    return _normalize_scalar_value(op_name, value)
+
+
 def emit_signature(
     node_index: int,
     op_spec: _OpSpec,
@@ -641,219 +653,6 @@ def _format_diagonal_access(
     return f"(({c_type}*){name})[{index_expr}]"
 
 
-def _emit_parametric_unary(
-    op_name: str,
-    input_access: str,
-    output_access: str,
-    indent: str,
-    dtype: _CodegenDType,
-    params: Dict[str, object],
-) -> List[str]:
-    if dtype.torch_dtype is not torch.float32:
-        raise RefBackendError(
-            f"codegen {op_name} supports only torch.float32 tensors"
-        )
-    one = _format_scalar_literal(1.0, dtype)
-    half = _format_scalar_literal(0.5, dtype)
-    if op_name == "gelu":
-        approximate = params.get("approximate", "none")
-        if approximate == "tanh":
-            sqrt_2_over_pi = _format_scalar_literal(0.7978845608028654, dtype)
-            coeff = _format_scalar_literal(0.044715, dtype)
-            return [
-                f"{indent}{output_access} = {half} * {input_access} * "
-                f"({one} + tanhf({sqrt_2_over_pi} * "
-                f"({input_access} + {coeff} * {input_access} * {input_access} * {input_access})));"
-            ]
-        inv_sqrt2 = _format_scalar_literal(0.7071067811865475, dtype)
-        return [
-            f"{indent}{output_access} = {half} * {input_access} * "
-            f"({one} + erff({input_access} * {inv_sqrt2}));"
-        ]
-    if op_name == "elu":
-        alpha = _format_scalar_literal(params.get("alpha", 1.0), dtype)
-        scale = _format_scalar_literal(params.get("scale", 1.0), dtype)
-        input_scale = _format_scalar_literal(params.get("input_scale", 1.0), dtype)
-        return [
-            f"{indent}{output_access} = ({input_access} > 0.0f) ? "
-            f"({scale} * {input_access}) : "
-            f"({scale} * {alpha} * (expf({input_scale} * {input_access}) - {one}));"
-        ]
-    if op_name == "leaky_relu":
-        negative_slope = _format_scalar_literal(
-            params.get("negative_slope", 0.01), dtype
-        )
-        return [
-            f"{indent}{output_access} = ({input_access} > 0.0f) ? "
-            f"{input_access} : ({negative_slope} * {input_access});"
-        ]
-    if op_name == "softplus":
-        beta = _format_scalar_literal(params.get("beta", 1.0), dtype)
-        threshold = _format_scalar_literal(params.get("threshold", 20.0), dtype)
-        return [
-            f"{indent}{output_access} = ({beta} * {input_access} > {threshold}) ? "
-            f"{input_access} : (log1pf(expf({beta} * {input_access})) / {beta});"
-        ]
-    if op_name == "clamp":
-        min_val = params.get("min_val")
-        max_val = params.get("max_val")
-        if min_val is None and max_val is None:
-            return [f"{indent}{output_access} = {input_access};"]
-        if dtype.torch_dtype is torch.float32:
-            if min_val is None:
-                max_literal = _format_scalar_literal(max_val, dtype)
-                return [
-                    f"{indent}{output_access} = fminf({input_access}, {max_literal});"
-                ]
-            if max_val is None:
-                min_literal = _format_scalar_literal(min_val, dtype)
-                return [
-                    f"{indent}{output_access} = fmaxf({input_access}, {min_literal});"
-                ]
-            min_literal = _format_scalar_literal(min_val, dtype)
-            max_literal = _format_scalar_literal(max_val, dtype)
-            return [
-                f"{indent}{output_access} = fminf(fmaxf({input_access}, {min_literal}), {max_literal});"
-            ]
-        min_literal = (
-            _format_scalar_literal(min_val, dtype) if min_val is not None else None
-        )
-        max_literal = (
-            _format_scalar_literal(max_val, dtype) if max_val is not None else None
-        )
-        if min_literal is None:
-            return [
-                f"{indent}{output_access} = ({input_access} > {max_literal}) ? "
-                f"{max_literal} : {input_access};"
-            ]
-        if max_literal is None:
-            return [
-                f"{indent}{output_access} = ({input_access} < {min_literal}) ? "
-                f"{min_literal} : {input_access};"
-            ]
-        return [
-            f"{indent}{output_access} = ({input_access} < {min_literal}) ? "
-            f"{min_literal} : (({input_access} > {max_literal}) ? {max_literal} : {input_access});"
-        ]
-    if op_name == "hardtanh":
-        min_val = _format_scalar_literal(params.get("min_val", -1.0), dtype)
-        max_val = _format_scalar_literal(params.get("max_val", 1.0), dtype)
-        return [
-            f"{indent}{output_access} = fminf(fmaxf({input_access}, {min_val}), {max_val});"
-        ]
-    raise RefBackendError(f"Unsupported parametric unary op: {op_name}")
-
-
-def emit_body(
-    op_node: _OpNode,
-    output_access: str,
-    input_shapes: Sequence[Sequence[int]],
-    input_strides: Sequence[Sequence[int]],
-    input_dtypes: Sequence[torch.dtype],
-    output_shape: Sequence[int],
-    indent: str,
-    dtype: _CodegenDType,
-) -> List[str]:
-    op_spec = op_node.spec
-    scalar_fn = f"{dtype.scalar_prefix}{op_spec.name}"
-    if op_spec.kind == "binary":
-        if "scalar" in op_node.params:
-            a_shape = input_shapes[0]
-            a_strides = input_strides[0]
-            a_index_expr = emit_input_access(
-                "a",
-                a_shape,
-                a_strides,
-                output_shape,
-                broadcast_contiguous=False,
-                c_type=_input_c_type(input_dtypes[0], dtype),
-            )
-            scalar_literal = _format_scalar_literal(
-                op_node.params["scalar"], dtype
-            )
-            return [
-                f"{indent}{output_access} = {scalar_fn}({a_index_expr}, {scalar_literal});"
-            ]
-        a_shape, b_shape = input_shapes
-        a_strides, b_strides = input_strides
-        a_index_expr = emit_input_access(
-            "a",
-            a_shape,
-            a_strides,
-            output_shape,
-            broadcast_contiguous=True,
-            c_type=_input_c_type(input_dtypes[0], dtype),
-        )
-        b_index_expr = emit_input_access(
-            "b",
-            b_shape,
-            b_strides,
-            output_shape,
-            broadcast_contiguous=True,
-            c_type=_input_c_type(input_dtypes[1], dtype),
-        )
-        if op_spec.name == "copy":
-            return [f"{indent}{output_access} = {b_index_expr};"]
-        return [
-            f"{indent}{output_access} = {scalar_fn}({a_index_expr}, {b_index_expr});"
-        ]
-    if op_spec.kind == "where":
-        cond_shape, a_shape, b_shape = input_shapes
-        cond_strides, a_strides, b_strides = input_strides
-        cond_index_expr = emit_input_access(
-            "cond",
-            cond_shape,
-            cond_strides,
-            output_shape,
-            broadcast_contiguous=True,
-            c_type=_input_c_type(input_dtypes[0], dtype),
-        )
-        a_index_expr = emit_input_access(
-            "a",
-            a_shape,
-            a_strides,
-            output_shape,
-            broadcast_contiguous=True,
-            c_type=_input_c_type(input_dtypes[1], dtype),
-        )
-        b_index_expr = emit_input_access(
-            "b",
-            b_shape,
-            b_strides,
-            output_shape,
-            broadcast_contiguous=True,
-            c_type=_input_c_type(input_dtypes[2], dtype),
-        )
-        return [
-            f"{indent}{output_access} = ({cond_index_expr} != 0) ? {a_index_expr} : {b_index_expr};"
-        ]
-    if op_spec.kind == "fill":
-        value = _format_scalar_literal(op_node.p("value"), dtype)
-        return [f"{indent}{output_access} = {value};"]
-    a_shape = input_shapes[0]
-    a_strides = input_strides[0]
-    input_access = emit_input_access(
-        "a",
-        a_shape,
-        a_strides,
-        output_shape,
-        broadcast_contiguous=False,
-        c_type=_input_c_type(input_dtypes[0], dtype),
-    )
-    if op_spec.name in {"alias", "clone", "_to_copy", "resize_"}:
-        return [f"{indent}{output_access} = {input_access};"]
-    if op_spec.name in _PARAMETRIC_UNARY_OPS:
-        return _emit_parametric_unary(
-            op_spec.name,
-            input_access,
-            output_access,
-            indent,
-            dtype,
-            op_node.params,
-        )
-    return [f"{indent}{output_access} = {scalar_fn}({input_access});"]
-
-
 def emit_footer(output_shape: Sequence[int], indent: str) -> List[str]:
     lines, _ = _close_loops(len(output_shape), indent)
     lines.append("}")
@@ -870,35 +669,180 @@ def _write_elementwise_kernel(
     output_strides: Sequence[int],
     dtype: _CodegenDType,
 ) -> List[str]:
-    lines = [
-        emit_signature(
-            node_index,
-            op_node.spec,
-            output_shape,
-            input_shapes,
-            input_dtypes,
-            dtype,
-        )
+    op_spec = op_node.spec
+    elementwise_template = _get_template_env().get_template(
+        "elementwise_kernel.c.j2"
+    )
+    signature = emit_signature(
+        node_index,
+        op_spec,
+        output_shape,
+        input_shapes,
+        input_dtypes,
+        dtype,
+    )
+    output_dims = [
+        {"dim": dim, "size": size}
+        for dim, size in enumerate(output_shape)
     ]
-    loop_lines, indent = emit_loops(output_shape)
-    lines.extend(loop_lines)
     output_access = emit_output_access(
         output_shape, output_strides, c_type=dtype.c_type
     )
-    lines.extend(
-        emit_body(
-            op_node,
-            output_access,
-            input_shapes,
-            input_strides,
-            input_dtypes,
+    scalar_fn = f"{dtype.scalar_prefix}{op_spec.name}"
+    params = op_node.params
+    context: Dict[str, object] = {
+        "signature": signature,
+        "output_dims": output_dims,
+        "op_kind": op_spec.kind,
+        "op_name": op_spec.name,
+        "scalar_fn": scalar_fn,
+        "output_access": output_access,
+        "is_copy": op_spec.name == "copy",
+        "is_alias": op_spec.name in {"alias", "clone", "_to_copy", "resize_"},
+        "is_parametric": op_spec.name in _PARAMETRIC_UNARY_OPS,
+        "has_scalar": "scalar" in params,
+        "scalar_literal": None,
+        "fill_value": None,
+        "a_access": None,
+        "b_access": None,
+        "cond_access": None,
+        "input_access": None,
+    }
+    if op_spec.kind == "binary":
+        if "scalar" in params:
+            a_shape = input_shapes[0]
+            a_strides = input_strides[0]
+            context["a_access"] = emit_input_access(
+                "a",
+                a_shape,
+                a_strides,
+                output_shape,
+                broadcast_contiguous=False,
+                c_type=_input_c_type(input_dtypes[0], dtype),
+            )
+            context["scalar_literal"] = _format_scalar_literal(
+                params["scalar"], dtype
+            )
+        else:
+            a_shape, b_shape = input_shapes
+            a_strides, b_strides = input_strides
+            context["a_access"] = emit_input_access(
+                "a",
+                a_shape,
+                a_strides,
+                output_shape,
+                broadcast_contiguous=True,
+                c_type=_input_c_type(input_dtypes[0], dtype),
+            )
+            context["b_access"] = emit_input_access(
+                "b",
+                b_shape,
+                b_strides,
+                output_shape,
+                broadcast_contiguous=True,
+                c_type=_input_c_type(input_dtypes[1], dtype),
+            )
+    elif op_spec.kind == "where":
+        cond_shape, a_shape, b_shape = input_shapes
+        cond_strides, a_strides, b_strides = input_strides
+        context["cond_access"] = emit_input_access(
+            "cond",
+            cond_shape,
+            cond_strides,
             output_shape,
-            indent,
-            dtype,
+            broadcast_contiguous=True,
+            c_type=_input_c_type(input_dtypes[0], dtype),
         )
-    )
-    lines.extend(emit_footer(output_shape, indent))
-    return lines
+        context["a_access"] = emit_input_access(
+            "a",
+            a_shape,
+            a_strides,
+            output_shape,
+            broadcast_contiguous=True,
+            c_type=_input_c_type(input_dtypes[1], dtype),
+        )
+        context["b_access"] = emit_input_access(
+            "b",
+            b_shape,
+            b_strides,
+            output_shape,
+            broadcast_contiguous=True,
+            c_type=_input_c_type(input_dtypes[2], dtype),
+        )
+    elif op_spec.kind == "fill":
+        context["fill_value"] = _format_scalar_literal(
+            op_node.p("value"), dtype
+        )
+    else:
+        a_shape = input_shapes[0]
+        a_strides = input_strides[0]
+        context["input_access"] = emit_input_access(
+            "a",
+            a_shape,
+            a_strides,
+            output_shape,
+            broadcast_contiguous=False,
+            c_type=_input_c_type(input_dtypes[0], dtype),
+        )
+        if op_spec.name in _PARAMETRIC_UNARY_OPS:
+            if dtype.torch_dtype is not torch.float32:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} supports only torch.float32 tensors"
+                )
+            context.update(
+                {
+                    "one": _format_scalar_literal(1.0, dtype),
+                    "half": _format_scalar_literal(0.5, dtype),
+                    "gelu_approximate": params.get(
+                        "approximate", "none"
+                    ),
+                    "sqrt_2_over_pi": _format_scalar_literal(
+                        0.7978845608028654, dtype
+                    ),
+                    "coeff": _format_scalar_literal(0.044715, dtype),
+                    "inv_sqrt2": _format_scalar_literal(
+                        0.7071067811865475, dtype
+                    ),
+                    "alpha": _format_scalar_literal(
+                        params.get("alpha", 1.0), dtype
+                    ),
+                    "scale": _format_scalar_literal(
+                        params.get("scale", 1.0), dtype
+                    ),
+                    "input_scale": _format_scalar_literal(
+                        params.get("input_scale", 1.0), dtype
+                    ),
+                    "negative_slope": _format_scalar_literal(
+                        params.get("negative_slope", 0.01), dtype
+                    ),
+                    "beta": _format_scalar_literal(
+                        params.get("beta", 1.0), dtype
+                    ),
+                    "threshold": _format_scalar_literal(
+                        params.get("threshold", 20.0), dtype
+                    ),
+                    "clamp_min": (
+                        _format_scalar_literal(params.get("min_val"), dtype)
+                        if params.get("min_val") is not None
+                        else None
+                    ),
+                    "clamp_max": (
+                        _format_scalar_literal(params.get("max_val"), dtype)
+                        if params.get("max_val") is not None
+                        else None
+                    ),
+                    "clamp_has_min": params.get("min_val") is not None,
+                    "clamp_has_max": params.get("max_val") is not None,
+                    "min_val": _format_scalar_literal(
+                        params.get("min_val", -1.0), dtype
+                    ),
+                    "max_val": _format_scalar_literal(
+                        params.get("max_val", 1.0), dtype
+                    ),
+                }
+            )
+    rendered = elementwise_template.render(**context)
+    return rendered.strip().splitlines()
 
 
 def _write_arange_kernel(
@@ -1918,7 +1862,8 @@ def _write_reduction_kernel(
             sizes=input_shape,
             c_type=dtype.c_type,
         )
-    reduce_expr = None
+    compare_op = None
+    isnan_fn = None
     if op_spec.name in {"amax", "amin"} and dtype.torch_dtype is not torch.bool:
         compare_op = ">" if op_spec.name == "amax" else "<"
         init_value_config = _MINMAX_INIT_VALUES[dtype.torch_dtype][op_spec.name]
@@ -1926,16 +1871,11 @@ def _write_reduction_kernel(
             "init_value": init_value_config,
             "post_op": None,
         }
-        if dtype.torch_dtype is torch.float32:
-            isnan_fn = f"{dtype.scalar_prefix}isnan"
-            reduce_expr = (
-                f"acc = {isnan_fn}({input_access}) ? {input_access} : "
-                f"({isnan_fn}(acc) ? acc : ({input_access} {compare_op} acc ? {input_access} : acc))"
-            )
-        else:
-            reduce_expr = (
-                f"acc = ({input_access} {compare_op} acc ? {input_access} : acc)"
-            )
+        isnan_fn = (
+            f"{dtype.scalar_prefix}isnan"
+            if dtype.torch_dtype is torch.float32
+            else None
+        )
     reduction_count = 1
     for dim in reduction_dims:
         reduction_count *= input_shape[dim]
@@ -1954,11 +1894,6 @@ def _write_reduction_kernel(
             post_op = f"acc /= {reduction_count};"
         else:
             post_op = f"acc /= (float){reduction_count};"
-    if reduce_expr is None:
-        if bool_reduction:
-            reduce_expr = f"acc {config['reduce_op']} ({input_access} != 0)"
-        else:
-            reduce_expr = f"acc {config['reduce_op']} {input_access}"
     rendered = reduction_template.render(
         signature=signature,
         input_rank=input_rank,
@@ -1969,7 +1904,14 @@ def _write_reduction_kernel(
         reduction_dims=[
             {"dim": dim, "size": input_shape[dim]} for dim in reduction_dims
         ],
-        reduce_expr=reduce_expr,
+        input_access=input_access,
+        bool_reduction=bool_reduction,
+        reduce_op=config.get("reduce_op"),
+        is_minmax=op_spec.name in {"amax", "amin"}
+        and dtype.torch_dtype is not torch.bool,
+        compare_op=compare_op if op_spec.name in {"amax", "amin"} else None,
+        is_float=dtype.torch_dtype is torch.float32,
+        isnan_fn=isnan_fn,
         output_access=output_access,
         acc_type=acc_type,
         init_value=init_value,
@@ -2813,14 +2755,16 @@ def _validate_example_inputs(
 
 def _infer_empty_strided_dtype(
     gm: torch.fx.GraphModule,
-) -> _CodegenDType:
+) -> _CodegenDType | None:
     dtype_value = None
+    found_empty_strided = False
     for node in gm.graph.nodes:
         if node.op != "call_function":
             continue
         target_info = TARGET_REGISTRY.get(node.target)
         if target_info is None or target_info.op_spec.kind != "empty_strided":
             continue
+        found_empty_strided = True
         node_dtype = None
         if len(node.args) > 2:
             node_dtype = node.args[2]
@@ -2842,6 +2786,8 @@ def _infer_empty_strided_dtype(
             raise RefBackendError(
                 "codegen empty_strided requires a consistent dtype"
             )
+    if not found_empty_strided:
+        return None
     dtype_info = _CODEGEN_DTYPES.get(dtype_value)
     if dtype_info is None:
         raise RefBackendError(
@@ -6030,6 +5976,7 @@ def _handle_arange_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    scalar_values: Dict[torch.fx.Node, object],
 ) -> Tuple[_OpNode, _CodegenDType]:
     allowed_kwargs = {
         "start",
@@ -6045,11 +5992,15 @@ def _handle_arange_node(
         raise RefBackendError(
             f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
         )
-    for name in ("layout", "device"):
-        if node.kwargs.get(name) is not None:
-            raise RefBackendError(
-                f"codegen {op_spec.name} expects {name} to be None"
-            )
+    if node.kwargs.get("layout") is not None:
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects layout to be None"
+        )
+    device = node.kwargs.get("device")
+    if device is not None and device != "cpu" and device != torch.device("cpu"):
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects device to be None or cpu"
+        )
     pin_memory = node.kwargs.get("pin_memory")
     if pin_memory not in (None, False):
         raise RefBackendError(
@@ -6086,9 +6037,9 @@ def _handle_arange_node(
         )
     if step_arg is None:
         step_arg = 1
-    start = _normalize_scalar_value(op_spec.name, start_arg)
-    end = _normalize_scalar_value(op_spec.name, end_arg)
-    step = _normalize_scalar_value(op_spec.name, step_arg)
+    start = _resolve_scalar_arg(op_spec.name, start_arg, scalar_values)
+    end = _resolve_scalar_arg(op_spec.name, end_arg, scalar_values)
+    step = _resolve_scalar_arg(op_spec.name, step_arg, scalar_values)
     dtype_spec = _parse_arange_dtype(
         op_spec.name, node.kwargs.get("dtype"), dtype_info
     )
@@ -6455,6 +6406,7 @@ def _analyze_generic_graph(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]] = {}
     strides: Dict[torch.fx.Node, Tuple[int, ...]] = {}
     dtypes: Dict[torch.fx.Node, torch.dtype] = {}
+    scalar_values: Dict[torch.fx.Node, object] = {}
     alias_map: Dict[torch.fx.Node, torch.fx.Node] = {}
     input_iter = iter(example_inputs)
 
@@ -6481,6 +6433,14 @@ def _analyze_generic_graph(
                 strides[node] = tuple(example.stride())
                 dtypes[node] = example.dtype
                 tensor_placeholders.append(node)
+            else:
+                if isinstance(example, numbers.Number):
+                    scalar_values[node] = example
+                else:
+                    try:
+                        scalar_values[node] = operator.index(example)
+                    except TypeError:
+                        pass
             continue
         if node.op in {"call_function", "call_method"}:
             if node.op == "call_function" and node.target is operator.getitem:
@@ -6551,6 +6511,7 @@ def _analyze_generic_graph(
                     shapes,
                     strides,
                     dtypes,
+                    scalar_values,
                 )
                 op_nodes.append(op_node)
                 continue

@@ -4,12 +4,36 @@
 {% endfor %}
     {{ acc_type }} acc = {{ init_value }};
 {% if input_rank == 0 %}
-    {{ reduce_expr }};
+{% if is_minmax %}
+{% if is_float %}
+    acc = {{ isnan_fn }}({{ input_access }}) ? {{ input_access }} : ({{ isnan_fn }}(acc) ? acc : ({{ input_access }} {{ compare_op }} acc ? {{ input_access }} : acc));
+{% else %}
+    acc = ({{ input_access }} {{ compare_op }} acc ? {{ input_access }} : acc);
+{% endif %}
+{% else %}
+{% if bool_reduction %}
+    acc {{ reduce_op }} ({{ input_access }} != 0);
+{% else %}
+    acc {{ reduce_op }} {{ input_access }};
+{% endif %}
+{% endif %}
 {% else %}
 {% for dim in reduction_dims %}
     for (int64_t r{{ dim.dim }} = 0; r{{ dim.dim }} < {{ dim.size }}; ++r{{ dim.dim }}) {
 {% endfor %}
-        {{ reduce_expr }};
+{% if is_minmax %}
+{% if is_float %}
+        acc = {{ isnan_fn }}({{ input_access }}) ? {{ input_access }} : ({{ isnan_fn }}(acc) ? acc : ({{ input_access }} {{ compare_op }} acc ? {{ input_access }} : acc));
+{% else %}
+        acc = ({{ input_access }} {{ compare_op }} acc ? {{ input_access }} : acc);
+{% endif %}
+{% else %}
+{% if bool_reduction %}
+        acc {{ reduce_op }} ({{ input_access }} != 0);
+{% else %}
+        acc {{ reduce_op }} {{ input_access }};
+{% endif %}
+{% endif %}
 {% for dim in reduction_dims | reverse %}
     }
 {% endfor %}
