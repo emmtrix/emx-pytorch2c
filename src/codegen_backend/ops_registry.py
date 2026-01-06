@@ -30,6 +30,7 @@ _VALID_KINDS = {
     "conv2d",
     "pool1d",
     "pool2d",
+    "pool3d",
     "pool2d_backward",
     "embedding",
     "gather",
@@ -1504,6 +1505,13 @@ _REGISTRY.register_op("adaptive_avg_pool2d", kind="pool2d").targets(
     torch.ops.aten.adaptive_avg_pool2d,
     torch.ops.aten._adaptive_avg_pool2d.default,
     torch.ops.aten._adaptive_avg_pool2d,
+).build()
+_REGISTRY.register_op("adaptive_avg_pool3d", kind="pool3d").targets(
+    F.adaptive_avg_pool3d,
+    torch.ops.aten.adaptive_avg_pool3d.default,
+    torch.ops.aten.adaptive_avg_pool3d,
+    torch.ops.aten._adaptive_avg_pool3d.default,
+    torch.ops.aten._adaptive_avg_pool3d,
 ).build()
 _REGISTRY.register_op("_adaptive_avg_pool2d_backward", kind="pool2d_backward").targets(
     torch.ops.aten._adaptive_avg_pool2d_backward.default,

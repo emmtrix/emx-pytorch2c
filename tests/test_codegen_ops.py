@@ -647,6 +647,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.adaptive_avg_pool1d.default,
     torch.ops.aten._adaptive_avg_pool2d.default,
     torch.ops.aten._adaptive_avg_pool2d_backward.default,
+    torch.ops.aten._adaptive_avg_pool3d.default,
     torch.ops.aten._native_batch_norm_legit_no_training.default,
     torch.ops.aten._pdist_forward.default,
 ]
@@ -930,6 +931,7 @@ CODEGEN_SPECIAL_TEST_OPS = [
     torch.ops.aten.adaptive_avg_pool1d.default,
     torch.ops.aten._adaptive_avg_pool2d.default,
     torch.ops.aten._adaptive_avg_pool2d_backward.default,
+    torch.ops.aten._adaptive_avg_pool3d.default,
     torch.ops.aten._native_batch_norm_legit_no_training.default,
     torch.ops.aten._pdist_forward.default,
 ]
@@ -1243,6 +1245,20 @@ class TestCodegenOpInfo(TestCase):
 
 
 class TestCodegenSpecialOps(TestCase):
+    def test_codegen_adaptive_avg_pool3d(self):
+        input_tensor = torch.randn(1, 2, 4, 4, 4)
+        compiled = torch.compile(
+            lambda inp: torch.ops.aten._adaptive_avg_pool3d.default(
+                inp, (2, 2, 2)
+            ),
+            backend=codegen_generic_backend,
+        )
+        expected = torch.ops.aten._adaptive_avg_pool3d.default(
+            input_tensor, (2, 2, 2)
+        )
+        result = compiled(input_tensor)
+        torch.testing.assert_close(result, expected)
+
     def test_codegen_adaptive_avg_pool2d_backward(self):
         grad_output = torch.randn(1, 2, 2, 2)
         input_tensor = torch.randn(1, 2, 4, 4)
