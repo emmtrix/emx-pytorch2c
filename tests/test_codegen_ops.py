@@ -927,8 +927,6 @@ CODEGEN_OPINFO_LIST = [opinfo for _, opinfo in CODEGEN_OPS_UNDER_TEST]
 CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.embedding.default: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
     },
     torch.ops.aten.copysign.Tensor: {
         "allowed_dtypes": (torch.float32,),
@@ -938,7 +936,6 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.bitwise_and.Scalar: {
         "allowed_dtypes": (torch.int8, torch.int32, torch.bool),
-        "allow_non_tensor_args": True,
     },
     torch.ops.aten.bitwise_left_shift.Tensor: {
         "allowed_dtypes": (torch.int8, torch.int32),
@@ -963,62 +960,42 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.clamp.default: {
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
     },
     torch.ops.aten.clamp_.default: {
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
     },
     torch.ops.aten.where.self: {
-        "requires_same_shape": False,
         "sample_filter": _broadcastable_sample_filter,
     },
     torch.ops.aten.where.Scalar: {
-        "requires_same_shape": False,
         "sample_filter": _broadcastable_sample_filter,
     },
     torch.ops.aten.argmax.default: {
-        "allow_non_tensor_args": True,
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
     },
     torch.ops.aten.argmin.default: {
-        "allow_non_tensor_args": True,
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
     },
     torch.ops.aten.softmax.int: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
     },
     torch.ops.aten.log_softmax.int: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
     },
     torch.ops.aten.log_sigmoid.default: {
         "allowed_dtypes": (torch.float32,),
     },
     torch.ops.aten.gelu.default: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
     },
     torch.ops.aten.elu.default: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
     },
     torch.ops.aten.leaky_relu.default: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
     },
     torch.ops.aten.softplus.default: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
     },
     torch.ops.aten.digamma.default: {
         "allowed_dtypes": (torch.float32,),
@@ -1033,23 +1010,17 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.var.dim: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
         "sample_filter": _var_dim_sample_filter,
     },
     torch.ops.aten.norm.ScalarOpt_dim: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
         "sample_filter": _norm_dim_sample_filter,
     },
     torch.ops.aten.view.default: {
         "requires_contiguous": True,
     },
     torch.ops.aten.cat.default: {
-        "allow_kwargs": True,
-        "allow_non_tensor_args": True,
         "expand_input_list": True,
-        "requires_same_shape": False,
     },
     torch.ops.aten.relu6.default: {
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
@@ -1059,96 +1030,55 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.conv2d.default: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
-        "requires_same_shape": False,
     },
     torch.ops.aten.convolution.default: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
-        "requires_same_shape": False,
         "requires_contiguous": True,
         "sample_filter": _convolution_sample_filter,
     },
     torch.ops.aten.avg_pool1d.default: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
-        "requires_same_shape": False,
         "requires_contiguous": True,
         "sample_filter": _avg_pool1d_sample_filter,
     },
     torch.ops.aten.avg_pool2d.default: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
-        "requires_same_shape": False,
         "requires_contiguous": True,
         "sample_filter": _avg_pool2d_sample_filter,
     },
     torch.ops.aten.max_pool1d.default: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
-        "requires_same_shape": False,
         "requires_contiguous": True,
         "sample_filter": _max_pool1d_sample_filter,
     },
     torch.ops.aten.max_pool2d.default: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
-        "requires_same_shape": False,
         "requires_contiguous": True,
         "sample_filter": _max_pool2d_sample_filter,
     },
     torch.ops.aten.conv1d.default: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
-        "requires_same_shape": False,
     },
     torch.ops.aten.resize_.default: {
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
         "sample_filter": _resize_sample_filter,
     },
     torch.ops.aten.cumsum.default: {
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
-        "requires_same_shape": False,
         "sample_filter": _cumsum_sample_filter,
     },
     torch.ops.aten.addmm.default: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_noncontiguous": True,
-        "allow_kwargs": True,
-        "requires_same_shape": False,
     },
     torch.ops.aten.addbmm.default: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_noncontiguous": True,
-        "allow_kwargs": True,
-        "requires_same_shape": False,
         "rtol": 2e-4,
         "atol": 2e-5,
     },
     torch.ops.aten.addmv.default: {
         "allowed_dtypes": (torch.float32,),
-        "allow_non_tensor_args": True,
-        "allow_noncontiguous": True,
-        "allow_kwargs": True,
-        "requires_same_shape": False,
         "sample_filter": _addmv_sample_filter,
     },
     torch.ops.aten.addr.default: {
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
-        "requires_same_shape": False,
         "equal_nan": True,
         "sample_filter": _addr_sample_filter,
     },
