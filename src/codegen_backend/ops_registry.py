@@ -533,6 +533,16 @@ _REGISTRY.register_binary("clamp_max").targets(
     torch.ops.aten.clamp_max_.Tensor,
     torch.ops.aten.clamp_max_,
 ).build()
+_REGISTRY.register_unary("clamp").targets(
+    torch.clamp,
+    torch.ops.aten.clamp.default,
+    torch.ops.aten.clamp,
+    torch.ops.aten.clamp_.default,
+    torch.ops.aten.clamp_,
+).inplace(
+    torch.ops.aten.clamp_.default,
+    torch.ops.aten.clamp_,
+).build()
 _REGISTRY.register_unary("neg").targets(
     operator.neg,
     torch.neg,

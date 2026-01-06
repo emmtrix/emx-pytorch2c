@@ -85,8 +85,21 @@ _BITWISE_BOOL_OPS = {
     "bitwise_xor",
     "bitwise_not",
 }
-_PARAMETRIC_UNARY_OPS = {"gelu", "elu", "leaky_relu", "softplus", "hardtanh"}
-_FLOAT_ONLY_UNARY_OPS = _PARAMETRIC_UNARY_OPS
+_PARAMETRIC_UNARY_OPS = {
+    "gelu",
+    "elu",
+    "leaky_relu",
+    "softplus",
+    "hardtanh",
+    "clamp",
+}
+_FLOAT_ONLY_UNARY_OPS = {
+    "gelu",
+    "elu",
+    "leaky_relu",
+    "softplus",
+    "hardtanh",
+}
 
 _TEMPLATE_ENV: Environment | None = None
 
@@ -798,6 +811,47 @@ def _emit_parametric_unary(
         return [
             f"{indent}{output_access} = ({beta} * {input_access} > {threshold}) ? "
             f"{input_access} : (log1pf(expf({beta} * {input_access})) / {beta});"
+        ]
+    if op_name == "clamp":
+        min_val = params.get("min_val")
+        max_val = params.get("max_val")
+        if min_val is None and max_val is None:
+            return [f"{indent}{output_access} = {input_access};"]
+        if dtype.torch_dtype is torch.float32:
+            if min_val is None:
+                max_literal = _format_scalar_literal(max_val, dtype)
+                return [
+                    f"{indent}{output_access} = fminf({input_access}, {max_literal});"
+                ]
+            if max_val is None:
+                min_literal = _format_scalar_literal(min_val, dtype)
+                return [
+                    f"{indent}{output_access} = fmaxf({input_access}, {min_literal});"
+                ]
+            min_literal = _format_scalar_literal(min_val, dtype)
+            max_literal = _format_scalar_literal(max_val, dtype)
+            return [
+                f"{indent}{output_access} = fminf(fmaxf({input_access}, {min_literal}), {max_literal});"
+            ]
+        min_literal = (
+            _format_scalar_literal(min_val, dtype) if min_val is not None else None
+        )
+        max_literal = (
+            _format_scalar_literal(max_val, dtype) if max_val is not None else None
+        )
+        if min_literal is None:
+            return [
+                f"{indent}{output_access} = ({input_access} > {max_literal}) ? "
+                f"{max_literal} : {input_access};"
+            ]
+        if max_literal is None:
+            return [
+                f"{indent}{output_access} = ({input_access} < {min_literal}) ? "
+                f"{min_literal} : {input_access};"
+            ]
+        return [
+            f"{indent}{output_access} = ({input_access} < {min_literal}) ? "
+            f"{min_literal} : (({input_access} > {max_literal}) ? {max_literal} : {input_access});"
         ]
     if op_name == "hardtanh":
         min_val = _format_scalar_literal(params.get("min_val", -1.0), dtype)
@@ -3441,6 +3495,35 @@ def _parse_parametric_unary_args(
             op_name, "threshold", params.get("threshold", 20.0)
         )
         return input_node, params
+    if op_name == "clamp":
+        if len(node.args) > 3:
+            raise RefBackendError("codegen clamp expects one input")
+        if len(node.args) > 1:
+            params["min_val"] = node.args[1]
+        if len(node.args) > 2:
+            params["max_val"] = node.args[2]
+        if "min" in node.kwargs:
+            if len(node.args) > 1:
+                raise RefBackendError("codegen clamp expects min as a keyword")
+            params["min_val"] = node.kwargs["min"]
+        if "max" in node.kwargs:
+            if len(node.args) > 2:
+                raise RefBackendError("codegen clamp expects max as a keyword")
+            params["max_val"] = node.kwargs["max"]
+        extra = set(node.kwargs) - {"min", "max"}
+        if extra:
+            raise RefBackendError(
+                f"codegen clamp got unexpected kwargs: {sorted(extra)}"
+            )
+        if params.get("min_val") is not None:
+            params["min_val"] = _parse_constant_float(
+                op_name, "min", params["min_val"]
+            )
+        if params.get("max_val") is not None:
+            params["max_val"] = _parse_constant_float(
+                op_name, "max", params["max_val"]
+            )
+        return input_node, params
     if op_name == "hardtanh":
         if len(node.args) > 3:
             raise RefBackendError("codegen hardtanh expects one input")
@@ -5391,6 +5474,22 @@ def _analyze_generic_graph(
                     raise RefBackendError(
                         f"codegen {op_spec.name} supports only torch.float32 tensors"
                     )
+            if op_spec.name == "clamp" and dtype_info.torch_dtype is torch.bool:
+                raise RefBackendError(
+                    "codegen clamp supports only numeric tensors"
+                )
+            if (
+                op_spec.name == "clamp"
+                and dtype_info.torch_dtype in _INTEGER_CODEGEN_DTYPES
+            ):
+                for name in ("min_val", "max_val"):
+                    value = param_values.get(name)
+                    if value is None:
+                        continue
+                    if not float(value).is_integer():
+                        raise RefBackendError(
+                            "codegen clamp expects integer min/max for integer tensors"
+                        )
             if op_spec.kind == "where":
                 if input_dtypes[0] is not torch.bool:
                     raise RefBackendError(

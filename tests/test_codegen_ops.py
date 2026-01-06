@@ -515,6 +515,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.bmm.default,
     torch.ops.aten.cat.default,
     torch.ops.aten.ceil.default,
+    torch.ops.aten.clamp.default,
     torch.ops.aten.clamp_max.Tensor,
     torch.ops.aten.clamp_min.Tensor,
     torch.ops.aten.clone.default,
@@ -665,6 +666,7 @@ INPLACE_ATEN_OPS = [
     torch.ops.aten.bitwise_right_shift_.Tensor,
     torch.ops.aten.bitwise_xor_.Tensor,
     torch.ops.aten.ceil_.default,
+    torch.ops.aten.clamp_.default,
     torch.ops.aten.clamp_max_.Tensor,
     torch.ops.aten.clamp_min_.Tensor,
     torch.ops.aten.conj_physical_.default,
@@ -879,6 +881,16 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.logical_xor.default: {
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
+    },
+    torch.ops.aten.clamp.default: {
+        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
+        "allow_non_tensor_args": True,
+        "allow_kwargs": True,
+    },
+    torch.ops.aten.clamp_.default: {
+        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
+        "allow_non_tensor_args": True,
+        "allow_kwargs": True,
     },
     torch.ops.aten.where.self: {
         "requires_same_shape": False,
