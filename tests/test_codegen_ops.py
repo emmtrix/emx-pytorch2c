@@ -489,6 +489,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.acos.default,
     torch.ops.aten.acosh.default,
     torch.ops.aten.add.Tensor,
+    torch.ops.aten.add.Scalar,
     torch.ops.aten.all.default,
     torch.ops.aten.angle.default,
     torch.ops.aten.any.default,
@@ -510,8 +511,10 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.bitwise_left_shift.Tensor,
     torch.ops.aten.bitwise_not.default,
     torch.ops.aten.bitwise_or.Tensor,
+    torch.ops.aten.bitwise_or.Scalar,
     torch.ops.aten.bitwise_right_shift.Tensor,
     torch.ops.aten.bitwise_xor.Tensor,
+    torch.ops.aten.bitwise_xor.Scalar,
     torch.ops.aten.bmm.default,
     torch.ops.aten.cat.default,
     torch.ops.aten.ceil.default,
@@ -521,6 +524,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.conj.default,
     torch.ops.aten.conj_physical.default,
     torch.ops.aten.copysign.Tensor,
+    torch.ops.aten.copysign.Scalar,
     torch.ops.aten.conv1d.default,
     torch.ops.aten.conv2d.default,
     torch.ops.aten.convolution.default,
@@ -533,6 +537,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.digamma.default,
     torch.ops.aten.diagonal.default,
     torch.ops.aten.div.Tensor,
+    torch.ops.aten.div.Scalar,
     torch.ops.aten.embedding.default,
     torch.ops.aten.erf.default,
     torch.ops.aten.erfc.default,
@@ -544,9 +549,11 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.flip.default,
     torch.ops.aten.floor.default,
     torch.ops.aten.floor_divide.default,
+    torch.ops.aten.floor_divide.Scalar,
     torch.ops.aten.fmax.default,
     torch.ops.aten.fmin.default,
     torch.ops.aten.fmod.Tensor,
+    torch.ops.aten.fmod.Scalar,
     torch.ops.aten.frac.default,
     torch.ops.aten.heaviside.default,
     torch.ops.aten.hypot.default,
@@ -558,11 +565,17 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.isposinf.default,
     torch.ops.aten.ldexp.Tensor,
     torch.ops.aten.lt.Tensor,
+    torch.ops.aten.lt.Scalar,
     torch.ops.aten.le.Tensor,
+    torch.ops.aten.le.Scalar,
     torch.ops.aten.gt.Tensor,
+    torch.ops.aten.gt.Scalar,
     torch.ops.aten.ge.Tensor,
+    torch.ops.aten.ge.Scalar,
     torch.ops.aten.eq.Tensor,
+    torch.ops.aten.eq.Scalar,
     torch.ops.aten.ne.Tensor,
+    torch.ops.aten.ne.Scalar,
     torch.ops.aten.logical_and.default,
     torch.ops.aten.logical_not.default,
     torch.ops.aten.logical_or.default,
@@ -591,6 +604,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.maximum.default,
     torch.ops.aten.minimum.default,
     torch.ops.aten.mul.Tensor,
+    torch.ops.aten.mul.Scalar,
     torch.ops.aten.mean.default,
     torch.ops.aten.std.default,
     torch.ops.aten.var.dim,
@@ -606,6 +620,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.reciprocal.default,
     torch.ops.aten.relu.default,
     torch.ops.aten.remainder.Tensor,
+    torch.ops.aten.remainder.Scalar,
     torch.ops.aten.round.default,
     torch.ops.aten.rsqrt.default,
     torch.ops.aten.selu.default,
@@ -622,6 +637,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.sqrt.default,
     torch.ops.aten.square.default,
     torch.ops.aten.sub.Tensor,
+    torch.ops.aten.sub.Scalar,
     torch.ops.aten.sum.default,
     torch.ops.aten.tan.default,
     torch.ops.aten.tanh.default,
@@ -638,6 +654,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.trunc.default,
     torch.ops.aten.xlogy.Tensor,
     torch.ops.aten.where.self,
+    torch.ops.aten.where.Scalar,
 ]
 aten_cbrt = getattr(torch.ops.aten, "cbrt", None)
 if aten_cbrt is not None:
@@ -763,16 +780,37 @@ def _clone_opinfo(opinfo, *, name, aten_name):
     return cloned
 
 
+def _clone_scalar_opinfo(aten_name, variant_test_name=""):
+    return _clone_opinfo(
+        _lookup_opinfo(aten_name, variant_test_name),
+        name=f"{aten_name}_scalar",
+        aten_name=aten_name,
+    )
+
+
 CODEGEN_OPINFO_OVERRIDES = {
     torch.ops.aten.div.Tensor: _lookup_opinfo("div", "no_rounding_mode"),
+    torch.ops.aten.div.Scalar: _clone_scalar_opinfo("div", "no_rounding_mode"),
     torch.ops.aten.hardsigmoid.default: _lookup_opinfo(
         "nn.functional.hardsigmoid", ""
     ),
-    torch.ops.aten.bitwise_and.Scalar: _clone_opinfo(
-        _lookup_opinfo("bitwise_and", ""),
-        name="bitwise_and_scalar",
-        aten_name="bitwise_and",
-    ),
+    torch.ops.aten.add.Scalar: _clone_scalar_opinfo("add", ""),
+    torch.ops.aten.bitwise_and.Scalar: _clone_scalar_opinfo("bitwise_and", ""),
+    torch.ops.aten.bitwise_or.Scalar: _clone_scalar_opinfo("bitwise_or", ""),
+    torch.ops.aten.bitwise_xor.Scalar: _clone_scalar_opinfo("bitwise_xor", ""),
+    torch.ops.aten.copysign.Scalar: _clone_scalar_opinfo("copysign", ""),
+    torch.ops.aten.eq.Scalar: _clone_scalar_opinfo("eq", ""),
+    torch.ops.aten.floor_divide.Scalar: _clone_scalar_opinfo("floor_divide", ""),
+    torch.ops.aten.fmod.Scalar: _clone_scalar_opinfo("fmod", ""),
+    torch.ops.aten.ge.Scalar: _clone_scalar_opinfo("ge", ""),
+    torch.ops.aten.gt.Scalar: _clone_scalar_opinfo("gt", ""),
+    torch.ops.aten.le.Scalar: _clone_scalar_opinfo("le", ""),
+    torch.ops.aten.lt.Scalar: _clone_scalar_opinfo("lt", ""),
+    torch.ops.aten.mul.Scalar: _clone_scalar_opinfo("mul", ""),
+    torch.ops.aten.ne.Scalar: _clone_scalar_opinfo("ne", ""),
+    torch.ops.aten.remainder.Scalar: _clone_scalar_opinfo("remainder", ""),
+    torch.ops.aten.sub.Scalar: _clone_scalar_opinfo("sub", ""),
+    torch.ops.aten.where.Scalar: _clone_scalar_opinfo("where", ""),
     torch.ops.aten.elu.default: _lookup_opinfo("nn.functional.elu", ""),
     torch.ops.aten.softplus.default: _lookup_opinfo("nn.functional.softplus", ""),
     torch.ops.aten.round.default: _lookup_opinfo("round", ""),
@@ -834,12 +872,18 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.add.Tensor: {
         "requires_same_shape": False,
     },
+    torch.ops.aten.add.Scalar: {
+        "requires_same_shape": False,
+    },
     torch.ops.aten.embedding.default: {
         "allowed_dtypes": (torch.float32,),
         "allow_non_tensor_args": True,
         "allow_kwargs": True,
     },
     torch.ops.aten.copysign.Tensor: {
+        "allowed_dtypes": (torch.float32,),
+    },
+    torch.ops.aten.copysign.Scalar: {
         "allowed_dtypes": (torch.float32,),
     },
     torch.ops.aten.diagonal.default: {
@@ -881,6 +925,10 @@ CODEGEN_OP_TEST_CONFIG = {
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
     },
     torch.ops.aten.where.self: {
+        "requires_same_shape": False,
+        "sample_filter": _broadcastable_sample_filter,
+    },
+    torch.ops.aten.where.Scalar: {
         "requires_same_shape": False,
         "sample_filter": _broadcastable_sample_filter,
     },
