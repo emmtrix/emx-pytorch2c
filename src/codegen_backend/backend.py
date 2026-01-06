@@ -5471,23 +5471,45 @@ def _handle_batch_norm_node(
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
 ) -> _OpNode:
-    if len(node.args) < 7:
+    has_training_flag = op_spec.name == "_native_batch_norm_legit"
+    expected_inputs = 8 if has_training_flag else 7
+    if len(node.args) < expected_inputs:
         raise RefBackendError(
-            "codegen _native_batch_norm_legit_no_training expects 7 inputs"
+            f"codegen {op_spec.name} expects {expected_inputs} inputs"
         )
     if node.kwargs:
         raise RefBackendError(
-            "codegen _native_batch_norm_legit_no_training expects positional args only"
+            f"codegen {op_spec.name} expects positional args only"
         )
-    (
-        input_arg,
-        weight,
-        bias,
-        running_mean,
-        running_var,
-        momentum,
-        eps,
-    ) = node.args[:7]
+    if has_training_flag:
+        (
+            input_arg,
+            weight,
+            bias,
+            running_mean,
+            running_var,
+            training,
+            momentum,
+            eps,
+        ) = node.args[:8]
+        if isinstance(training, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects constant training flag"
+            )
+        if training not in (False, 0):
+            raise RefBackendError(
+                f"codegen {op_spec.name} supports only training=False"
+            )
+    else:
+        (
+            input_arg,
+            weight,
+            bias,
+            running_mean,
+            running_var,
+            momentum,
+            eps,
+        ) = node.args[:7]
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
         raise _error_expected_tensor(op_spec.name)
     if not isinstance(running_mean, torch.fx.Node) or running_mean not in shapes:
@@ -5505,21 +5527,17 @@ def _handle_batch_norm_node(
             raise _error_expected_tensor(op_spec.name)
         bias_node = bias
     if dtype_info.torch_dtype is not torch.float32:
-        raise RefBackendError(
-            "codegen _native_batch_norm_legit_no_training supports only torch.float32"
-        )
+        raise RefBackendError(f"codegen {op_spec.name} supports only torch.float32")
     if dtypes[input_arg] is not torch.float32:
-        raise RefBackendError(
-            "codegen _native_batch_norm_legit_no_training supports only torch.float32"
-        )
+        raise RefBackendError(f"codegen {op_spec.name} supports only torch.float32")
     input_shape = shapes[input_arg]
     if len(input_shape) < 2:
         raise RefBackendError(
-            "codegen _native_batch_norm_legit_no_training expects at least 2D inputs"
+            f"codegen {op_spec.name} expects at least 2D inputs"
         )
     if not _is_contiguous(input_shape, strides[input_arg]):
         raise RefBackendError(
-            "codegen _native_batch_norm_legit_no_training requires contiguous input"
+            f"codegen {op_spec.name} requires contiguous input"
         )
     channels = input_shape[1]
     for stat_arg, name in (
@@ -5529,44 +5547,43 @@ def _handle_batch_norm_node(
         stat_shape = shapes[stat_arg]
         if stat_shape != (channels,):
             raise RefBackendError(
-                f"codegen _native_batch_norm_legit_no_training expects {name} shape "
-                "to match channels"
+                f"codegen {op_spec.name} expects {name} shape to match channels"
             )
         if not _is_contiguous(stat_shape, strides[stat_arg]):
             raise RefBackendError(
-                "codegen _native_batch_norm_legit_no_training requires contiguous stats"
+                f"codegen {op_spec.name} requires contiguous stats"
             )
         if dtypes[stat_arg] is not torch.float32:
             raise RefBackendError(
-                "codegen _native_batch_norm_legit_no_training supports only torch.float32"
+                f"codegen {op_spec.name} supports only torch.float32"
             )
     if weight_node is not None:
         if shapes[weight_node] != (channels,):
             raise RefBackendError(
-                "codegen _native_batch_norm_legit_no_training expects weight shape to match channels"
+                f"codegen {op_spec.name} expects weight shape to match channels"
             )
         if dtypes[weight_node] is not torch.float32:
             raise RefBackendError(
-                "codegen _native_batch_norm_legit_no_training supports only torch.float32"
+                f"codegen {op_spec.name} supports only torch.float32"
             )
     if bias_node is not None:
         if shapes[bias_node] != (channels,):
             raise RefBackendError(
-                "codegen _native_batch_norm_legit_no_training expects bias shape to match channels"
+                f"codegen {op_spec.name} expects bias shape to match channels"
             )
         if dtypes[bias_node] is not torch.float32:
             raise RefBackendError(
-                "codegen _native_batch_norm_legit_no_training supports only torch.float32"
+                f"codegen {op_spec.name} supports only torch.float32"
             )
     if isinstance(momentum, torch.fx.Node) or isinstance(eps, torch.fx.Node):
         raise RefBackendError(
-            "codegen _native_batch_norm_legit_no_training expects constant momentum and eps"
+            f"codegen {op_spec.name} expects constant momentum and eps"
         )
     try:
         eps_value = float(eps)
     except (TypeError, ValueError) as exc:
         raise RefBackendError(
-            "codegen _native_batch_norm_legit_no_training expects eps to be a float"
+            f"codegen {op_spec.name} expects eps to be a float"
         ) from exc
     shapes[node] = input_shape
     dtypes[node] = dtype_info.torch_dtype
@@ -6697,11 +6714,13 @@ def _analyze_generic_graph(
                         "codegen backend expects getitem source to be analyzed"
                     )
                 if source.target not in {
+                    torch.ops.aten._native_batch_norm_legit,
+                    torch.ops.aten._native_batch_norm_legit.default,
                     torch.ops.aten._native_batch_norm_legit_no_training,
                     torch.ops.aten._native_batch_norm_legit_no_training.default,
                 }:
                     raise RefBackendError(
-                        "codegen backend supports getitem only for _native_batch_norm_legit_no_training"
+                        "codegen backend supports getitem only for _native_batch_norm_legit* ops"
                     )
                 alias_map[node] = source
                 shapes[node] = shapes[source]
