@@ -375,6 +375,49 @@ class EmbeddingHandler(KindHandler):
         return tuple(indices_shape) + (weight_shape[1],)
 
 
+class EmbeddingBagHandler(KindHandler):
+    def emit_kernel(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        backend = _backend_module()
+        weight_node, indices_node, offsets_node = op_node.inputs
+        return backend._write_embedding_bag_kernel(
+            node_index,
+            op_node.spec,
+            graph.shapes[weight_node],
+            graph.shapes[indices_node],
+            graph.shapes[offsets_node],
+            graph.strides[weight_node],
+            graph.strides[indices_node],
+            graph.strides[offsets_node],
+            op_node.output_shape,
+            graph.strides[op_node.node],
+            graph.dtypes[indices_node],
+            graph.dtypes[offsets_node],
+            graph.dtype,
+            mode=int(op_node.p("mode", 0)),
+            padding_idx=int(op_node.p("padding_idx", -1)),
+            include_last_offset=bool(op_node.p("include_last_offset", False)),
+        )
+
+    def infer_output_shape(
+        self,
+        op_spec: _OpSpec,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        backend = _backend_module()
+        weight_shape, _indices_shape, offsets_shape = input_shapes
+        if len(weight_shape) != 2:
+            raise backend.RefBackendError(
+                "codegen _embedding_bag expects 2D weight tensor"
+            )
+        if len(offsets_shape) != 1:
+            raise backend.RefBackendError(
+                "codegen _embedding_bag expects 1D offsets tensor"
+            )
+        return (offsets_shape[0], weight_shape[1])
+
+
 class GatherHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
@@ -947,6 +990,7 @@ def build_kind_handlers() -> Dict[str, KindHandler]:
         "softmax": SoftmaxHandler(),
         "cumsum": CumsumHandler(),
         "embedding": EmbeddingHandler(),
+        "embedding_bag": EmbeddingBagHandler(),
         "gather": GatherHandler(),
         "concat": ConcatHandler(),
         "pool2d": Pool2dHandler(),

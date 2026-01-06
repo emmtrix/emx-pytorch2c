@@ -4,7 +4,7 @@ _adaptive_avg_pool2d                     -     yes
 _adaptive_avg_pool2d_backward            -     yes    
 _adaptive_avg_pool3d                     -     yes    
 _cdist_forward                           -     yes    
-_embedding_bag                           -     -      
+_embedding_bag                           -     yes    
 _fft_r2c                                 -     -      
 _local_scalar_dense                      -     -      
 _log_softmax                             -     yes    
@@ -196,8 +196,8 @@ where.self                               -     yes
 Summary
 total aten ops: 192
 supported by cref only: 0
-supported by codegen only: 88
+supported by codegen only: 89
 supported by both: 49
-unsupported by either: 55
-supported by codegen: 137 / 192 (71.4 %)
+unsupported by either: 54
+supported by codegen: 138 / 192 (71.9 %)
 supported by c-ref: 49 / 192 (25.5 %)
