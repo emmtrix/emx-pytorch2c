@@ -117,6 +117,11 @@ def _get_template_env() -> Environment:
     return _TEMPLATE_ENV
 
 
+def _is_out_overload(target: object) -> bool:
+    schema = getattr(target, "_schema", None)
+    return schema is not None and schema.overload_name == "out"
+
+
 @dataclass(frozen=True)
 class _TargetInfo:
     op_spec: _OpSpec
@@ -137,6 +142,10 @@ def _build_target_registry() -> Dict[object, _TargetInfo]:
 
 
 TARGET_REGISTRY = _build_target_registry()
+TARGET_REGISTRY[torch.ops.aten.atan2.out] = _TargetInfo(
+    op_spec=SUPPORTED_OPS["atan2"],
+    inplace_arg_index=2,
+)
 
 
 @dataclass
@@ -359,6 +368,48 @@ def _normalize_pool2d_param(name: str, value: object) -> Tuple[int, int]:
     ):
         return (value[0], value[1])
     raise RefBackendError(f"pool2d expects {name} to be an int or a pair of ints")
+
+
+def _normalize_col2im_output_size(
+    op_name: str, value: object
+) -> Tuple[int, int]:
+    if isinstance(value, torch.Size):
+        value = tuple(value)
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise RefBackendError(
+            f"codegen {op_name} expects output_size to be a tuple of two ints"
+        )
+    try:
+        return tuple(int(operator.index(item)) for item in value)
+    except TypeError as exc:
+        raise RefBackendError(
+            f"codegen {op_name} expects output_size to be a tuple of ints"
+        ) from exc
+
+
+def _normalize_col2im_pair(
+    op_name: str, name: str, value: object
+) -> Tuple[int, int]:
+    if isinstance(value, torch.Size):
+        value = tuple(value)
+    if isinstance(value, (list, tuple)):
+        if len(value) != 2:
+            raise RefBackendError(
+                f"codegen {op_name} expects {name} to be an int or a pair of ints"
+            )
+        try:
+            return tuple(int(operator.index(item)) for item in value)
+        except TypeError as exc:
+            raise RefBackendError(
+                f"codegen {op_name} expects {name} to be an int or a pair of ints"
+            ) from exc
+    try:
+        scalar = int(operator.index(value))
+    except TypeError as exc:
+        raise RefBackendError(
+            f"codegen {op_name} expects {name} to be an int or a pair of ints"
+        ) from exc
+    return (scalar, scalar)
 
 
 def _normalize_pool1d_param(name: str, value: object) -> int:
@@ -1021,6 +1072,34 @@ def _write_elementwise_kernel(
     return lines
 
 
+def _write_arange_kernel(
+    node_index: int,
+    op_node: _OpNode,
+    output_shape: Sequence[int],
+    output_strides: Sequence[int],
+    dtype: _CodegenDType,
+) -> List[str]:
+    out_suffix = _format_array_suffix(output_shape)
+    signature = (
+        f"void node{node_index}_{op_node.spec.name}_{dtype.suffix}("
+        f"{dtype.c_type} out{out_suffix}) {{"
+    )
+    lines = [signature]
+    loop_lines, indent = emit_loops(output_shape)
+    lines.extend(loop_lines)
+    output_access = emit_output_access(
+        output_shape, output_strides, c_type=dtype.c_type
+    )
+    start = _format_scalar_literal(op_node.p("start"), dtype)
+    step = _format_scalar_literal(op_node.p("step"), dtype)
+    index_expr = "i0" if output_shape else "0"
+    lines.append(
+        f"{indent}{output_access} = {start} + ({step} * {index_expr});"
+    )
+    lines.extend(emit_footer(output_shape, indent))
+    return lines
+
+
 def _write_flip_kernel(
     node_index: int,
     op_node: _OpNode,
@@ -1412,6 +1491,7 @@ def _write_addmv_kernel(
     node_index: int,
     op_spec: _OpSpec,
     input_shape: Sequence[int],
+    output_shape: Sequence[int],
     mat_shape: Sequence[int],
     vec_shape: Sequence[int],
     input_strides: Sequence[int],
@@ -1427,14 +1507,23 @@ def _write_addmv_kernel(
     input_is_contiguous = _is_contiguous(input_shape, input_strides)
     mat_is_contiguous = _is_contiguous(mat_shape, mat_strides)
     vec_is_contiguous = _is_contiguous(vec_shape, vec_strides)
-    output_is_contiguous = _is_contiguous(input_shape, output_strides)
+    output_is_contiguous = _is_contiguous(output_shape, output_strides)
     acc_type = dtype.c_type
     acc_init = "0" if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES else "0.0f"
     m, n = mat_shape
     input_suffix = _format_array_suffix(input_shape)
     mat_suffix = _format_array_suffix(mat_shape)
     vec_suffix = _format_array_suffix(vec_shape)
-    out_suffix = _format_array_suffix(input_shape)
+    out_suffix = _format_array_suffix(output_shape)
+    broadcast_input = input_shape != output_shape
+    input_access = _emit_strided_access(
+        "input",
+        ("i",),
+        input_strides,
+        contig=input_is_contiguous and not broadcast_input,
+        sizes=input_shape,
+        c_type=dtype.c_type,
+    )
     rendered = addmv_template.render(
         signature=(
             f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
@@ -1447,14 +1536,7 @@ def _write_addmv_kernel(
         n=n,
         acc_type=acc_type,
         acc_init=acc_init,
-        input_access=_emit_strided_access(
-            "input",
-            ("i",),
-            input_strides,
-            input_is_contiguous,
-            sizes=input_shape,
-            c_type=dtype.c_type,
-        ),
+        input_access=input_access,
         mat_access=_emit_strided_access(
             "mat",
             ("i", "t"),
@@ -1476,7 +1558,7 @@ def _write_addmv_kernel(
             ("i",),
             output_strides,
             output_is_contiguous,
-            sizes=input_shape,
+            sizes=output_shape,
             c_type=dtype.c_type,
         ),
         alpha=_format_scalar_literal(alpha, dtype),
@@ -2265,6 +2347,74 @@ def _write_embedding_kernel(
     return rendered.splitlines()
 
 
+def _write_gather_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    input_shape: Sequence[int],
+    index_shape: Sequence[int],
+    input_strides: Sequence[int],
+    index_strides: Sequence[int],
+    output_shape: Sequence[int],
+    output_strides: Sequence[int],
+    index_dtype: torch.dtype,
+    gather_dim: int,
+    dtype: _CodegenDType,
+) -> List[str]:
+    gather_template = _get_template_env().get_template("gather_kernel.c.j2")
+    input_suffix = _format_array_suffix(input_shape)
+    index_suffix = _format_array_suffix(index_shape)
+    out_suffix = _format_array_suffix(output_shape)
+    index_c_type = _dtype_to_c_type(index_dtype, dtype)
+    signature = (
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"const {dtype.c_type} input{input_suffix}, "
+        f"const {index_c_type} index{index_suffix}, "
+        f"{dtype.c_type} out{out_suffix}) {{"
+    )
+    loop_lines, indent = emit_loops(output_shape)
+    output_indices = [f"i{dim}" for dim in range(len(output_shape))]
+    output_access = _emit_strided_access(
+        "out",
+        output_indices,
+        output_strides,
+        _is_contiguous(output_shape, output_strides),
+        sizes=output_shape,
+        c_type=dtype.c_type,
+    )
+    index_access = _emit_strided_access(
+        "index",
+        output_indices,
+        index_strides,
+        _is_contiguous(index_shape, index_strides),
+        sizes=index_shape,
+        c_type=index_c_type,
+    )
+    input_indices = [
+        "idx" if dim == gather_dim else f"i{dim}"
+        for dim in range(len(input_shape))
+    ]
+    input_access = _emit_strided_access(
+        "input",
+        input_indices,
+        input_strides,
+        _is_contiguous(input_shape, input_strides),
+        sizes=input_shape,
+        c_type=dtype.c_type,
+    )
+    body_lines = [
+        f"{indent}int64_t idx = (int64_t)({index_access});",
+        f"{indent}{output_access} = {input_access};",
+    ]
+    footer_lines = emit_footer(output_shape, indent)
+    rendered = gather_template.render(
+        signature=signature,
+        loop_lines=loop_lines,
+        body_lines=body_lines,
+        footer_lines=footer_lines,
+    )
+    return rendered.splitlines()
+
+
 def _write_conv2d_kernel(
     node_index: int,
     op_spec: _OpSpec,
@@ -2426,6 +2576,61 @@ def _write_pool1d_kernel(
     return rendered.strip().splitlines()
 
 
+def _write_col2im_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    input_shape: Sequence[int],
+    output_shape: Sequence[int],
+    output_size: Tuple[int, int],
+    kernel_size: Tuple[int, int],
+    dilation: Tuple[int, int],
+    padding: Tuple[int, int],
+    stride: Tuple[int, int],
+    dtype: _CodegenDType,
+    out_blocks_h: int,
+    out_blocks_w: int,
+) -> List[str]:
+    col2im_template = _get_template_env().get_template("col2im_kernel.c.j2")
+    if len(output_shape) == 4:
+        batch, channels, out_h, out_w = output_shape
+        has_batch = True
+    else:
+        channels, out_h, out_w = output_shape
+        batch = 1
+        has_batch = False
+    k_h, k_w = kernel_size
+    stride_h, stride_w = stride
+    pad_h, pad_w = padding
+    dil_h, dil_w = dilation
+    input_suffix = _format_array_suffix(input_shape)
+    output_suffix = _format_array_suffix(output_shape)
+    signature = (
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"const {dtype.c_type} input{input_suffix}, "
+        f"{dtype.c_type} out{output_suffix}) {{"
+    )
+    rendered = col2im_template.render(
+        signature=signature,
+        batch=batch,
+        channels=channels,
+        out_h=out_h,
+        out_w=out_w,
+        k_h=k_h,
+        k_w=k_w,
+        stride_h=stride_h,
+        stride_w=stride_w,
+        pad_h=pad_h,
+        pad_w=pad_w,
+        dil_h=dil_h,
+        dil_w=dil_w,
+        c_type=dtype.c_type,
+        out_blocks_h=out_blocks_h,
+        out_blocks_w=out_blocks_w,
+        has_batch=has_batch,
+    )
+    return rendered.strip().splitlines()
+
+
 def _write_batch_norm_kernel(
     node_index: int,
     op_spec: _OpSpec,
@@ -2557,6 +2762,16 @@ def _resolve_alias(
     return node
 
 
+def _kernel_inputs(op_node: _OpNode) -> List[torch.fx.Node]:
+    if _is_out_overload(op_node.node.target) and op_node.inplace_input is not None:
+        return [
+            arg
+            for index, arg in enumerate(op_node.inputs)
+            if index != op_node.inplace_input
+        ]
+    return list(op_node.inputs)
+
+
 def _write_generic_source(graph: _GenericGraph) -> str:
     placeholders = graph.tensor_placeholders
     op_nodes = graph.op_nodes
@@ -2567,10 +2782,23 @@ def _write_generic_source(graph: _GenericGraph) -> str:
     ]
     kernels: List[str] = []
     for index, op_node in enumerate(op_nodes, start=1):
-        if op_node.spec.kind in {"binary", "unary", "where", "fill"}:
+        if op_node.spec.kind == "arange":
+            kernel_lines = _write_arange_kernel(
+                index,
+                op_node,
+                op_node.output_shape,
+                graph.strides[op_node.node],
+                graph.dtype,
+            )
+        elif op_node.spec.kind in {"binary", "unary", "where", "fill"}:
             input_shapes = [graph.shapes[arg] for arg in op_node.inputs]
             input_strides = [graph.strides[arg] for arg in op_node.inputs]
             input_dtypes = [graph.dtypes[arg] for arg in op_node.inputs]
+        if op_node.spec.kind in {"binary", "unary", "where", "fill"}:
+            kernel_inputs = _kernel_inputs(op_node)
+            input_shapes = [graph.shapes[arg] for arg in kernel_inputs]
+            input_strides = [graph.strides[arg] for arg in kernel_inputs]
+            input_dtypes = [graph.dtypes[arg] for arg in kernel_inputs]
             output_strides = graph.strides[op_node.node]
             kernel_lines = _write_elementwise_kernel(
                 index,
@@ -2728,6 +2956,21 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 graph.dtype,
                 padding_idx=int(op_node.p("padding_idx", -1)),
             )
+        elif op_node.spec.kind == "gather":
+            input_node, index_node = op_node.inputs
+            kernel_lines = _write_gather_kernel(
+                index,
+                op_node.spec,
+                graph.shapes[input_node],
+                graph.shapes[index_node],
+                graph.strides[input_node],
+                graph.strides[index_node],
+                op_node.output_shape,
+                graph.strides[op_node.node],
+                graph.dtypes[index_node],
+                int(op_node.p("dim")),
+                graph.dtype,
+            )
         elif op_node.spec.kind == "concat":
             input_shapes = [graph.shapes[arg] for arg in op_node.inputs]
             input_strides = [graph.strides[arg] for arg in op_node.inputs]
@@ -2772,6 +3015,22 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 bool(op_node.p("ceil_mode", False)),
                 bool(op_node.p("count_include_pad", False)),
                 op_node.p("divisor_override"),
+            )
+        elif op_node.spec.kind == "col2im":
+            input_node = op_node.inputs[0]
+            kernel_lines = _write_col2im_kernel(
+                index,
+                op_node.spec,
+                graph.shapes[input_node],
+                op_node.output_shape,
+                op_node.p("output_size", (1, 1)),
+                op_node.p("kernel_size", (1, 1)),
+                op_node.p("dilation", (1, 1)),
+                op_node.p("padding", (0, 0)),
+                op_node.p("stride", (1, 1)),
+                graph.dtype,
+                op_node.p("out_blocks_h", 1),
+                op_node.p("out_blocks_w", 1),
             )
         elif op_node.spec.kind == "batch_norm":
             input_node = op_node.inputs[0]
@@ -2864,6 +3123,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 index,
                 op_node.spec,
                 graph.shapes[input_node],
+                graph.shapes[op_node.node],
                 graph.shapes[mat_node],
                 graph.shapes[vec_node],
                 graph.strides[input_node],
@@ -2949,7 +3209,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
     for index, op_node in enumerate(op_nodes, start=1):
         input_names = [
             name_map[_resolve_alias(arg, graph.alias_map)]
-            for arg in op_node.inputs
+            for arg in _kernel_inputs(op_node)
         ]
         output_name = name_map[op_node.node]
         args = ", ".join([*input_names, output_name])
@@ -2984,14 +3244,19 @@ def _iter_example_tensors(example_inputs: Sequence[object]) -> Iterable[torch.Te
 
 def _validate_example_inputs(
     example_inputs: Sequence[object],
-) -> _CodegenDType:
+) -> _CodegenDType | None:
+    all_tensor_examples = list(_iter_example_tensors(example_inputs))
     tensor_examples = [
         example
-        for example in _iter_example_tensors(example_inputs)
+        for example in all_tensor_examples
         if example.dtype in _CODEGEN_DTYPES
     ]
     if not tensor_examples:
-        raise RefBackendError("codegen backend requires at least one example tensor input")
+        if all_tensor_examples:
+            raise RefBackendError(
+                "codegen backend supports only torch.float32, torch.int8, torch.int32, or torch.bool tensors"
+            )
+        return None
     for example in _iter_example_tensors(example_inputs):
         if example.device.type != "cpu":
             raise RefBackendError("codegen backend supports only CPU tensors")
@@ -2999,7 +3264,20 @@ def _validate_example_inputs(
         example for example in tensor_examples if example.dtype is not torch.bool
     ]
     if non_bool_examples:
-        first_dtype = non_bool_examples[0].dtype
+        non_bool_dtypes = {example.dtype for example in non_bool_examples}
+        non_index_dtypes = {
+            dtype
+            for dtype in non_bool_dtypes
+            if dtype not in _EMBEDDING_INDEX_DTYPES
+        }
+        if len(non_index_dtypes) > 1:
+            raise RefBackendError(
+                "codegen backend expects all tensors to share a dtype"
+            )
+        if non_index_dtypes:
+            first_dtype = next(iter(non_index_dtypes))
+        else:
+            first_dtype = next(iter(non_bool_dtypes))
     else:
         first_dtype = torch.bool
     dtype_info = _CODEGEN_DTYPES.get(first_dtype)
@@ -3008,8 +3286,15 @@ def _validate_example_inputs(
             "codegen backend supports only torch.float32, torch.int8, torch.int32, or torch.bool tensors"
         )
     for example in tensor_examples:
-        if example.dtype is not first_dtype and example.dtype is not torch.bool:
-            raise RefBackendError("codegen backend expects all tensors to share a dtype")
+        if example.dtype is torch.bool:
+            continue
+        if (
+            example.dtype is not first_dtype
+            and example.dtype not in _EMBEDDING_INDEX_DTYPES
+        ):
+            raise RefBackendError(
+                "codegen backend expects all tensors to share a dtype"
+            )
     return dtype_info
 
 
@@ -3141,16 +3426,16 @@ def _infer_output_shape(
         return expected_shape
     if op_spec.kind == "addmv":
         input_shape, mat_shape, vec_shape = input_shapes
-        if len(input_shape) != 1 or len(mat_shape) != 2 or len(vec_shape) != 1:
+        if len(input_shape) not in (0, 1) or len(mat_shape) != 2 or len(vec_shape) != 1:
             raise RefBackendError(
-                "codegen addmv expects 1D input and 2D matrix/1D vector"
+                "codegen addmv expects a scalar or 1D input and 2D matrix/1D vector"
             )
         if mat_shape[1] != vec_shape[0]:
             raise RefBackendError("codegen addmv requires inner dimensions to match")
         expected_shape = (mat_shape[0],)
-        if input_shape != expected_shape:
+        if _broadcast_output_shape(op_spec, input_shape, expected_shape) != expected_shape:
             raise RefBackendError(
-                "codegen addmv expects input shape to match mat-vec output"
+                "codegen addmv expects input shape to be broadcastable to mat-vec output"
             )
         return expected_shape
     if op_spec.kind == "addr":
@@ -4141,6 +4426,44 @@ def _parse_cumsum_args(
                 f"codegen {op_name} expects dtype to be torch.float32, torch.int8, or torch.int32"
             )
     return dim_value, dtype
+
+
+def _parse_gather_args(
+    node: torch.fx.Node,
+) -> Tuple[object, object, object, object]:
+    if len(node.args) > 4:
+        raise RefBackendError("codegen gather expects at most four inputs")
+    if not node.args:
+        raise RefBackendError("codegen gather expects input, dim, and index")
+    input_arg = node.args[0]
+    dim = node.args[1] if len(node.args) > 1 else None
+    index = node.args[2] if len(node.args) > 2 else None
+    sparse_grad = node.args[3] if len(node.args) > 3 else None
+    if node.kwargs:
+        if "dim" in node.kwargs:
+            if dim is not None:
+                raise _error_kwarg_specified_once("gather", "dim")
+            dim = node.kwargs["dim"]
+        if "index" in node.kwargs:
+            if index is not None:
+                raise _error_kwarg_specified_once("gather", "index")
+            index = node.kwargs["index"]
+        if "sparse_grad" in node.kwargs:
+            if sparse_grad is not None:
+                raise _error_kwarg_specified_once("gather", "sparse_grad")
+            sparse_grad = node.kwargs["sparse_grad"]
+        extra = set(node.kwargs) - {"dim", "index", "sparse_grad"}
+        if extra:
+            raise RefBackendError(
+                f"codegen gather got unexpected kwargs: {sorted(extra)}"
+            )
+    if dim is None or index is None:
+        raise RefBackendError("codegen gather expects dim and index arguments")
+    if sparse_grad is None:
+        sparse_grad = False
+    return input_arg, dim, index, sparse_grad
+
+
 def _parse_addmm_like_scalar(
     op_name: str, name: str, value: object | None
 ) -> float:
@@ -4393,6 +4716,57 @@ def _parse_conv1d_args(
             groups = kwargs["groups"]
 
     return (input_arg, weight_arg, bias, stride, padding, dilation, groups)
+
+
+def _parse_col2im_args(
+    node: torch.fx.Node,
+) -> Tuple[torch.fx.Node, object, object, object, object, object]:
+    args = list(node.args)
+    kwargs = dict(node.kwargs)
+    if len(args) < 1 or len(args) > 6:
+        raise RefBackendError(
+            "codegen col2im expects input, output_size, kernel_size, dilation, padding, and stride"
+        )
+    input_arg = args[0] if len(args) >= 1 else None
+    output_size = args[1] if len(args) >= 2 else None
+    kernel_size = args[2] if len(args) >= 3 else None
+    dilation = args[3] if len(args) >= 4 else None
+    padding = args[4] if len(args) >= 5 else None
+    stride = args[5] if len(args) >= 6 else None
+    if kwargs:
+        extra = set(kwargs) - {
+            "output_size",
+            "kernel_size",
+            "dilation",
+            "padding",
+            "stride",
+        }
+        if extra:
+            raise RefBackendError(
+                f"codegen col2im got unexpected kwargs: {sorted(extra)}"
+            )
+        if "output_size" in kwargs:
+            output_size = kwargs["output_size"]
+        if "kernel_size" in kwargs:
+            kernel_size = kwargs["kernel_size"]
+        if "dilation" in kwargs:
+            dilation = kwargs["dilation"]
+        if "padding" in kwargs:
+            padding = kwargs["padding"]
+        if "stride" in kwargs:
+            stride = kwargs["stride"]
+    if (
+        input_arg is None
+        or output_size is None
+        or kernel_size is None
+        or dilation is None
+        or padding is None
+        or stride is None
+    ):
+        raise RefBackendError(
+            "codegen col2im expects input, output_size, kernel_size, dilation, padding, and stride"
+        )
+    return input_arg, output_size, kernel_size, dilation, padding, stride
 
 
 def _parse_max_pool1d_args(
@@ -5373,6 +5747,130 @@ def _handle_pool2d_node(
     )
 
 
+def _handle_col2im_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> _OpNode:
+    (
+        input_arg,
+        output_size,
+        kernel_size,
+        dilation,
+        padding,
+        stride,
+    ) = _parse_col2im_args(node)
+    if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if dtype_info.torch_dtype is not torch.float32:
+        raise RefBackendError(
+            "codegen col2im supports only torch.float32 tensors"
+        )
+    if dtypes[input_arg] is not torch.float32:
+        raise RefBackendError(
+            "codegen col2im supports only torch.float32 tensors"
+        )
+    if (
+        isinstance(output_size, torch.fx.Node)
+        or isinstance(kernel_size, torch.fx.Node)
+        or isinstance(dilation, torch.fx.Node)
+        or isinstance(padding, torch.fx.Node)
+        or isinstance(stride, torch.fx.Node)
+    ):
+        raise RefBackendError(
+            "codegen col2im expects constant output_size, kernel_size, dilation, padding, and stride"
+        )
+    output_pair = _normalize_col2im_output_size(op_spec.name, output_size)
+    kernel_pair = _normalize_col2im_pair(op_spec.name, "kernel_size", kernel_size)
+    dilation_pair = _normalize_col2im_pair(op_spec.name, "dilation", dilation)
+    padding_pair = _normalize_col2im_pair(op_spec.name, "padding", padding)
+    stride_pair = _normalize_col2im_pair(op_spec.name, "stride", stride)
+    if (
+        output_pair[0] <= 0
+        or output_pair[1] <= 0
+        or kernel_pair[0] <= 0
+        or kernel_pair[1] <= 0
+        or dilation_pair[0] <= 0
+        or dilation_pair[1] <= 0
+        or stride_pair[0] <= 0
+        or stride_pair[1] <= 0
+        or padding_pair[0] < 0
+        or padding_pair[1] < 0
+    ):
+        raise RefBackendError(
+            "codegen col2im expects positive output_size, kernel_size, stride, and dilation with non-negative padding"
+        )
+    input_shape = shapes[input_arg]
+    if len(input_shape) == 3:
+        batch, col_channels, col_length = input_shape
+        has_batch = True
+    elif len(input_shape) == 2:
+        col_channels, col_length = input_shape
+        batch = 1
+        has_batch = False
+    else:
+        raise RefBackendError("codegen col2im expects 2D or 3D input tensors")
+    if not _is_contiguous(input_shape, strides[input_arg]):
+        raise RefBackendError("codegen col2im requires contiguous input tensors")
+    k_h, k_w = kernel_pair
+    channels_divisor = k_h * k_w
+    if channels_divisor <= 0 or col_channels % channels_divisor != 0:
+        raise RefBackendError(
+            "codegen col2im expects input channels divisible by kernel_size"
+        )
+    out_h, out_w = output_pair
+    dil_h, dil_w = dilation_pair
+    pad_h, pad_w = padding_pair
+    stride_h, stride_w = stride_pair
+    effective_kh = dil_h * (k_h - 1) + 1
+    effective_kw = dil_w * (k_w - 1) + 1
+    numerator_h = out_h + 2 * pad_h - effective_kh
+    numerator_w = out_w + 2 * pad_w - effective_kw
+    if (
+        numerator_h < 0
+        or numerator_w < 0
+        or numerator_h % stride_h != 0
+        or numerator_w % stride_w != 0
+    ):
+        raise RefBackendError(
+            "codegen col2im expects output_size to be compatible with kernel_size, dilation, padding, and stride"
+        )
+    out_blocks_h = numerator_h // stride_h + 1
+    out_blocks_w = numerator_w // stride_w + 1
+    expected_length = out_blocks_h * out_blocks_w
+    if col_length != expected_length:
+        raise RefBackendError(
+            "codegen col2im expects input length to match output_size and stride"
+        )
+    channels = col_channels // channels_divisor
+    if has_batch:
+        output_shape = (batch, channels, out_h, out_w)
+    else:
+        output_shape = (channels, out_h, out_w)
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=[input_arg],
+        output_shape=output_shape,
+        inplace_input=None,
+        params={
+            "output_size": output_pair,
+            "kernel_size": kernel_pair,
+            "dilation": dilation_pair,
+            "padding": padding_pair,
+            "stride": stride_pair,
+            "out_blocks_h": out_blocks_h,
+            "out_blocks_w": out_blocks_w,
+        },
+    )
+
+
 def _handle_to_copy_node(
     node: torch.fx.Node,
     op_spec: _OpSpec,
@@ -5814,6 +6312,67 @@ def _handle_cumsum_node(
     )
 
 
+def _handle_gather_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> _OpNode:
+    input_arg, dim, index, sparse_grad = _parse_gather_args(node)
+    if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if not isinstance(index, torch.fx.Node) or index not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if dtypes[input_arg] is not dtype_info.torch_dtype:
+        raise RefBackendError(
+            "codegen gather expects input to match the graph dtype"
+        )
+    if dtypes[index] not in _EMBEDDING_INDEX_DTYPES:
+        raise RefBackendError(
+            "codegen gather expects index dtype to be torch.int32 or torch.int64"
+        )
+    if isinstance(sparse_grad, torch.fx.Node):
+        raise RefBackendError("codegen gather expects sparse_grad to be False")
+    if sparse_grad not in (False, 0, None):
+        raise RefBackendError("codegen gather supports only sparse_grad=False")
+    input_shape = shapes[input_arg]
+    index_shape = shapes[index]
+    if not input_shape:
+        raise RefBackendError("codegen gather expects input to have at least 1 dimension")
+    if len(index_shape) != len(input_shape):
+        raise RefBackendError(
+            "codegen gather expects index to have the same rank as input"
+        )
+    dim_value = _parse_constant_int(op_spec.name, "dim", dim)
+    if dim_value < 0:
+        dim_value += len(input_shape)
+    if dim_value < 0 or dim_value >= len(input_shape):
+        raise RefBackendError("codegen gather dim is out of range")
+    for idx, (input_dim, index_dim) in enumerate(
+        zip(input_shape, index_shape)
+    ):
+        if idx == dim_value:
+            continue
+        if input_dim != index_dim:
+            raise RefBackendError(
+                "codegen gather expects index shape to match input shape"
+            )
+    output_shape = index_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=[input_arg, index],
+        output_shape=output_shape,
+        inplace_input=None,
+        params={"dim": dim_value},
+    )
+
+
 def _handle_fill_node(
     node: torch.fx.Node,
     op_spec: _OpSpec,
@@ -5905,6 +6464,128 @@ def _handle_fill_node(
         output_shape=output_shape,
         inplace_input=inplace_input,
         params={"value": scalar_value},
+    )
+
+
+def _parse_arange_dtype(
+    op_name: str,
+    dtype: torch.dtype | None,
+    dtype_info: _CodegenDType | None,
+) -> _CodegenDType:
+    if dtype is None:
+        if dtype_info is not None:
+            dtype = dtype_info.torch_dtype
+        else:
+            dtype = torch.get_default_dtype()
+    if dtype is torch.bool:
+        raise RefBackendError(
+            f"codegen {op_name} supports only numeric dtypes"
+        )
+    dtype_spec = _CODEGEN_DTYPES.get(dtype)
+    if dtype_spec is None:
+        raise RefBackendError(
+            f"codegen {op_name} supports only torch.float32, torch.int8, or torch.int32"
+        )
+    if dtype_info is not None and dtype_spec.torch_dtype is not dtype_info.torch_dtype:
+        raise RefBackendError(
+            f"codegen {op_name} expects dtype to match the graph dtype"
+        )
+    return dtype_spec
+
+
+def _compute_arange_size(start: float, end: float, step: float) -> int:
+    if step == 0:
+        raise RefBackendError("codegen arange expects step to be non-zero")
+    delta = (end - start) / step
+    size = int(math.ceil(delta))
+    return max(size, 0)
+
+
+def _handle_arange_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType | None,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> Tuple[_OpNode, _CodegenDType]:
+    allowed_kwargs = {
+        "start",
+        "end",
+        "dtype",
+        "layout",
+        "device",
+        "pin_memory",
+        "step",
+    }
+    extra = set(node.kwargs) - allowed_kwargs
+    if extra:
+        raise RefBackendError(
+            f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
+        )
+    for name in ("layout", "device"):
+        if node.kwargs.get(name) is not None:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects {name} to be None"
+            )
+    pin_memory = node.kwargs.get("pin_memory")
+    if pin_memory not in (None, False):
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects pin_memory to be False"
+        )
+    start_arg = None
+    end_arg = None
+    step_arg = None
+    if node.args:
+        if len(node.args) > 3:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects start and end arguments"
+            )
+        start_arg = node.args[0]
+        if len(node.args) > 1:
+            end_arg = node.args[1]
+        if len(node.args) > 2:
+            step_arg = node.args[2]
+    if "start" in node.kwargs:
+        if start_arg is not None:
+            raise _error_kwarg_specified_once(op_spec.name, "start")
+        start_arg = node.kwargs["start"]
+    if "end" in node.kwargs:
+        if end_arg is not None:
+            raise _error_kwarg_specified_once(op_spec.name, "end")
+        end_arg = node.kwargs["end"]
+    if "step" in node.kwargs:
+        if step_arg is not None:
+            raise _error_kwarg_specified_once(op_spec.name, "step")
+        step_arg = node.kwargs["step"]
+    if start_arg is None or end_arg is None:
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects start and end arguments"
+        )
+    if step_arg is None:
+        step_arg = 1
+    start = _normalize_scalar_value(op_spec.name, start_arg)
+    end = _normalize_scalar_value(op_spec.name, end_arg)
+    step = _normalize_scalar_value(op_spec.name, step_arg)
+    dtype_spec = _parse_arange_dtype(
+        op_spec.name, node.kwargs.get("dtype"), dtype_info
+    )
+    output_size = _compute_arange_size(
+        float(start), float(end), float(step)
+    )
+    output_shape = (output_size,)
+    shapes[node] = output_shape
+    dtypes[node] = dtype_spec.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return (
+        _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[],
+            output_shape=output_shape,
+            params={"start": start, "step": step},
+        ),
+        dtype_spec,
     )
 
 
@@ -6340,6 +7021,21 @@ def _analyze_generic_graph(
                     raise RefBackendError(f"Unsupported call_function: {node.target}")
                 op_spec = target_info.op_spec
                 inplace_input = target_info.inplace_arg_index
+            if op_spec.kind == "arange":
+                op_node, dtype_info = _handle_arange_node(
+                    node,
+                    op_spec,
+                    dtype_info,
+                    shapes,
+                    strides,
+                    dtypes,
+                )
+                op_nodes.append(op_node)
+                continue
+            if dtype_info is None:
+                raise RefBackendError(
+                    "codegen backend requires at least one tensor input or a factory op dtype"
+                )
             if op_spec.kind == "concat":
                 op_nodes.append(
                     _handle_concat_node(
@@ -6357,6 +7053,13 @@ def _analyze_generic_graph(
             if op_spec.kind == "pool2d":
                 op_nodes.append(
                     _handle_pool2d_node(
+                        node, op_spec, dtype_info, shapes, strides, dtypes
+                    )
+                )
+                continue
+            if op_spec.kind == "col2im":
+                op_nodes.append(
+                    _handle_col2im_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
@@ -6430,6 +7133,13 @@ def _analyze_generic_graph(
                     )
                 )
                 continue
+            elif op_spec.kind == "gather":
+                op_nodes.append(
+                    _handle_gather_node(
+                        node, op_spec, dtype_info, shapes, strides, dtypes
+                    )
+                )
+                continue
             elif op_spec.kind == "embedding":
                 op_nodes.append(
                     _handle_embedding_node(
@@ -6490,6 +7200,7 @@ def _analyze_generic_graph(
             param_values: Dict[str, object] = {}
             input_nodes: List[torch.fx.Node] = []
             input_shapes: List[Tuple[int, ...]] = []
+            out_arg: torch.fx.Node | None = None
             if op_spec.kind == "binary" and len(node.args) == 2:
                 lhs, rhs = node.args
                 if isinstance(lhs, torch.fx.Node) ^ isinstance(rhs, torch.fx.Node):
@@ -6528,10 +7239,13 @@ def _analyze_generic_graph(
                         args_to_check = (input_node,)
                     else:
                         allowed_kwargs = set()
+                        is_out_overload = _is_out_overload(node.target)
                         if op_spec.name == "div":
                             allowed_kwargs = {"rounding_mode"}
                         elif op_spec.name == "copy":
                             allowed_kwargs = {"non_blocking"}
+                        if is_out_overload:
+                            allowed_kwargs.add("out")
                         if node.kwargs and set(node.kwargs) - allowed_kwargs:
                             raise RefBackendError(
                                 "codegen backend expects positional args only"
@@ -6544,7 +7258,36 @@ def _analyze_generic_graph(
                             expected_arity = 3
                         else:
                             expected_arity = 2
-                        if op_spec.name == "copy":
+                        if is_out_overload:
+                            if inplace_input is None:
+                                raise RefBackendError(
+                                    f"codegen {op_spec.name} expects out to be provided"
+                                )
+                            if "out" in node.kwargs:
+                                if len(node.args) > expected_arity:
+                                    raise _error_kwarg_specified_once(
+                                        op_spec.name, "out"
+                                    )
+                                out_arg = node.kwargs["out"]
+                            elif len(node.args) == expected_arity + 1:
+                                out_arg = node.args[inplace_input]
+                            elif len(node.args) != expected_arity:
+                                if expected_arity == 1:
+                                    raise RefBackendError(
+                                        f"codegen {op_spec.name} expects one input"
+                                    )
+                                if expected_arity == 2:
+                                    raise RefBackendError(
+                                        f"codegen {op_spec.name} expects exactly two inputs"
+                                    )
+                                raise RefBackendError(
+                                    f"codegen {op_spec.name} expects exactly three inputs"
+                                )
+                            if out_arg is None:
+                                raise RefBackendError(
+                                    f"codegen {op_spec.name} expects out to be provided"
+                                )
+                        elif op_spec.name == "copy":
                             if len(node.args) not in {2, 3}:
                                 raise RefBackendError(
                                     "codegen copy expects two inputs and optional non_blocking"
@@ -6592,6 +7335,13 @@ def _analyze_generic_graph(
                             raise _error_expected_tensor(op_spec.name)
                         input_nodes.append(arg)
                         input_shapes.append(shapes[arg])
+                    if out_arg is not None and out_arg not in input_nodes:
+                        if not isinstance(out_arg, torch.fx.Node):
+                            raise _error_expected_tensor(op_spec.name)
+                        if out_arg not in shapes:
+                            raise _error_expected_tensor(op_spec.name)
+                        input_nodes.append(out_arg)
+                        input_shapes.append(shapes[out_arg])
             else:
                 if op_spec.kind in {"reduction", "arg_reduction"}:
                     if len(node.args) < 1:
@@ -6609,10 +7359,13 @@ def _analyze_generic_graph(
                     args_to_check = (input_node,)
                 else:
                     allowed_kwargs = set()
+                    is_out_overload = _is_out_overload(node.target)
                     if op_spec.name == "div":
                         allowed_kwargs = {"rounding_mode"}
                     elif op_spec.name == "copy":
                         allowed_kwargs = {"non_blocking"}
+                    if is_out_overload:
+                        allowed_kwargs.add("out")
                     if node.kwargs and set(node.kwargs) - allowed_kwargs:
                         raise RefBackendError(
                             "codegen backend expects positional args only"
@@ -6625,7 +7378,36 @@ def _analyze_generic_graph(
                         expected_arity = 3
                     else:
                         expected_arity = 2
-                    if op_spec.name == "copy":
+                    if is_out_overload:
+                        if inplace_input is None:
+                            raise RefBackendError(
+                                f"codegen {op_spec.name} expects out to be provided"
+                            )
+                        if "out" in node.kwargs:
+                            if len(node.args) > expected_arity:
+                                raise _error_kwarg_specified_once(
+                                    op_spec.name, "out"
+                                )
+                            out_arg = node.kwargs["out"]
+                        elif len(node.args) == expected_arity + 1:
+                            out_arg = node.args[inplace_input]
+                        elif len(node.args) != expected_arity:
+                            if expected_arity == 1:
+                                raise RefBackendError(
+                                    f"codegen {op_spec.name} expects one input"
+                                )
+                            if expected_arity == 2:
+                                raise RefBackendError(
+                                    f"codegen {op_spec.name} expects exactly two inputs"
+                                )
+                            raise RefBackendError(
+                                f"codegen {op_spec.name} expects exactly three inputs"
+                            )
+                        if out_arg is None:
+                            raise RefBackendError(
+                                f"codegen {op_spec.name} expects out to be provided"
+                            )
+                    elif op_spec.name == "copy":
                         if len(node.args) not in {2, 3}:
                             raise RefBackendError(
                                 "codegen copy expects two inputs and optional non_blocking"
@@ -6673,6 +7455,18 @@ def _analyze_generic_graph(
                         raise _error_expected_tensor(op_spec.name)
                     input_nodes.append(arg)
                     input_shapes.append(shapes[arg])
+                if out_arg is not None and out_arg not in input_nodes:
+                    if not isinstance(out_arg, torch.fx.Node):
+                        raise _error_expected_tensor(op_spec.name)
+                    if out_arg not in shapes:
+                        raise _error_expected_tensor(op_spec.name)
+                    input_nodes.append(out_arg)
+                    input_shapes.append(shapes[out_arg])
+            shape_input_shapes = [
+                shape
+                for arg, shape in zip(input_nodes, input_shapes)
+                if out_arg is None or arg is not out_arg
+            ]
             input_dtypes = [dtypes[arg] for arg in input_nodes]
             if op_spec.name in _BITWISE_OPS:
                 if dtype_info.torch_dtype in _INTEGER_CODEGEN_DTYPES:
@@ -6737,7 +7531,9 @@ def _analyze_generic_graph(
                         keepdim,
                         reduce_all,
                         norm_p,
-                    ) = _parse_norm_args(op_spec.name, node, input_shapes[0])
+                    ) = _parse_norm_args(
+                        op_spec.name, node, shape_input_shapes[0]
+                    )
                     param_values["norm_p"] = norm_p
                 else:
                     (
@@ -6745,7 +7541,9 @@ def _analyze_generic_graph(
                         keepdim,
                         reduce_all,
                         unbiased,
-                    ) = _parse_reduction_args(op_spec.name, node, input_shapes[0])
+                    ) = _parse_reduction_args(
+                        op_spec.name, node, shape_input_shapes[0]
+                    )
                     if unbiased is not None:
                         param_values["unbiased"] = unbiased
                     if (
@@ -6756,7 +7554,7 @@ def _analyze_generic_graph(
                             "codegen var supports only torch.float32 tensors"
                         )
                 output_shape = _infer_reduction_output_shape(
-                    input_shapes[0],
+                    shape_input_shapes[0],
                     reduction_dims,
                     keepdim,
                     reduce_all=reduce_all,
@@ -6766,26 +7564,32 @@ def _analyze_generic_graph(
                     reduction_dims,
                     keepdim,
                     reduce_all,
-                ) = _parse_argminmax_args(op_spec.name, node, input_shapes[0])
+                ) = _parse_argminmax_args(
+                    op_spec.name, node, shape_input_shapes[0]
+                )
                 reduction_count = 1
                 if reduce_all:
-                    for size in input_shapes[0]:
+                    for size in shape_input_shapes[0]:
                         reduction_count *= size
                 else:
                     for dim in reduction_dims:
-                        reduction_count *= input_shapes[0][dim]
+                        reduction_count *= shape_input_shapes[0][dim]
                 if reduction_count == 0:
                     raise RefBackendError(
                         f"codegen {op_spec.name} expects a non-empty reduction dimension"
                     )
                 output_shape = _infer_reduction_output_shape(
-                    input_shapes[0],
+                    shape_input_shapes[0],
                     reduction_dims,
                     keepdim,
                     reduce_all=reduce_all,
                 )
             else:
-                output_shape = _infer_output_shape(op_spec, input_shapes)
+                output_shape = _infer_output_shape(op_spec, shape_input_shapes)
+            if out_arg is not None and shapes[out_arg] != output_shape:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects out to match output shape"
+                )
             if op_spec.kind in {"reduction", "arg_reduction"}:
                 param_values["reduce_all"] = reduce_all
             shapes[node] = output_shape
@@ -6828,10 +7632,12 @@ def _analyze_generic_graph(
         raise RefBackendError("codegen backend requires at least one operation")
     if output_node is None:
         raise RefBackendError("codegen backend requires an output node")
-    if not tensor_placeholders and any(
-        op_node.spec.kind != "empty_strided" for op_node in op_nodes
-    ):
-        raise RefBackendError("codegen backend requires at least one tensor input")
+    if not tensor_placeholders and dtype_info is None:
+        raise RefBackendError(
+            "codegen backend requires at least one tensor input or a factory op dtype"
+        )
+    if dtype_info is None:
+        raise RefBackendError("codegen backend could not infer a graph dtype")
     output_value, output_structure = _unwrap_output_node(output_node)
     while output_value in alias_map:
         output_value = alias_map[output_value]
@@ -6934,6 +7740,11 @@ def _validate_runtime_inputs(
             if tensor.dtype is not torch.bool:
                 raise RefBackendError(
                     "codegen backend expects boolean condition tensors"
+                )
+        elif expected_dtype in _EMBEDDING_INDEX_DTYPES:
+            if tensor.dtype is not expected_dtype:
+                raise RefBackendError(
+                    "codegen backend expects int32 or int64 index tensors"
                 )
         elif tensor.dtype is not graph_dtype.torch_dtype:
             raise RefBackendError(

@@ -16,6 +16,7 @@ _VALID_KINDS = {
     "flip",
     "arg_reduction",
     "reduction",
+    "arange",
     "softmax",
     "cumsum",
     "concat",
@@ -30,9 +31,11 @@ _VALID_KINDS = {
     "pool1d",
     "pool2d",
     "embedding",
+    "gather",
     "batch_norm",
     "pdist",
     "empty_strided",
+    "col2im",
 }
 
 
@@ -184,6 +187,9 @@ _REGISTRY.register_op("_softmax", kind="softmax").targets(
 _REGISTRY.register_unary("_to_copy").targets(
     torch.ops.aten._to_copy,
     torch.ops.aten._to_copy.default,
+).build()
+_REGISTRY.register_op("arange", kind="arange").targets(
+    torch.ops.aten.arange.start_step,
 ).build()
 _REGISTRY.register_binary("sub", symbol="-").targets(
     operator.sub,
@@ -1395,6 +1401,11 @@ _REGISTRY.register_op("embedding", kind="embedding").targets(
     torch.ops.aten.embedding.default,
     torch.ops.aten.embedding,
 ).build()
+_REGISTRY.register_op("gather", kind="gather").targets(
+    torch.gather,
+    torch.ops.aten.gather.default,
+    torch.ops.aten.gather,
+).build()
 _REGISTRY.register_op("diagonal", kind="diagonal").targets(
     torch.diagonal,
     torch.ops.aten.diagonal.default,
@@ -1466,6 +1477,10 @@ _REGISTRY.register_op("conv2d", kind="conv2d").targets(
 _REGISTRY.register_op("conv1d", kind="conv1d").targets(
     torch.ops.aten.conv1d.default,
     torch.ops.aten.conv1d,
+).build()
+_REGISTRY.register_op("col2im", kind="col2im").targets(
+    torch.ops.aten.col2im.default,
+    torch.ops.aten.col2im,
 ).build()
 _REGISTRY.register_op("avg_pool1d", kind="pool1d").targets(
     F.avg_pool1d,
