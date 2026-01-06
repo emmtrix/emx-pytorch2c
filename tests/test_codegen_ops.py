@@ -175,6 +175,59 @@ def _cumsum_sample_filter(sample):
     return True
 
 
+def _full_like_sample_filter(sample):
+    if not isinstance(sample.input, torch.Tensor):
+        return False
+    for key, value in sample.kwargs.items():
+        if key == "dtype":
+            if value is not None and value is not sample.input.dtype:
+                return False
+        elif key in {"layout", "device", "memory_format"}:
+            if value is not None:
+                return False
+        elif key == "pin_memory":
+            if value not in (False, None):
+                return False
+        else:
+            return False
+    return True
+
+
+def _as_strided_sample_filter(sample):
+    if not isinstance(sample.input, torch.Tensor):
+        return False
+    size = sample.args[0] if sample.args else sample.kwargs.get("size")
+    stride = None
+    storage_offset = None
+    if len(sample.args) > 1:
+        stride = sample.args[1]
+    if len(sample.args) > 2:
+        storage_offset = sample.args[2]
+    if "stride" in sample.kwargs:
+        stride = sample.kwargs["stride"]
+    if "storage_offset" in sample.kwargs:
+        storage_offset = sample.kwargs["storage_offset"]
+    if size is None or stride is None:
+        return False
+    if not isinstance(size, (list, tuple)) or not isinstance(stride, (list, tuple)):
+        return False
+    try:
+        size_tuple = tuple(int(operator.index(item)) for item in size)
+        stride_tuple = tuple(int(operator.index(item)) for item in stride)
+    except TypeError:
+        return False
+    if len(size_tuple) != len(stride_tuple):
+        return False
+    if storage_offset is not None:
+        try:
+            storage_offset_value = int(operator.index(storage_offset))
+        except TypeError:
+            return False
+        if storage_offset_value < 0:
+            return False
+    return True
+
+
 def _resize_sample_filter(sample):
     if not isinstance(sample.input, torch.Tensor):
         return False
@@ -581,6 +634,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.fmod.Tensor,
     torch.ops.aten.fmod.Scalar,
     torch.ops.aten.frac.default,
+    torch.ops.aten.full_like.default,
     torch.ops.aten.heaviside.default,
     torch.ops.aten.hypot.default,
     torch.ops.aten.i0.default,
@@ -689,6 +743,15 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.where.Scalar,
 ]
 CODEGEN_EXTRA_ATEN_OPS = [
+    torch.ops.aten._log_softmax.default,
+    torch.ops.aten.alias.default,
+    torch.ops.aten.copy.default,
+    torch.ops.aten.div.Tensor_mode,
+    torch.ops.aten.div.Scalar_mode,
+    torch.ops.aten.prod.dim_int,
+    torch.ops.aten.as_strided.default,
+    torch.ops.aten.squeeze.dim,
+    torch.ops.aten.squeeze.dims,
     torch.ops.aten._softmax.default,
     torch.ops.aten._to_copy.default,
     torch.ops.aten.adaptive_avg_pool1d.default,
@@ -969,6 +1032,12 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.where.Scalar: {
         "sample_filter": _broadcastable_sample_filter,
+    },
+    torch.ops.aten.full_like.default: {
+        "sample_filter": _full_like_sample_filter,
+    },
+    torch.ops.aten.as_strided.default: {
+        "sample_filter": _as_strided_sample_filter,
     },
     torch.ops.aten.argmax.default: {
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),

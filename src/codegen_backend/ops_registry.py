@@ -11,6 +11,7 @@ _VALID_KINDS = {
     "binary",
     "unary",
     "fill",
+    "view",
     "where",
     "flip",
     "arg_reduction",
@@ -324,6 +325,8 @@ _REGISTRY.register_binary("div", symbol="/").targets(
     torch.true_divide,
     torch.ops.aten.div.Tensor,
     torch.ops.aten.div.Scalar,
+    torch.ops.aten.div.Tensor_mode,
+    torch.ops.aten.div.Scalar_mode,
     torch.ops.aten.div,
     torch.ops.aten.div_.Tensor,
     torch.ops.aten.div_,
@@ -1099,6 +1102,14 @@ _REGISTRY.register_unary("clone").targets(
     torch.ops.aten.clone.default,
     torch.ops.aten.clone,
 ).build()
+_REGISTRY.register_unary("alias").targets(
+    torch.ops.aten.alias.default,
+    torch.ops.aten.alias,
+).build()
+_REGISTRY.register_binary("copy").targets(
+    torch.ops.aten.copy.default,
+    torch.ops.aten.copy,
+).build()
 _REGISTRY.register_unary("resize_").targets(
     torch.ops.aten.resize_.default,
 ).inplace(
@@ -1113,6 +1124,18 @@ _REGISTRY.register_op("fill", "fill").targets(
     torch.ops.aten.fill_.Scalar,
     torch.ops.aten.fill_,
     arg_index=0,
+).build()
+_REGISTRY.register_op("full_like", "fill").targets(
+    torch.ops.aten.full_like.default,
+    torch.ops.aten.full_like,
+).build()
+_REGISTRY.register_op("as_strided", kind="view").targets(
+    torch.ops.aten.as_strided.default,
+    torch.ops.aten.as_strided,
+).build()
+_REGISTRY.register_op("squeeze", kind="view").targets(
+    torch.ops.aten.squeeze.dim,
+    torch.ops.aten.squeeze.dims,
 ).build()
 _REGISTRY.register_unary("deg2rad").targets(
     torch.deg2rad,
@@ -1295,6 +1318,7 @@ _REGISTRY.register_op("sum", kind="reduction").targets(
 ).build()
 _REGISTRY.register_op("prod", kind="reduction").targets(
     torch.ops.aten.prod.default,
+    torch.ops.aten.prod.dim_int,
 ).build()
 _REGISTRY.register_op("mean", kind="reduction").targets(
     torch.mean,
@@ -1350,6 +1374,10 @@ _REGISTRY.register_op("log_softmax", kind="softmax").targets(
     F.log_softmax,
     torch.ops.aten.log_softmax.int,
     torch.ops.aten.log_softmax,
+).build()
+_REGISTRY.register_op("_log_softmax", kind="softmax").targets(
+    torch.ops.aten._log_softmax.default,
+    torch.ops.aten._log_softmax,
 ).build()
 _REGISTRY.register_op("cat", kind="concat").targets(
     torch.cat,
