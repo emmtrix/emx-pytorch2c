@@ -166,6 +166,7 @@ _REGISTRY.register_binary("add", symbol="+").targets(
     torch.ops.prims.add,
     torch.ops.prims.add.default,
     torch.ops.aten.add.Tensor,
+    torch.ops.aten.add.Scalar,
     torch.ops.aten.add_.Tensor,
     torch.ops.aten.add_,
 ).inplace(
@@ -178,6 +179,7 @@ _REGISTRY.register_binary("sub", symbol="-").targets(
     torch.ops.prims.sub,
     torch.ops.prims.sub.default,
     torch.ops.aten.sub.Tensor,
+    torch.ops.aten.sub.Scalar,
     torch.ops.aten.sub_.Tensor,
     torch.ops.aten.sub_,
 ).inplace(
@@ -190,6 +192,7 @@ _REGISTRY.register_binary("mul", symbol="*").targets(
     torch.ops.prims.mul,
     torch.ops.prims.mul.default,
     torch.ops.aten.mul.Tensor,
+    torch.ops.aten.mul.Scalar,
     torch.ops.aten.mul_.Tensor,
     torch.ops.aten.mul_,
 ).inplace(
@@ -212,6 +215,7 @@ _REGISTRY.register_binary("bitwise_or").targets(
     operator.or_,
     torch.bitwise_or,
     torch.ops.aten.bitwise_or.Tensor,
+    torch.ops.aten.bitwise_or.Scalar,
     torch.ops.aten.bitwise_or_.Tensor,
     torch.ops.aten.bitwise_or_,
     torch.ops.aten.bitwise_or,
@@ -223,6 +227,7 @@ _REGISTRY.register_binary("bitwise_xor").targets(
     operator.xor,
     torch.bitwise_xor,
     torch.ops.aten.bitwise_xor.Tensor,
+    torch.ops.aten.bitwise_xor.Scalar,
     torch.ops.aten.bitwise_xor_.Tensor,
     torch.ops.aten.bitwise_xor_,
     torch.ops.aten.bitwise_xor,
@@ -308,6 +313,7 @@ _REGISTRY.register_binary("div", symbol="/").targets(
     torch.div,
     torch.true_divide,
     torch.ops.aten.div.Tensor,
+    torch.ops.aten.div.Scalar,
     torch.ops.aten.div,
     torch.ops.aten.div_.Tensor,
     torch.ops.aten.div_,
@@ -319,6 +325,7 @@ _REGISTRY.register_binary("lt").targets(
     operator.lt,
     torch.lt,
     torch.ops.aten.lt.Tensor,
+    torch.ops.aten.lt.Scalar,
     torch.ops.aten.lt.default,
     torch.ops.aten.lt,
 ).build()
@@ -326,6 +333,7 @@ _REGISTRY.register_binary("le").targets(
     operator.le,
     torch.le,
     torch.ops.aten.le.Tensor,
+    torch.ops.aten.le.Scalar,
     torch.ops.aten.le.default,
     torch.ops.aten.le,
 ).build()
@@ -333,6 +341,7 @@ _REGISTRY.register_binary("gt").targets(
     operator.gt,
     torch.gt,
     torch.ops.aten.gt.Tensor,
+    torch.ops.aten.gt.Scalar,
     torch.ops.aten.gt.default,
     torch.ops.aten.gt,
 ).build()
@@ -340,6 +349,7 @@ _REGISTRY.register_binary("ge").targets(
     operator.ge,
     torch.ge,
     torch.ops.aten.ge.Tensor,
+    torch.ops.aten.ge.Scalar,
     torch.ops.aten.ge.default,
     torch.ops.aten.ge,
 ).build()
@@ -347,6 +357,7 @@ _REGISTRY.register_binary("eq").targets(
     operator.eq,
     torch.eq,
     torch.ops.aten.eq.Tensor,
+    torch.ops.aten.eq.Scalar,
     torch.ops.aten.eq.default,
     torch.ops.aten.eq,
 ).build()
@@ -354,6 +365,7 @@ _REGISTRY.register_binary("ne").targets(
     operator.ne,
     torch.ne,
     torch.ops.aten.ne.Tensor,
+    torch.ops.aten.ne.Scalar,
     torch.ops.aten.ne.default,
     torch.ops.aten.ne,
 ).build()
@@ -390,6 +402,7 @@ _REGISTRY.register_binary("pow").targets(
 _REGISTRY.register_binary("remainder").targets(
     torch.remainder,
     torch.ops.aten.remainder.Tensor,
+    torch.ops.aten.remainder.Scalar,
     torch.ops.aten.remainder,
     torch.ops.aten.remainder_.Tensor,
     torch.ops.aten.remainder_,
@@ -400,6 +413,7 @@ _REGISTRY.register_binary("remainder").targets(
 _REGISTRY.register_binary("fmod").targets(
     torch.fmod,
     torch.ops.aten.fmod.Tensor,
+    torch.ops.aten.fmod.Scalar,
     torch.ops.aten.fmod,
     torch.ops.aten.fmod_.Tensor,
     torch.ops.aten.fmod_,
@@ -410,6 +424,7 @@ _REGISTRY.register_binary("fmod").targets(
 _REGISTRY.register_binary("floor_divide").targets(
     torch.floor_divide,
     torch.ops.aten.floor_divide.default,
+    torch.ops.aten.floor_divide.Scalar,
     torch.ops.aten.floor_divide,
     torch.ops.aten.floor_divide_.Tensor,
     torch.ops.aten.floor_divide_,
@@ -431,6 +446,7 @@ _REGISTRY.register_binary("copysign").targets(
     torch.copysign,
     torch.ops.aten.copysign.default,
     torch.ops.aten.copysign.Tensor,
+    torch.ops.aten.copysign.Scalar,
     torch.ops.aten.copysign,
     torch.ops.aten.copysign_.Tensor,
     torch.ops.aten.copysign_,
@@ -491,6 +507,7 @@ _REGISTRY.register_binary("heaviside").targets(
 _REGISTRY.register_op("where", kind="where").targets(
     torch.where,
     torch.ops.aten.where.self,
+    torch.ops.aten.where.Scalar,
 ).build()
 _REGISTRY.register_op("flip", kind="flip").targets(
     torch.flip,
@@ -532,6 +549,16 @@ _REGISTRY.register_binary("clamp_max").targets(
     torch.ops.aten.clamp_max_.default,
     torch.ops.aten.clamp_max_.Tensor,
     torch.ops.aten.clamp_max_,
+).build()
+_REGISTRY.register_unary("clamp").targets(
+    torch.clamp,
+    torch.ops.aten.clamp.default,
+    torch.ops.aten.clamp,
+    torch.ops.aten.clamp_.default,
+    torch.ops.aten.clamp_,
+).inplace(
+    torch.ops.aten.clamp_.default,
+    torch.ops.aten.clamp_,
 ).build()
 _REGISTRY.register_unary("neg").targets(
     operator.neg,
