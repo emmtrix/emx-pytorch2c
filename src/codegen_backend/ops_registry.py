@@ -16,6 +16,7 @@ _VALID_KINDS = {
     "flip",
     "arg_reduction",
     "reduction",
+    "arange",
     "softmax",
     "cumsum",
     "concat",
@@ -185,6 +186,9 @@ _REGISTRY.register_op("_softmax", kind="softmax").targets(
 _REGISTRY.register_unary("_to_copy").targets(
     torch.ops.aten._to_copy,
     torch.ops.aten._to_copy.default,
+).build()
+_REGISTRY.register_op("arange", kind="arange").targets(
+    torch.ops.aten.arange.start_step,
 ).build()
 _REGISTRY.register_binary("sub", symbol="-").targets(
     operator.sub,

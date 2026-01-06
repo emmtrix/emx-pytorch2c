@@ -1071,6 +1071,34 @@ def _write_elementwise_kernel(
     return lines
 
 
+def _write_arange_kernel(
+    node_index: int,
+    op_node: _OpNode,
+    output_shape: Sequence[int],
+    output_strides: Sequence[int],
+    dtype: _CodegenDType,
+) -> List[str]:
+    out_suffix = _format_array_suffix(output_shape)
+    signature = (
+        f"void node{node_index}_{op_node.spec.name}_{dtype.suffix}("
+        f"{dtype.c_type} out{out_suffix}) {{"
+    )
+    lines = [signature]
+    loop_lines, indent = emit_loops(output_shape)
+    lines.extend(loop_lines)
+    output_access = emit_output_access(
+        output_shape, output_strides, c_type=dtype.c_type
+    )
+    start = _format_scalar_literal(op_node.p("start"), dtype)
+    step = _format_scalar_literal(op_node.p("step"), dtype)
+    index_expr = "i0" if output_shape else "0"
+    lines.append(
+        f"{indent}{output_access} = {start} + ({step} * {index_expr});"
+    )
+    lines.extend(emit_footer(output_shape, indent))
+    return lines
+
+
 def _write_flip_kernel(
     node_index: int,
     op_node: _OpNode,
@@ -2739,6 +2767,18 @@ def _write_generic_source(graph: _GenericGraph) -> str:
     ]
     kernels: List[str] = []
     for index, op_node in enumerate(op_nodes, start=1):
+        if op_node.spec.kind == "arange":
+            kernel_lines = _write_arange_kernel(
+                index,
+                op_node,
+                op_node.output_shape,
+                graph.strides[op_node.node],
+                graph.dtype,
+            )
+        elif op_node.spec.kind in {"binary", "unary", "where", "fill"}:
+            input_shapes = [graph.shapes[arg] for arg in op_node.inputs]
+            input_strides = [graph.strides[arg] for arg in op_node.inputs]
+            input_dtypes = [graph.dtypes[arg] for arg in op_node.inputs]
         if op_node.spec.kind in {"binary", "unary", "where", "fill"}:
             kernel_inputs = _kernel_inputs(op_node)
             input_shapes = [graph.shapes[arg] for arg in kernel_inputs]
@@ -3182,14 +3222,19 @@ def _iter_example_tensors(example_inputs: Sequence[object]) -> Iterable[torch.Te
 
 def _validate_example_inputs(
     example_inputs: Sequence[object],
-) -> _CodegenDType:
+) -> _CodegenDType | None:
+    all_tensor_examples = list(_iter_example_tensors(example_inputs))
     tensor_examples = [
         example
-        for example in _iter_example_tensors(example_inputs)
+        for example in all_tensor_examples
         if example.dtype in _CODEGEN_DTYPES
     ]
     if not tensor_examples:
-        raise RefBackendError("codegen backend requires at least one example tensor input")
+        if all_tensor_examples:
+            raise RefBackendError(
+                "codegen backend supports only torch.float32, torch.int8, torch.int32, or torch.bool tensors"
+            )
+        return None
     for example in _iter_example_tensors(example_inputs):
         if example.device.type != "cpu":
             raise RefBackendError("codegen backend supports only CPU tensors")
@@ -6361,6 +6406,128 @@ def _handle_fill_node(
     )
 
 
+def _parse_arange_dtype(
+    op_name: str,
+    dtype: torch.dtype | None,
+    dtype_info: _CodegenDType | None,
+) -> _CodegenDType:
+    if dtype is None:
+        if dtype_info is not None:
+            dtype = dtype_info.torch_dtype
+        else:
+            dtype = torch.get_default_dtype()
+    if dtype is torch.bool:
+        raise RefBackendError(
+            f"codegen {op_name} supports only numeric dtypes"
+        )
+    dtype_spec = _CODEGEN_DTYPES.get(dtype)
+    if dtype_spec is None:
+        raise RefBackendError(
+            f"codegen {op_name} supports only torch.float32, torch.int8, or torch.int32"
+        )
+    if dtype_info is not None and dtype_spec.torch_dtype is not dtype_info.torch_dtype:
+        raise RefBackendError(
+            f"codegen {op_name} expects dtype to match the graph dtype"
+        )
+    return dtype_spec
+
+
+def _compute_arange_size(start: float, end: float, step: float) -> int:
+    if step == 0:
+        raise RefBackendError("codegen arange expects step to be non-zero")
+    delta = (end - start) / step
+    size = int(math.ceil(delta))
+    return max(size, 0)
+
+
+def _handle_arange_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType | None,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> Tuple[_OpNode, _CodegenDType]:
+    allowed_kwargs = {
+        "start",
+        "end",
+        "dtype",
+        "layout",
+        "device",
+        "pin_memory",
+        "step",
+    }
+    extra = set(node.kwargs) - allowed_kwargs
+    if extra:
+        raise RefBackendError(
+            f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
+        )
+    for name in ("layout", "device"):
+        if node.kwargs.get(name) is not None:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects {name} to be None"
+            )
+    pin_memory = node.kwargs.get("pin_memory")
+    if pin_memory not in (None, False):
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects pin_memory to be False"
+        )
+    start_arg = None
+    end_arg = None
+    step_arg = None
+    if node.args:
+        if len(node.args) > 3:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects start and end arguments"
+            )
+        start_arg = node.args[0]
+        if len(node.args) > 1:
+            end_arg = node.args[1]
+        if len(node.args) > 2:
+            step_arg = node.args[2]
+    if "start" in node.kwargs:
+        if start_arg is not None:
+            raise _error_kwarg_specified_once(op_spec.name, "start")
+        start_arg = node.kwargs["start"]
+    if "end" in node.kwargs:
+        if end_arg is not None:
+            raise _error_kwarg_specified_once(op_spec.name, "end")
+        end_arg = node.kwargs["end"]
+    if "step" in node.kwargs:
+        if step_arg is not None:
+            raise _error_kwarg_specified_once(op_spec.name, "step")
+        step_arg = node.kwargs["step"]
+    if start_arg is None or end_arg is None:
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects start and end arguments"
+        )
+    if step_arg is None:
+        step_arg = 1
+    start = _normalize_scalar_value(op_spec.name, start_arg)
+    end = _normalize_scalar_value(op_spec.name, end_arg)
+    step = _normalize_scalar_value(op_spec.name, step_arg)
+    dtype_spec = _parse_arange_dtype(
+        op_spec.name, node.kwargs.get("dtype"), dtype_info
+    )
+    output_size = _compute_arange_size(
+        float(start), float(end), float(step)
+    )
+    output_shape = (output_size,)
+    shapes[node] = output_shape
+    dtypes[node] = dtype_spec.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return (
+        _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[],
+            output_shape=output_shape,
+            params={"start": start, "step": step},
+        ),
+        dtype_spec,
+    )
+
+
 def _handle_view_node(
     node: torch.fx.Node,
     op_spec: _OpSpec,
@@ -6689,6 +6856,21 @@ def _analyze_generic_graph(
                     raise RefBackendError(f"Unsupported call_function: {node.target}")
                 op_spec = target_info.op_spec
                 inplace_input = target_info.inplace_arg_index
+            if op_spec.kind == "arange":
+                op_node, dtype_info = _handle_arange_node(
+                    node,
+                    op_spec,
+                    dtype_info,
+                    shapes,
+                    strides,
+                    dtypes,
+                )
+                op_nodes.append(op_node)
+                continue
+            if dtype_info is None:
+                raise RefBackendError(
+                    "codegen backend requires at least one tensor input or a factory op dtype"
+                )
             if op_spec.kind == "concat":
                 op_nodes.append(
                     _handle_concat_node(
@@ -7278,8 +7460,12 @@ def _analyze_generic_graph(
         raise RefBackendError("codegen backend requires at least one operation")
     if output_node is None:
         raise RefBackendError("codegen backend requires an output node")
-    if not tensor_placeholders:
-        raise RefBackendError("codegen backend requires at least one tensor input")
+    if not tensor_placeholders and dtype_info is None:
+        raise RefBackendError(
+            "codegen backend requires at least one tensor input or a factory op dtype"
+        )
+    if dtype_info is None:
+        raise RefBackendError("codegen backend could not infer a graph dtype")
     output_value, output_structure = _unwrap_output_node(output_node)
     while output_value in alias_map:
         output_value = alias_map[output_value]

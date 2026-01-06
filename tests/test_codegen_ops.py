@@ -176,6 +176,13 @@ def _full_like_sample_filter(sample):
     return True
 
 
+def _arange_sample_filter(sample):
+    dtype = sample.kwargs.get("dtype")
+    if dtype is None:
+        return False
+    return dtype in (torch.float32, torch.int8, torch.int32)
+
+
 def _as_strided_sample_filter(sample):
     if not isinstance(sample.input, torch.Tensor):
         return False
@@ -497,7 +504,12 @@ def _avg_pool2d_sample_filter(sample):
 def _sample_matches_constraints(sample, dtype, constraints):
     tensors = _extract_tensors(sample)
     if not tensors:
-        return False
+        if not constraints.get("allow_no_tensor_inputs", False):
+            return False
+        sample_filter = constraints["sample_filter"]
+        if sample_filter is not None and not sample_filter(sample):
+            return False
+        return True
     max_ndim = constraints["max_ndim"]
     if max_ndim is not None and any(tensor.ndim > max_ndim for tensor in tensors):
         return False
@@ -529,6 +541,8 @@ def _iter_supported_samples(op, device, dtype, constraints):
 
         if constraints["allow_noncontiguous"]:
             tensors = _extract_tensors(sample)
+            if not tensors:
+                continue
             if all(tensor.ndim >= 2 for tensor in tensors):
                 transposed = [tensor.transpose(0, 1) for tensor in tensors]
                 updated = _update_sample(sample, transposed)
@@ -568,6 +582,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.arcsin.default,
     torch.ops.aten.arcsinh.default,
     torch.ops.aten.arctan.default,
+    torch.ops.aten.arange.start_step,
     torch.ops.aten.bitwise_and.Tensor,
     torch.ops.aten.bitwise_and.Scalar,
     torch.ops.aten.bitwise_left_shift.Tensor,
@@ -1020,6 +1035,11 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.full_like.default: {
         "sample_filter": _full_like_sample_filter,
     },
+    torch.ops.aten.arange.start_step: {
+        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
+        "allow_no_tensor_inputs": True,
+        "sample_filter": _arange_sample_filter,
+    },
     torch.ops.aten.as_strided.default: {
         "sample_filter": _as_strided_sample_filter,
     },
@@ -1134,6 +1154,7 @@ DEFAULT_CONSTRAINTS = {
     "allow_non_tensor_args": True,
     "allow_kwargs": True,
     "expand_input_list": False,
+    "allow_no_tensor_inputs": False,
     "max_ndim": None,
     "requires_same_shape": False,
     "requires_contiguous": False,

@@ -27,7 +27,7 @@ amin                                     yes   yes
 any                                      -     yes    
 any.dim                                  -     yes    
 any.dims                                 -     yes    
-arange.start_step                        -     -      
+arange.start_step                        -     yes    
 argmax                                   -     yes    
 argmin                                   -     yes    
 as_strided                               -     yes    
