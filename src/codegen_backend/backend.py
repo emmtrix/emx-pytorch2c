@@ -84,7 +84,7 @@ _BITWISE_BOOL_OPS = {
     "bitwise_xor",
     "bitwise_not",
 }
-_PARAMETRIC_UNARY_OPS = {"gelu", "elu", "leaky_relu", "softplus"}
+_PARAMETRIC_UNARY_OPS = {"gelu", "elu", "leaky_relu", "softplus", "hardtanh"}
 _FLOAT_ONLY_UNARY_OPS = _PARAMETRIC_UNARY_OPS
 
 _TEMPLATE_ENV: Environment | None = None
@@ -776,6 +776,12 @@ def _emit_parametric_unary(
         return [
             f"{indent}{output_access} = ({beta} * {input_access} > {threshold}) ? "
             f"{input_access} : (log1pf(expf({beta} * {input_access})) / {beta});"
+        ]
+    if op_name == "hardtanh":
+        min_val = _format_scalar_literal(params.get("min_val", -1.0), dtype)
+        max_val = _format_scalar_literal(params.get("max_val", 1.0), dtype)
+        return [
+            f"{indent}{output_access} = fminf(fmaxf({input_access}, {min_val}), {max_val});"
         ]
     raise RefBackendError(f"Unsupported parametric unary op: {op_name}")
 
@@ -3353,6 +3359,33 @@ def _parse_parametric_unary_args(
         )
         params["threshold"] = _parse_constant_float(
             op_name, "threshold", params.get("threshold", 20.0)
+        )
+        return input_node, params
+    if op_name == "hardtanh":
+        if len(node.args) > 3:
+            raise RefBackendError("codegen hardtanh expects one input")
+        if len(node.args) > 1:
+            params["min_val"] = node.args[1]
+        if len(node.args) > 2:
+            params["max_val"] = node.args[2]
+        if "min_val" in node.kwargs:
+            if len(node.args) > 1:
+                raise RefBackendError("codegen hardtanh expects min_val as a keyword")
+            params["min_val"] = node.kwargs["min_val"]
+        if "max_val" in node.kwargs:
+            if len(node.args) > 2:
+                raise RefBackendError("codegen hardtanh expects max_val as a keyword")
+            params["max_val"] = node.kwargs["max_val"]
+        extra = set(node.kwargs) - {"min_val", "max_val"}
+        if extra:
+            raise RefBackendError(
+                f"codegen hardtanh got unexpected kwargs: {sorted(extra)}"
+            )
+        params["min_val"] = _parse_constant_float(
+            op_name, "min_val", params.get("min_val", -1.0)
+        )
+        params["max_val"] = _parse_constant_float(
+            op_name, "max_val", params.get("max_val", 1.0)
         )
         return input_node, params
     raise RefBackendError(f"Unsupported parametric op: {op_name}")

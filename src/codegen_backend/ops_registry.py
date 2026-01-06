@@ -911,6 +911,16 @@ _REGISTRY.register_unary("hardsigmoid").targets(
     torch.ops.aten.hardsigmoid.default,
     torch.ops.aten.hardsigmoid,
 ).build()
+_REGISTRY.register_unary("hardtanh").targets(
+    F.hardtanh,
+    torch.ops.aten.hardtanh.default,
+    torch.ops.aten.hardtanh,
+    torch.ops.aten.hardtanh_.default,
+    torch.ops.aten.hardtanh_,
+).inplace(
+    torch.ops.aten.hardtanh_.default,
+    torch.ops.aten.hardtanh_,
+).build()
 _REGISTRY.register_unary("mish").targets(
     F.mish,
     torch.ops.aten.mish.default,

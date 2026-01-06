@@ -92,7 +92,7 @@ gelu                                     -     yes
 grid_sampler_2d                          -     -      
 gt.Scalar                                -     -      
 gt.Tensor                                -     yes    
-hardtanh                                 -     -      
+hardtanh                                 -     yes    
 index.Tensor                             -     -      
 index_put                                -     -      
 index_select                             -     -      
