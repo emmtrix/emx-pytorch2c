@@ -61,6 +61,7 @@ def _all_same_shape(tensors):
     shape = tensors[0].shape
     return all(tensor.shape == shape for tensor in tensors[1:])
 
+
 def _cumsum_sample_filter(sample):
     if not isinstance(sample.input, torch.Tensor):
         return False
@@ -109,41 +110,6 @@ def _arange_sample_filter(sample):
     if dtype is None:
         return False
     return dtype in (torch.float32, torch.int8, torch.int32)
-
-
-def _as_strided_sample_filter(sample):
-    if not isinstance(sample.input, torch.Tensor):
-        return False
-    size = sample.args[0] if sample.args else sample.kwargs.get("size")
-    stride = None
-    storage_offset = None
-    if len(sample.args) > 1:
-        stride = sample.args[1]
-    if len(sample.args) > 2:
-        storage_offset = sample.args[2]
-    if "stride" in sample.kwargs:
-        stride = sample.kwargs["stride"]
-    if "storage_offset" in sample.kwargs:
-        storage_offset = sample.kwargs["storage_offset"]
-    if size is None or stride is None:
-        return False
-    if not isinstance(size, (list, tuple)) or not isinstance(stride, (list, tuple)):
-        return False
-    try:
-        size_tuple = tuple(int(operator.index(item)) for item in size)
-        stride_tuple = tuple(int(operator.index(item)) for item in stride)
-    except TypeError:
-        return False
-    if len(size_tuple) != len(stride_tuple):
-        return False
-    if storage_offset is not None:
-        try:
-            storage_offset_value = int(operator.index(storage_offset))
-        except TypeError:
-            return False
-        if storage_offset_value < 0:
-            return False
-    return True
 
 
 def _resize_sample_filter(sample):
@@ -1002,9 +968,7 @@ CODEGEN_OP_TEST_CONFIG = {
         "allow_no_tensor_inputs": True,
         "sample_filter": _arange_sample_filter,
     },
-    torch.ops.aten.as_strided.default: {
-        "sample_filter": _as_strided_sample_filter,
-    },
+    torch.ops.aten.as_strided.default: {},
     torch.ops.aten.argmax.default: {
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
     },

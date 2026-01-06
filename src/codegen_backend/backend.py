@@ -3,6 +3,7 @@ import math
 import numbers
 import operator
 import tempfile
+from collections.abc import Sequence as ABCSequence
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -482,6 +483,25 @@ def _resolve_scalar_arg(
             return _normalize_scalar_value(op_name, scalar_values[value])
         raise RefBackendError(f"codegen {op_name} expects a scalar value")
     return _normalize_scalar_value(op_name, value)
+
+
+def _normalize_as_strided_sequence(
+    op_name: str, value: object, arg_name: str
+) -> Tuple[int, ...]:
+    if isinstance(value, torch.Size):
+        seq = tuple(value)
+    elif isinstance(value, ABCSequence) and not isinstance(value, (str, bytes)):
+        seq = value
+    else:
+        raise RefBackendError(
+            f"codegen {op_name} expects {arg_name} to be a sequence"
+        )
+    try:
+        return tuple(int(operator.index(item)) for item in seq)
+    except TypeError as exc:
+        raise RefBackendError(
+            f"codegen {op_name} expects {arg_name} entries to be int-like"
+        ) from exc
 
 
 def emit_signature(
@@ -6159,20 +6179,20 @@ def _handle_view_node(
                 )
         if size is None or stride is None:
             raise RefBackendError("codegen as_strided expects size and stride")
+        if isinstance(size, torch.fx.Node) or isinstance(stride, torch.fx.Node):
+            raise RefBackendError(
+                "codegen as_strided expects size/stride to be constants"
+            )
         if storage_offset is None:
             storage_offset = 0
-        if isinstance(size, torch.fx.Node) or isinstance(stride, torch.fx.Node):
-            raise RefBackendError("codegen as_strided expects size/stride to be constants")
         if isinstance(storage_offset, torch.fx.Node):
             raise RefBackendError(
                 "codegen as_strided expects storage_offset to be an int"
             )
-        if not isinstance(size, (tuple, list)):
-            raise RefBackendError("codegen as_strided expects size to be a list")
-        if not isinstance(stride, (tuple, list)):
-            raise RefBackendError("codegen as_strided expects stride to be a list")
-        size_tuple = tuple(int(operator.index(dim)) for dim in size)
-        stride_tuple = tuple(int(operator.index(dim)) for dim in stride)
+        size_tuple = _normalize_as_strided_sequence(op_spec.name, size, "size")
+        stride_tuple = _normalize_as_strided_sequence(
+            op_spec.name, stride, "stride"
+        )
         if len(size_tuple) != len(stride_tuple):
             raise RefBackendError(
                 "codegen as_strided expects size and stride to match length"
