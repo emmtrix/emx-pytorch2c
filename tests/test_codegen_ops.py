@@ -1033,27 +1033,22 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.convolution.default: {
         "allowed_dtypes": (torch.float32,),
-        "requires_contiguous": True,
         "sample_filter": _convolution_sample_filter,
     },
     torch.ops.aten.avg_pool1d.default: {
         "allowed_dtypes": (torch.float32,),
-        "requires_contiguous": True,
         "sample_filter": _avg_pool1d_sample_filter,
     },
     torch.ops.aten.avg_pool2d.default: {
         "allowed_dtypes": (torch.float32,),
-        "requires_contiguous": True,
         "sample_filter": _avg_pool2d_sample_filter,
     },
     torch.ops.aten.max_pool1d.default: {
         "allowed_dtypes": (torch.float32,),
-        "requires_contiguous": True,
         "sample_filter": _max_pool1d_sample_filter,
     },
     torch.ops.aten.max_pool2d.default: {
         "allowed_dtypes": (torch.float32,),
-        "requires_contiguous": True,
         "sample_filter": _max_pool2d_sample_filter,
     },
     torch.ops.aten.conv1d.default: {
