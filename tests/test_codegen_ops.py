@@ -61,30 +61,6 @@ def _all_same_shape(tensors):
     shape = tensors[0].shape
     return all(tensor.shape == shape for tensor in tensors[1:])
 
-def _cumsum_sample_filter(sample):
-    if not isinstance(sample.input, torch.Tensor):
-        return False
-    dim = sample.args[0] if sample.args else sample.kwargs.get("dim")
-    dtype = None
-    if len(sample.args) > 1:
-        dtype = sample.args[1]
-    if "dtype" in sample.kwargs:
-        dtype = sample.kwargs["dtype"]
-    if not isinstance(dim, int):
-        return False
-    rank = sample.input.ndim
-    if rank == 0:
-        if dim not in (-1, 0):
-            return False
-    else:
-        if dim < 0:
-            dim += rank
-        if dim < 0 or dim >= rank:
-            return False
-    if dtype is not None and dtype is not sample.input.dtype:
-        return False
-    return True
-
 
 def _full_like_sample_filter(sample):
     if not isinstance(sample.input, torch.Tensor):
@@ -1094,7 +1070,6 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.cumsum.default: {
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
-        "sample_filter": _cumsum_sample_filter,
     },
     torch.ops.aten.addmm.default: {
         "allowed_dtypes": (torch.float32,),
