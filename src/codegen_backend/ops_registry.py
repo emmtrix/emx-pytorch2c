@@ -30,6 +30,7 @@ _VALID_KINDS = {
     "pool1d",
     "pool2d",
     "embedding",
+    "gather",
     "batch_norm",
     "pdist",
 }
@@ -1388,6 +1389,11 @@ _REGISTRY.register_op("embedding", kind="embedding").targets(
     F.embedding,
     torch.ops.aten.embedding.default,
     torch.ops.aten.embedding,
+).build()
+_REGISTRY.register_op("gather", kind="gather").targets(
+    torch.gather,
+    torch.ops.aten.gather.default,
+    torch.ops.aten.gather,
 ).build()
 _REGISTRY.register_op("diagonal", kind="diagonal").targets(
     torch.diagonal,

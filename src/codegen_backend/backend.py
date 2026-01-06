@@ -2253,6 +2253,74 @@ def _write_embedding_kernel(
     return rendered.splitlines()
 
 
+def _write_gather_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    input_shape: Sequence[int],
+    index_shape: Sequence[int],
+    input_strides: Sequence[int],
+    index_strides: Sequence[int],
+    output_shape: Sequence[int],
+    output_strides: Sequence[int],
+    index_dtype: torch.dtype,
+    gather_dim: int,
+    dtype: _CodegenDType,
+) -> List[str]:
+    gather_template = _get_template_env().get_template("gather_kernel.c.j2")
+    input_suffix = _format_array_suffix(input_shape)
+    index_suffix = _format_array_suffix(index_shape)
+    out_suffix = _format_array_suffix(output_shape)
+    index_c_type = _dtype_to_c_type(index_dtype, dtype)
+    signature = (
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"const {dtype.c_type} input{input_suffix}, "
+        f"const {index_c_type} index{index_suffix}, "
+        f"{dtype.c_type} out{out_suffix}) {{"
+    )
+    loop_lines, indent = emit_loops(output_shape)
+    output_indices = [f"i{dim}" for dim in range(len(output_shape))]
+    output_access = _emit_strided_access(
+        "out",
+        output_indices,
+        output_strides,
+        _is_contiguous(output_shape, output_strides),
+        sizes=output_shape,
+        c_type=dtype.c_type,
+    )
+    index_access = _emit_strided_access(
+        "index",
+        output_indices,
+        index_strides,
+        _is_contiguous(index_shape, index_strides),
+        sizes=index_shape,
+        c_type=index_c_type,
+    )
+    input_indices = [
+        "idx" if dim == gather_dim else f"i{dim}"
+        for dim in range(len(input_shape))
+    ]
+    input_access = _emit_strided_access(
+        "input",
+        input_indices,
+        input_strides,
+        _is_contiguous(input_shape, input_strides),
+        sizes=input_shape,
+        c_type=dtype.c_type,
+    )
+    body_lines = [
+        f"{indent}int64_t idx = (int64_t)({index_access});",
+        f"{indent}{output_access} = {input_access};",
+    ]
+    footer_lines = emit_footer(output_shape, indent)
+    rendered = gather_template.render(
+        signature=signature,
+        loop_lines=loop_lines,
+        body_lines=body_lines,
+        footer_lines=footer_lines,
+    )
+    return rendered.splitlines()
+
+
 def _write_conv2d_kernel(
     node_index: int,
     op_spec: _OpSpec,
@@ -2709,6 +2777,21 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 graph.dtype,
                 padding_idx=int(op_node.p("padding_idx", -1)),
             )
+        elif op_node.spec.kind == "gather":
+            input_node, index_node = op_node.inputs
+            kernel_lines = _write_gather_kernel(
+                index,
+                op_node.spec,
+                graph.shapes[input_node],
+                graph.shapes[index_node],
+                graph.strides[input_node],
+                graph.strides[index_node],
+                op_node.output_shape,
+                graph.strides[op_node.node],
+                graph.dtypes[index_node],
+                int(op_node.p("dim")),
+                graph.dtype,
+            )
         elif op_node.spec.kind == "concat":
             input_shapes = [graph.shapes[arg] for arg in op_node.inputs]
             input_strides = [graph.strides[arg] for arg in op_node.inputs]
@@ -2981,7 +3064,20 @@ def _validate_example_inputs(
         example for example in tensor_examples if example.dtype is not torch.bool
     ]
     if non_bool_examples:
-        first_dtype = non_bool_examples[0].dtype
+        non_bool_dtypes = {example.dtype for example in non_bool_examples}
+        non_index_dtypes = {
+            dtype
+            for dtype in non_bool_dtypes
+            if dtype not in _EMBEDDING_INDEX_DTYPES
+        }
+        if len(non_index_dtypes) > 1:
+            raise RefBackendError(
+                "codegen backend expects all tensors to share a dtype"
+            )
+        if non_index_dtypes:
+            first_dtype = next(iter(non_index_dtypes))
+        else:
+            first_dtype = next(iter(non_bool_dtypes))
     else:
         first_dtype = torch.bool
     dtype_info = _CODEGEN_DTYPES.get(first_dtype)
@@ -2990,8 +3086,15 @@ def _validate_example_inputs(
             "codegen backend supports only torch.float32, torch.int8, torch.int32, or torch.bool tensors"
         )
     for example in tensor_examples:
-        if example.dtype is not first_dtype and example.dtype is not torch.bool:
-            raise RefBackendError("codegen backend expects all tensors to share a dtype")
+        if example.dtype is torch.bool:
+            continue
+        if (
+            example.dtype is not first_dtype
+            and example.dtype not in _EMBEDDING_INDEX_DTYPES
+        ):
+            raise RefBackendError(
+                "codegen backend expects all tensors to share a dtype"
+            )
     return dtype_info
 
 
@@ -4084,6 +4187,44 @@ def _parse_cumsum_args(
                 f"codegen {op_name} expects dtype to be torch.float32, torch.int8, or torch.int32"
             )
     return dim_value, dtype
+
+
+def _parse_gather_args(
+    node: torch.fx.Node,
+) -> Tuple[object, object, object, object]:
+    if len(node.args) > 4:
+        raise RefBackendError("codegen gather expects at most four inputs")
+    if not node.args:
+        raise RefBackendError("codegen gather expects input, dim, and index")
+    input_arg = node.args[0]
+    dim = node.args[1] if len(node.args) > 1 else None
+    index = node.args[2] if len(node.args) > 2 else None
+    sparse_grad = node.args[3] if len(node.args) > 3 else None
+    if node.kwargs:
+        if "dim" in node.kwargs:
+            if dim is not None:
+                raise _error_kwarg_specified_once("gather", "dim")
+            dim = node.kwargs["dim"]
+        if "index" in node.kwargs:
+            if index is not None:
+                raise _error_kwarg_specified_once("gather", "index")
+            index = node.kwargs["index"]
+        if "sparse_grad" in node.kwargs:
+            if sparse_grad is not None:
+                raise _error_kwarg_specified_once("gather", "sparse_grad")
+            sparse_grad = node.kwargs["sparse_grad"]
+        extra = set(node.kwargs) - {"dim", "index", "sparse_grad"}
+        if extra:
+            raise RefBackendError(
+                f"codegen gather got unexpected kwargs: {sorted(extra)}"
+            )
+    if dim is None or index is None:
+        raise RefBackendError("codegen gather expects dim and index arguments")
+    if sparse_grad is None:
+        sparse_grad = False
+    return input_arg, dim, index, sparse_grad
+
+
 def _parse_addmm_like_scalar(
     op_name: str, name: str, value: object | None
 ) -> float:
@@ -5757,6 +5898,67 @@ def _handle_cumsum_node(
     )
 
 
+def _handle_gather_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> _OpNode:
+    input_arg, dim, index, sparse_grad = _parse_gather_args(node)
+    if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if not isinstance(index, torch.fx.Node) or index not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if dtypes[input_arg] is not dtype_info.torch_dtype:
+        raise RefBackendError(
+            "codegen gather expects input to match the graph dtype"
+        )
+    if dtypes[index] not in _EMBEDDING_INDEX_DTYPES:
+        raise RefBackendError(
+            "codegen gather expects index dtype to be torch.int32 or torch.int64"
+        )
+    if isinstance(sparse_grad, torch.fx.Node):
+        raise RefBackendError("codegen gather expects sparse_grad to be False")
+    if sparse_grad not in (False, 0, None):
+        raise RefBackendError("codegen gather supports only sparse_grad=False")
+    input_shape = shapes[input_arg]
+    index_shape = shapes[index]
+    if not input_shape:
+        raise RefBackendError("codegen gather expects input to have at least 1 dimension")
+    if len(index_shape) != len(input_shape):
+        raise RefBackendError(
+            "codegen gather expects index to have the same rank as input"
+        )
+    dim_value = _parse_constant_int(op_spec.name, "dim", dim)
+    if dim_value < 0:
+        dim_value += len(input_shape)
+    if dim_value < 0 or dim_value >= len(input_shape):
+        raise RefBackendError("codegen gather dim is out of range")
+    for idx, (input_dim, index_dim) in enumerate(
+        zip(input_shape, index_shape)
+    ):
+        if idx == dim_value:
+            continue
+        if input_dim != index_dim:
+            raise RefBackendError(
+                "codegen gather expects index shape to match input shape"
+            )
+    output_shape = index_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=[input_arg, index],
+        output_shape=output_shape,
+        inplace_input=None,
+        params={"dim": dim_value},
+    )
+
+
 def _handle_fill_node(
     node: torch.fx.Node,
     op_spec: _OpSpec,
@@ -6269,6 +6471,13 @@ def _analyze_generic_graph(
                     )
                 )
                 continue
+            elif op_spec.kind == "gather":
+                op_nodes.append(
+                    _handle_gather_node(
+                        node, op_spec, dtype_info, shapes, strides, dtypes
+                    )
+                )
+                continue
             elif op_spec.kind == "embedding":
                 op_nodes.append(
                     _handle_embedding_node(
@@ -6752,6 +6961,11 @@ def _validate_runtime_inputs(
             if tensor.dtype is not torch.bool:
                 raise RefBackendError(
                     "codegen backend expects boolean condition tensors"
+                )
+        elif expected_dtype in _EMBEDDING_INDEX_DTYPES:
+            if tensor.dtype is not expected_dtype:
+                raise RefBackendError(
+                    "codegen backend expects int32 or int64 index tensors"
                 )
         elif tensor.dtype is not graph_dtype.torch_dtype:
             raise RefBackendError(

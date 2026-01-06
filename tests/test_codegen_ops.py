@@ -618,6 +618,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.fmod.Scalar,
     torch.ops.aten.frac.default,
     torch.ops.aten.full_like.default,
+    torch.ops.aten.gather.default,
     torch.ops.aten.heaviside.default,
     torch.ops.aten.hypot.default,
     torch.ops.aten.i0.default,
@@ -1436,6 +1437,49 @@ class TestCodegenAdditionalOps(TestCase):
         expected = aten_overload(*inputs)
         result = compiled(*inputs)
         torch.testing.assert_close(result, expected)
+
+    def test_codegen_gather_matches_eager(self):
+        aten_overload = torch.ops.aten.gather.default
+        compiled = _compile_codegen_op(aten_overload)
+        input_tensor = torch.arange(24, dtype=torch.float32).reshape(3, 4, 2)
+        test_cases = [
+            (
+                0,
+                torch.tensor(
+                    [
+                        [[0, 1], [2, 0], [1, 2], [0, 1]],
+                        [[2, 0], [1, 2], [0, 1], [2, 0]],
+                    ],
+                    dtype=torch.int64,
+                ),
+            ),
+            (
+                1,
+                torch.tensor(
+                    [
+                        [[0, 1], [2, 3]],
+                        [[3, 0], [1, 2]],
+                        [[2, 1], [0, 3]],
+                    ],
+                    dtype=torch.int32,
+                ),
+            ),
+            (
+                2,
+                torch.tensor(
+                    [
+                        [[0, 1, 0], [1, 0, 1], [0, 1, 0], [1, 0, 1]],
+                        [[1, 0, 1], [0, 1, 0], [1, 0, 1], [0, 1, 0]],
+                        [[0, 1, 0], [1, 0, 1], [0, 1, 0], [1, 0, 1]],
+                    ],
+                    dtype=torch.int64,
+                ),
+            ),
+        ]
+        for dim, index in test_cases:
+            expected = aten_overload(input_tensor, dim, index)
+            result = compiled(input_tensor, dim, index)
+            torch.testing.assert_close(result, expected)
 
 
 class TestCodegenInplaceOps(TestCase):
