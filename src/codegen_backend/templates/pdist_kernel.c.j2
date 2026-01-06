@@ -1,0 +1,13 @@
+{{ signature }}
+  int64_t out_index = 0;
+  for (int64_t i = 0; i < {{ n }}; ++i) {
+    for (int64_t j = i + 1; j < {{ n }}; ++j) {
+      {{ c_type }} acc = 0;
+      for (int64_t k = 0; k < {{ m }}; ++k) {
+        {{ c_type }} diff = input[i][k] - input[j][k];
+        acc += diff * diff;
+      }
+      out[out_index++] = sqrtf(acc);
+    }
+  }
+}

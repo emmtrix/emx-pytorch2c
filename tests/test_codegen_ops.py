@@ -660,6 +660,13 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.where.self,
     torch.ops.aten.where.Scalar,
 ]
+CODEGEN_EXTRA_ATEN_OPS = [
+    torch.ops.aten._softmax.default,
+    torch.ops.aten._to_copy.default,
+    torch.ops.aten.adaptive_avg_pool1d.default,
+    torch.ops.aten._native_batch_norm_legit_no_training.default,
+    torch.ops.aten._pdist_forward.default,
+]
 aten_cbrt = getattr(torch.ops.aten, "cbrt", None)
 if aten_cbrt is not None:
     CODEGEN_ATEN_OPS.append(aten_cbrt.default)
@@ -1357,6 +1364,80 @@ class TestCodegenAliasedOps(TestCase):
                 expected = aten_overload(*inputs)
                 result = compiled(*inputs)
                 torch.testing.assert_close(result, expected)
+
+
+class TestCodegenAdditionalOps(TestCase):
+    def test_codegen__softmax_matches_eager(self):
+        aten_overload = torch.ops.aten._softmax.default
+        compiled = _compile_codegen_op(aten_overload)
+        inputs = (torch.rand(2, 3, dtype=torch.float32), 1, False)
+        expected = aten_overload(*inputs)
+        result = compiled(*inputs)
+        torch.testing.assert_close(result, expected)
+
+    def test_codegen__to_copy_matches_eager(self):
+        aten_overload = torch.ops.aten._to_copy.default
+        compiled = _compile_codegen_op(aten_overload)
+        inputs = (torch.rand(2, 3, dtype=torch.float32),)
+        expected = aten_overload(*inputs, non_blocking=False)
+        result = compiled(*inputs, non_blocking=False)
+        torch.testing.assert_close(result, expected)
+
+    def test_codegen_adaptive_avg_pool1d_matches_eager(self):
+        aten_overload = torch.ops.aten.adaptive_avg_pool1d.default
+        compiled = _compile_codegen_op(aten_overload)
+        inputs = (torch.rand(2, 3, 6, dtype=torch.float32), 3)
+        expected = aten_overload(*inputs)
+        result = compiled(*inputs)
+        torch.testing.assert_close(result, expected)
+
+    def test_codegen_native_batch_norm_no_training_matches_eager(self):
+        def compiled_fn(
+            input_tensor: torch.Tensor,
+            weight: torch.Tensor,
+            bias: torch.Tensor,
+            running_mean: torch.Tensor,
+            running_var: torch.Tensor,
+            momentum: float,
+            eps: float,
+        ) -> torch.Tensor:
+            return torch.ops.aten._native_batch_norm_legit_no_training.default(
+                input_tensor,
+                weight,
+                bias,
+                running_mean,
+                running_var,
+                momentum,
+                eps,
+            )[0]
+
+        compiled = torch.compile(compiled_fn, backend=codegen_generic_backend)
+        input_tensor = torch.rand(2, 3, 4, dtype=torch.float32)
+        weight = torch.rand(3, dtype=torch.float32)
+        bias = torch.rand(3, dtype=torch.float32)
+        running_mean = torch.rand(3, dtype=torch.float32)
+        running_var = torch.rand(3, dtype=torch.float32) + 1.0
+        expected = torch.ops.aten._native_batch_norm_legit_no_training.default(
+            input_tensor,
+            weight,
+            bias,
+            running_mean,
+            running_var,
+            0.1,
+            1e-5,
+        )[0]
+        result = compiled(
+            input_tensor, weight, bias, running_mean, running_var, 0.1, 1e-5
+        )
+        torch.testing.assert_close(result, expected)
+
+    def test_codegen_pdist_forward_matches_eager(self):
+        aten_overload = torch.ops.aten._pdist_forward.default
+        compiled = _compile_codegen_op(aten_overload)
+        inputs = (torch.rand(4, 5, dtype=torch.float32), 2.0)
+        expected = aten_overload(*inputs)
+        result = compiled(*inputs)
+        torch.testing.assert_close(result, expected)
 
 
 class TestCodegenInplaceOps(TestCase):

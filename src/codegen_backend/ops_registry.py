@@ -29,6 +29,8 @@ _VALID_KINDS = {
     "pool1d",
     "pool2d",
     "embedding",
+    "batch_norm",
+    "pdist",
 }
 
 
@@ -172,6 +174,14 @@ _REGISTRY.register_binary("add", symbol="+").targets(
 ).inplace(
     torch.ops.aten.add_.Tensor,
     torch.ops.aten.add_,
+).build()
+_REGISTRY.register_op("_softmax", kind="softmax").targets(
+    torch.ops.aten._softmax,
+    torch.ops.aten._softmax.default,
+).build()
+_REGISTRY.register_unary("_to_copy").targets(
+    torch.ops.aten._to_copy,
+    torch.ops.aten._to_copy.default,
 ).build()
 _REGISTRY.register_binary("sub", symbol="-").targets(
     operator.sub,
@@ -1419,6 +1429,11 @@ _REGISTRY.register_op("avg_pool1d", kind="pool1d").targets(
     torch.ops.aten.avg_pool1d.default,
     torch.ops.aten.avg_pool1d,
 ).build()
+_REGISTRY.register_op("adaptive_avg_pool1d", kind="pool1d").targets(
+    F.adaptive_avg_pool1d,
+    torch.ops.aten.adaptive_avg_pool1d.default,
+    torch.ops.aten.adaptive_avg_pool1d,
+).build()
 _REGISTRY.register_op("max_pool1d", kind="pool1d").targets(
     F.max_pool1d,
     torch.ops.aten.max_pool1d.default,
@@ -1433,6 +1448,14 @@ _REGISTRY.register_op("max_pool2d", kind="pool2d").targets(
     F.max_pool2d,
     torch.ops.aten.max_pool2d.default,
     torch.ops.aten.max_pool2d,
+).build()
+_REGISTRY.register_op("_native_batch_norm_legit_no_training", kind="batch_norm").targets(
+    torch.ops.aten._native_batch_norm_legit_no_training,
+    torch.ops.aten._native_batch_norm_legit_no_training.default,
+).build()
+_REGISTRY.register_op("_pdist_forward", kind="pdist").targets(
+    torch.ops.aten._pdist_forward,
+    torch.ops.aten._pdist_forward.default,
 ).build()
 
 SUPPORTED_OPS = _REGISTRY.build()

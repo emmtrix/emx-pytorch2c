@@ -10,14 +10,14 @@ _local_scalar_dense                      -     -
 _log_softmax                             -     -      
 _native_batch_norm_legit                 -     -      
 _native_batch_norm_legit.no_stats        -     -      
-_native_batch_norm_legit_no_training     -     -      
-_pdist_forward                           -     -      
-_softmax                                 -     -      
-_to_copy                                 -     -      
+_native_batch_norm_legit_no_training     -     yes    
+_pdist_forward                           -     yes    
+_softmax                                 -     yes    
+_to_copy                                 -     yes    
 abs                                      yes   yes    
 acos                                     yes   yes    
 acosh                                    yes   yes    
-adaptive_avg_pool1d                      -     -      
+adaptive_avg_pool1d                      -     yes    
 add.Scalar                               -     yes    
 add.Tensor                               yes   yes    
 addmm                                    -     yes    
@@ -196,8 +196,8 @@ where.self                               -     yes
 Summary
 total aten ops: 192
 supported by cref only: 0
-supported by codegen only: 58
+supported by codegen only: 63
 supported by both: 49
-unsupported by either: 85
-supported by codegen: 107 / 192 (55.7 %)
+unsupported by either: 80
+supported by codegen: 112 / 192 (58.3 %)
 supported by c-ref: 49 / 192 (25.5 %)
