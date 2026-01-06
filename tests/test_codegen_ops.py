@@ -492,6 +492,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.cosh.default,
     torch.ops.aten.deg2rad.default,
     torch.ops.aten.digamma.default,
+    torch.ops.aten.diagonal.default,
     torch.ops.aten.div.Tensor,
     torch.ops.aten.erf.default,
     torch.ops.aten.erfc.default,
@@ -782,6 +783,11 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.copysign.Tensor: {
         "allowed_dtypes": (torch.float32,),
+    },
+    torch.ops.aten.diagonal.default: {
+        "allow_non_tensor_args": True,
+        "allow_kwargs": True,
+        "requires_same_shape": False,
     },
     torch.ops.aten.amax.default: {
         "allow_kwargs": True,

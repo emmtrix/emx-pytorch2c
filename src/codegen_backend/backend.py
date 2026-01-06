@@ -660,6 +660,42 @@ def emit_input_access(
     )
 
 
+def _format_diagonal_access(
+    name: str,
+    input_shape: Sequence[int],
+    input_strides: Sequence[int],
+    output_shape: Sequence[int],
+    *,
+    dim1: int,
+    dim2: int,
+    offset: int,
+    c_type: str,
+) -> str:
+    output_rank = len(output_shape)
+    diag_index = f"i{output_rank - 1}"
+    other_indices = [f"i{idx}" for idx in range(output_rank - 1)]
+    other_iter = iter(other_indices)
+    terms = []
+    for dim, stride in enumerate(input_strides):
+        if stride == 0:
+            continue
+        if dim == dim1:
+            if offset >= 0:
+                index_expr = diag_index
+            else:
+                index_expr = f"({diag_index} - ({offset}))"
+        elif dim == dim2:
+            if offset >= 0:
+                index_expr = f"({diag_index} + {offset})"
+            else:
+                index_expr = diag_index
+        else:
+            index_expr = next(other_iter)
+        terms.append(f"{index_expr} * {stride}")
+    index_expr = " + ".join(terms) if terms else "0"
+    return f"(({c_type}*){name})[{index_expr}]"
+
+
 def _emit_parametric_unary(
     op_name: str,
     input_access: str,
@@ -2153,6 +2189,18 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 output_strides,
                 graph.dtype,
             )
+        elif op_node.spec.kind == "diagonal":
+            input_node = op_node.inputs[0]
+            kernel_lines = _write_diagonal_kernel(
+                index,
+                op_node,
+                graph.shapes[input_node],
+                graph.strides[input_node],
+                graph.dtypes[input_node],
+                op_node.output_shape,
+                graph.strides[op_node.node],
+                graph.dtype,
+            )
         elif op_node.spec.kind == "reduction":
             input_node = op_node.inputs[0]
             if op_node.spec.name == "std":
@@ -2600,6 +2648,25 @@ def _infer_output_shape(
     return (a_shape[0], a_shape[1], b_shape[2])
 
 
+def _infer_diagonal_output_shape(
+    input_shape: Sequence[int], offset: int, dim1: int, dim2: int
+) -> Tuple[int, ...]:
+    size1 = input_shape[dim1]
+    size2 = input_shape[dim2]
+    if offset >= 0:
+        diag_len = min(size1, size2 - offset)
+    else:
+        diag_len = min(size1 + offset, size2)
+    diag_len = max(0, diag_len)
+    output_dims = [
+        size
+        for index, size in enumerate(input_shape)
+        if index not in (dim1, dim2)
+    ]
+    output_dims.append(diag_len)
+    return tuple(output_dims)
+
+
 def _normalize_reduction_dims(
     op_name: str, dim: object | None, rank: int
 ) -> Tuple[int, ...]:
@@ -2910,6 +2977,37 @@ def _parse_constant_float(op_name: str, name: str, value: object) -> float:
     raise RefBackendError(f"codegen {op_name} expects {name} to be numeric")
 
 
+def _parse_constant_int(op_name: str, name: str, value: object) -> int:
+    if isinstance(value, torch.fx.Node):
+        meta_value = value.meta.get("val") or value.meta.get("example_value")
+        if meta_value is None:
+            raise RefBackendError(f"codegen {op_name} expects {name} to be an int")
+        return _parse_constant_int(op_name, name, meta_value)
+    if isinstance(value, bool):
+        raise RefBackendError(f"codegen {op_name} expects {name} to be an int")
+    if isinstance(value, torch.Tensor):
+        if value.numel() != 1:
+            raise RefBackendError(f"codegen {op_name} expects {name} to be an int")
+        return _parse_constant_int(op_name, name, value.item())
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError as exc:
+            raise RefBackendError(
+                f"codegen {op_name} expects {name} to be an int"
+            ) from exc
+    if isinstance(value, float):
+        if value.is_integer():
+            return int(value)
+        raise RefBackendError(f"codegen {op_name} expects {name} to be an int")
+    try:
+        return operator.index(value)
+    except TypeError as exc:
+        raise RefBackendError(
+            f"codegen {op_name} expects {name} to be an int"
+        ) from exc
+
+
 def _parse_parametric_unary_args(
     op_name: str, node: torch.fx.Node
 ) -> Tuple[torch.fx.Node, Dict[str, object]]:
@@ -3071,6 +3169,53 @@ def _parse_softmax_args(
     return dim_value, dtype
 
 
+def _parse_diagonal_args(
+    op_name: str, node: torch.fx.Node, input_shape: Sequence[int]
+) -> Tuple[int, int, int]:
+    if not node.args:
+        raise RefBackendError(f"codegen {op_name} expects one input")
+    if len(node.args) > 4:
+        raise RefBackendError(f"codegen {op_name} expects at most four inputs")
+    offset = node.args[1] if len(node.args) > 1 else 0
+    dim1 = node.args[2] if len(node.args) > 2 else 0
+    dim2 = node.args[3] if len(node.args) > 3 else 1
+    if node.kwargs:
+        if "offset" in node.kwargs:
+            if len(node.args) > 1:
+                raise _error_kwarg_specified_once(op_name, "offset")
+            offset = node.kwargs["offset"]
+        if "dim1" in node.kwargs:
+            if len(node.args) > 2:
+                raise _error_kwarg_specified_once(op_name, "dim1")
+            dim1 = node.kwargs["dim1"]
+        if "dim2" in node.kwargs:
+            if len(node.args) > 3:
+                raise _error_kwarg_specified_once(op_name, "dim2")
+            dim2 = node.kwargs["dim2"]
+        extra = set(node.kwargs) - {"offset", "dim1", "dim2"}
+        if extra:
+            raise RefBackendError(
+                f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
+            )
+    offset_value = _parse_constant_int(op_name, "offset", offset)
+    dim1_value = _parse_constant_int(op_name, "dim1", dim1)
+    dim2_value = _parse_constant_int(op_name, "dim2", dim2)
+    rank = len(input_shape)
+    if rank < 2:
+        raise RefBackendError(f"codegen {op_name} expects input rank >= 2")
+    if dim1_value < 0:
+        dim1_value += rank
+    if dim2_value < 0:
+        dim2_value += rank
+    if dim1_value < 0 or dim1_value >= rank:
+        raise RefBackendError(f"codegen {op_name} dim1 is out of range")
+    if dim2_value < 0 or dim2_value >= rank:
+        raise RefBackendError(f"codegen {op_name} dim2 is out of range")
+    if dim1_value == dim2_value:
+        raise RefBackendError(f"codegen {op_name} expects dim1 != dim2")
+    return offset_value, dim1_value, dim2_value
+
+
 def _write_softmax_kernel(
     node_index: int,
     op_spec: _OpSpec,
@@ -3138,6 +3283,47 @@ def _write_softmax_kernel(
         is_log=op_spec.name == "log_softmax",
     )
     return rendered.strip().splitlines()
+
+
+def _write_diagonal_kernel(
+    node_index: int,
+    op_node: _OpNode,
+    input_shape: Sequence[int],
+    input_strides: Sequence[int],
+    input_dtype: torch.dtype,
+    output_shape: Sequence[int],
+    output_strides: Sequence[int],
+    dtype: _CodegenDType,
+) -> List[str]:
+    input_suffix = _format_array_suffix(input_shape)
+    output_suffix = _format_array_suffix(output_shape)
+    input_c_type = _input_c_type(input_dtype, dtype)
+    signature = (
+        f"void node{node_index}_{op_node.spec.name}_{dtype.suffix}("
+        f"const {input_c_type} a{input_suffix}, "
+        f"{dtype.c_type} out{output_suffix}) {{"
+    )
+    lines = [signature]
+    loop_lines, indent = emit_loops(output_shape)
+    lines.extend(loop_lines)
+    output_access = emit_output_access(
+        output_shape, output_strides, c_type=dtype.c_type
+    )
+    input_access = _format_diagonal_access(
+        "a",
+        input_shape,
+        input_strides,
+        output_shape,
+        dim1=int(op_node.p("dim1")),
+        dim2=int(op_node.p("dim2")),
+        offset=int(op_node.p("offset")),
+        c_type=input_c_type,
+    )
+    lines.append(f"{indent}{output_access} = {input_access};")
+    lines.extend(emit_footer(output_shape, indent))
+    return lines
+
+
 def _parse_addmm_like_scalar(
     op_name: str, name: str, value: object | None
 ) -> float:
@@ -4223,6 +4409,41 @@ def _handle_addmm_like_node(
     )
 
 
+def _handle_diagonal_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> _OpNode:
+    if not node.args:
+        raise RefBackendError(f"codegen {op_spec.name} expects one input")
+    input_arg = node.args[0]
+    if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if dtypes[input_arg] is not dtype_info.torch_dtype:
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects inputs to share the graph dtype"
+        )
+    offset, dim1, dim2 = _parse_diagonal_args(
+        op_spec.name, node, shapes[input_arg]
+    )
+    output_shape = _infer_diagonal_output_shape(
+        shapes[input_arg], offset, dim1, dim2
+    )
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=[input_arg],
+        output_shape=output_shape,
+        params={"offset": offset, "dim1": dim1, "dim2": dim2},
+    )
+
+
 def _handle_softmax_node(
     node: torch.fx.Node,
     op_spec: _OpSpec,
@@ -4308,6 +4529,7 @@ def _analyze_generic_graph(
                     "argmin",
                     "softmax",
                     "log_softmax",
+                    "diagonal",
                 }:
                     raise RefBackendError(f"Unsupported call_method: {node.target}")
                 op_spec = SUPPORTED_OPS[node.target]
@@ -4349,6 +4571,13 @@ def _analyze_generic_graph(
             if op_spec.kind == "conv2d":
                 op_nodes.append(
                     _handle_conv2d_node(
+                        node, op_spec, dtype_info, shapes, strides, dtypes
+                    )
+                )
+                continue
+            if op_spec.kind == "diagonal":
+                op_nodes.append(
+                    _handle_diagonal_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
