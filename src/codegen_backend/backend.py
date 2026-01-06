@@ -3260,6 +3260,7 @@ def _parse_reduction_args(
         dim = node.args[1] if len(node.args) > 1 else None
         unbiased = node.args[2] if len(node.args) > 2 else True
         keepdim = node.args[3] if len(node.args) > 3 else False
+        correction = None
         if node.kwargs:
             if "dim" in node.kwargs:
                 if dim is not None:
@@ -3273,7 +3274,9 @@ def _parse_reduction_args(
                 if len(node.args) > 3:
                     raise _error_kwarg_specified_once(op_name, "keepdim")
                 keepdim = node.kwargs["keepdim"]
-            extra = set(node.kwargs) - {"dim", "unbiased", "keepdim"}
+            if "correction" in node.kwargs:
+                correction = node.kwargs["correction"]
+            extra = set(node.kwargs) - {"dim", "unbiased", "keepdim", "correction"}
             if extra:
                 raise RefBackendError(
                     f"codegen var got unexpected kwargs: {sorted(extra)}"
@@ -3286,6 +3289,15 @@ def _parse_reduction_args(
             raise RefBackendError("codegen var expects keepdim to be a bool")
         if not isinstance(keepdim, bool):
             raise RefBackendError("codegen var expects keepdim to be a bool")
+        if correction is not None:
+            if isinstance(correction, torch.fx.Node):
+                raise RefBackendError("codegen var expects correction to be 0 or 1")
+            if not isinstance(correction, numbers.Number):
+                raise RefBackendError("codegen var expects correction to be 0 or 1")
+            correction_value = float(correction)
+            if correction_value not in (0.0, 1.0):
+                raise RefBackendError("codegen var expects correction to be 0 or 1")
+            unbiased = bool(int(correction_value))
         reduction_dims = _normalize_reduction_dims(op_name, dim, len(input_shape))
         reduce_all = dim is None
         return reduction_dims, keepdim, reduce_all, unbiased

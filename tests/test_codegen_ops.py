@@ -142,10 +142,6 @@ def _concat_sample_filter(sample):
     return True
 
 
-def _var_dim_sample_filter(sample):
-    return "correction" not in sample.kwargs
-
-
 def _norm_dim_sample_filter(sample):
     return len(sample.args) >= 2
 
@@ -1010,7 +1006,6 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.var.dim: {
         "allowed_dtypes": (torch.float32,),
-        "sample_filter": _var_dim_sample_filter,
     },
     torch.ops.aten.norm.ScalarOpt_dim: {
         "allowed_dtypes": (torch.float32,),
