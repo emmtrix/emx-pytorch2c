@@ -68,7 +68,7 @@ div.Scalar_mode                          -     -
 div.Tensor                               yes   yes    
 div.Tensor_mode                          -     -      
 elu                                      -     yes    
-embedding                                -     -      
+embedding                                -     yes    
 embedding_dense_backward                 -     -      
 empty.memory_format                      -     -      
 empty_strided                            -     -      

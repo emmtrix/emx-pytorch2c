@@ -531,6 +531,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.digamma.default,
     torch.ops.aten.diagonal.default,
     torch.ops.aten.div.Tensor,
+    torch.ops.aten.embedding.default,
     torch.ops.aten.erf.default,
     torch.ops.aten.erfc.default,
     torch.ops.aten.erfinv.default,
@@ -769,6 +770,9 @@ CODEGEN_OPINFO_OVERRIDES = {
     torch.ops.aten.norm.ScalarOpt_dim: _lookup_opinfo("norm", ""),
     torch.ops.aten.softmax.int: _lookup_opinfo("softmax", ""),
     torch.ops.aten.log_softmax.int: _lookup_opinfo("log_softmax", ""),
+    torch.ops.aten.embedding.default: _lookup_opinfo(
+        "nn.functional.embedding", ""
+    ),
     torch.ops.aten.addmm.default: _lookup_opinfo("addmm", ""),
     torch.ops.aten.addbmm.default: _lookup_opinfo("addbmm", ""),
     torch.ops.aten.addmv.default: _lookup_opinfo("addmv", ""),
@@ -817,6 +821,11 @@ CODEGEN_OPINFO_LIST = [opinfo for _, opinfo in CODEGEN_OPS_UNDER_TEST]
 CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.add.Tensor: {
         "requires_same_shape": False,
+    },
+    torch.ops.aten.embedding.default: {
+        "allowed_dtypes": (torch.float32,),
+        "allow_non_tensor_args": True,
+        "allow_kwargs": True,
     },
     torch.ops.aten.copysign.Tensor: {
         "allowed_dtypes": (torch.float32,),

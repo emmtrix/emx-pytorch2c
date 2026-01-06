@@ -69,6 +69,7 @@ _C_TYPE_BY_DTYPE = {
     torch.int64: "int64_t",
     torch.float32: "float",
 }
+_EMBEDDING_INDEX_DTYPES = {torch.int32, torch.int64}
 _BITWISE_OPS = {
     "bitwise_and",
     "bitwise_or",
@@ -528,8 +529,10 @@ def _input_c_type(dtype: torch.dtype, graph_dtype: _CodegenDType) -> str:
         return graph_dtype.c_type
     if dtype is torch.bool:
         return _C_TYPE_BY_DTYPE[torch.bool]
+    if dtype in _EMBEDDING_INDEX_DTYPES:
+        return _C_TYPE_BY_DTYPE[dtype]
     raise RefBackendError(
-        "codegen backend supports only torch.float32, torch.int8, torch.int32, or torch.bool tensors"
+        "codegen backend supports only torch.float32, torch.int8, torch.int32, torch.int64, or torch.bool tensors"
     )
 
 
@@ -1957,6 +1960,85 @@ def _write_concat_kernel(
     return lines
 
 
+def _write_embedding_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    weight_shape: Sequence[int],
+    indices_shape: Sequence[int],
+    weight_strides: Sequence[int],
+    indices_strides: Sequence[int],
+    output_shape: Sequence[int],
+    output_strides: Sequence[int],
+    indices_dtype: torch.dtype,
+    dtype: _CodegenDType,
+    padding_idx: int,
+) -> List[str]:
+    embedding_template = _get_template_env().get_template(
+        "embedding_kernel.c.j2"
+    )
+    weight_suffix = _format_array_suffix(weight_shape)
+    indices_suffix = _format_array_suffix(indices_shape)
+    out_suffix = _format_array_suffix(output_shape)
+    index_c_type = _dtype_to_c_type(indices_dtype, dtype)
+    signature = (
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"const {dtype.c_type} weight{weight_suffix}, "
+        f"const {index_c_type} indices{indices_suffix}, "
+        f"{dtype.c_type} out{out_suffix}) {{"
+    )
+    loop_lines, indent = emit_loops(output_shape)
+    indices_rank = len(indices_shape)
+    output_rank = len(output_shape)
+    output_indices = [f"i{dim}" for dim in range(output_rank)]
+    output_access = _emit_strided_access(
+        "out",
+        output_indices,
+        output_strides,
+        _is_contiguous(output_shape, output_strides),
+        sizes=output_shape,
+        c_type=dtype.c_type,
+    )
+    index_indices = [f"i{dim}" for dim in range(indices_rank)]
+    index_access = _emit_strided_access(
+        "indices",
+        index_indices,
+        indices_strides,
+        _is_contiguous(indices_shape, indices_strides),
+        sizes=indices_shape,
+        c_type=index_c_type,
+    )
+    weight_access = _emit_strided_access(
+        "weight",
+        ["idx", f"i{output_rank - 1}"],
+        weight_strides,
+        _is_contiguous(weight_shape, weight_strides),
+        sizes=weight_shape,
+        c_type=dtype.c_type,
+    )
+    body_lines = [f"{indent}int64_t idx = (int64_t)({index_access});"]
+    if padding_idx != -1:
+        zero_literal = _format_scalar_literal(0.0, dtype)
+        body_lines.extend(
+            [
+                f"{indent}if (idx == {padding_idx}) {{",
+                f"{indent}    {output_access} = {zero_literal};",
+                f"{indent}}} else {{",
+                f"{indent}    {output_access} = {weight_access};",
+                f"{indent}}}",
+            ]
+        )
+    else:
+        body_lines.append(f"{indent}{output_access} = {weight_access};")
+    footer_lines = emit_footer(output_shape, indent)
+    rendered = embedding_template.render(
+        signature=signature,
+        loop_lines=loop_lines,
+        body_lines=body_lines,
+        footer_lines=footer_lines,
+    )
+    return rendered.splitlines()
+
+
 def _write_conv2d_kernel(
     node_index: int,
     op_spec: _OpSpec,
@@ -2292,6 +2374,21 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 op_node.p("dim"),
                 graph.dtype,
             )
+        elif op_node.spec.kind == "embedding":
+            weight_node, indices_node = op_node.inputs
+            kernel_lines = _write_embedding_kernel(
+                index,
+                op_node.spec,
+                graph.shapes[weight_node],
+                graph.shapes[indices_node],
+                graph.strides[weight_node],
+                graph.strides[indices_node],
+                op_node.output_shape,
+                graph.strides[op_node.node],
+                graph.dtypes[indices_node],
+                graph.dtype,
+                padding_idx=int(op_node.p("padding_idx", -1)),
+            )
         elif op_node.spec.kind == "concat":
             input_shapes = [graph.shapes[arg] for arg in op_node.inputs]
             input_strides = [graph.strides[arg] for arg in op_node.inputs]
@@ -2532,6 +2629,9 @@ def _validate_example_inputs(
     ]
     if not tensor_examples:
         raise RefBackendError("codegen backend requires at least one example tensor input")
+    for example in _iter_example_tensors(example_inputs):
+        if example.device.type != "cpu":
+            raise RefBackendError("codegen backend supports only CPU tensors")
     non_bool_examples = [
         example for example in tensor_examples if example.dtype is not torch.bool
     ]
@@ -2547,8 +2647,6 @@ def _validate_example_inputs(
     for example in tensor_examples:
         if example.dtype is not first_dtype and example.dtype is not torch.bool:
             raise RefBackendError("codegen backend expects all tensors to share a dtype")
-        if example.device.type != "cpu":
-            raise RefBackendError("codegen backend supports only CPU tensors")
     return dtype_info
 
 
@@ -2575,6 +2673,11 @@ def _infer_output_shape(
         return input_shapes[0]
     if op_spec.kind == "softmax":
         return input_shapes[0]
+    if op_spec.kind == "embedding":
+        weight_shape, indices_shape = input_shapes
+        if len(weight_shape) != 2:
+            raise RefBackendError("codegen embedding expects 2D weight tensor")
+        return tuple(indices_shape) + (weight_shape[1],)
     if op_spec.kind == "reduction":
         return ()
     if op_spec.kind == "concat":
@@ -4608,6 +4711,54 @@ def _handle_softmax_node(
         params={"dim": dim},
     )
 
+def _handle_embedding_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> _OpNode:
+    weight, indices, padding_idx, scale_grad_by_freq, sparse = (
+        _parse_embedding_args(node)
+    )
+    if scale_grad_by_freq or sparse:
+        raise RefBackendError(
+            "codegen embedding supports only scale_grad_by_freq=False and sparse=False"
+        )
+    if not isinstance(weight, torch.fx.Node) or weight not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if not isinstance(indices, torch.fx.Node) or indices not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if dtypes[weight] is not dtype_info.torch_dtype:
+        raise RefBackendError(
+            "codegen embedding expects weight to match the graph dtype"
+        )
+    if dtypes[indices] not in _EMBEDDING_INDEX_DTYPES:
+        raise RefBackendError(
+            "codegen embedding expects indices to have dtype torch.int32 or torch.int64"
+        )
+    weight_shape = shapes[weight]
+    if len(weight_shape) != 2:
+        raise RefBackendError("codegen embedding expects 2D weight tensor")
+    if padding_idx != -1:
+        if padding_idx < 0 or padding_idx >= weight_shape[0]:
+            raise RefBackendError(
+                "codegen embedding expects padding_idx to be -1 or within num_embeddings"
+            )
+    indices_shape = shapes[indices]
+    output_shape = tuple(indices_shape) + (weight_shape[1],)
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=[weight, indices],
+        output_shape=output_shape,
+        inplace_input=None,
+        params={"padding_idx": padding_idx},
+    )
 
 def _handle_cumsum_node(
     node: torch.fx.Node,
@@ -4672,7 +4823,14 @@ def _analyze_generic_graph(
                 ) from exc
             placeholders.append(node)
             if isinstance(example, torch.Tensor):
-                if example.dtype not in _CODEGEN_DTYPES and example.numel() == 1:
+                if example.dtype not in _CODEGEN_DTYPES:
+                    if example.dtype in _EMBEDDING_INDEX_DTYPES:
+                        shapes[node] = tuple(example.shape)
+                        strides[node] = tuple(example.stride())
+                        dtypes[node] = example.dtype
+                        tensor_placeholders.append(node)
+                    elif example.numel() == 1:
+                        continue
                     continue
                 shapes[node] = tuple(example.shape)
                 strides[node] = tuple(example.stride())
@@ -4771,6 +4929,13 @@ def _analyze_generic_graph(
             elif op_spec.kind == "cumsum":
                 op_nodes.append(
                     _handle_cumsum_node(
+                        node, op_spec, dtype_info, shapes, strides, dtypes
+                    )
+                )
+                continue
+            elif op_spec.kind == "embedding":
+                op_nodes.append(
+                    _handle_embedding_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
