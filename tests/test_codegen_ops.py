@@ -603,6 +603,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.conv1d.default,
     torch.ops.aten.conv2d.default,
     torch.ops.aten.convolution.default,
+    torch.ops.aten.constant_pad_nd.default,
     torch.ops.aten.avg_pool1d.default,
     torch.ops.aten.avg_pool2d.default,
     torch.ops.aten.cos.default,
@@ -933,6 +934,9 @@ CODEGEN_OPINFO_OVERRIDES = {
     torch.ops.aten.log_softmax.int: _lookup_opinfo("log_softmax", ""),
     torch.ops.aten.embedding.default: _lookup_opinfo(
         "nn.functional.embedding", ""
+    ),
+    torch.ops.aten.constant_pad_nd.default: _lookup_opinfo(
+        "constant_pad_nd", ""
     ),
     torch.ops.aten.addmm.default: _lookup_opinfo("addmm", ""),
     torch.ops.aten.addbmm.default: _lookup_opinfo("addbmm", ""),
@@ -1406,6 +1410,34 @@ class TestCodegenAdditionalOps(TestCase):
         expected = aten_overload(*inputs)
         result = compiled(*inputs)
         torch.testing.assert_close(result, expected)
+
+    def test_codegen_constant_pad_nd_matches_eager(self):
+        cases = [
+            (
+                torch.arange(6, dtype=torch.float32).reshape(2, 3),
+                (1, 1, 2, 0),
+                0.0,
+            ),
+            (
+                torch.arange(8, dtype=torch.float32).reshape(2, 4),
+                (2, 0),
+                1.5,
+            ),
+            (
+                torch.arange(12, dtype=torch.int32).reshape(3, 4),
+                (0, 1, -1, 0),
+                7,
+            ),
+        ]
+        for tensor, pad, value in cases:
+            torch._dynamo.reset()
+            def compiled_fn(x, pad=pad, value=value):
+                return torch.ops.aten.constant_pad_nd.default(x, pad, value)
+
+            compiled = torch.compile(compiled_fn, backend=codegen_generic_backend)
+            expected = torch.ops.aten.constant_pad_nd.default(tensor, pad, value)
+            result = compiled(tensor)
+            torch.testing.assert_close(result, expected)
 
     def test_codegen_native_batch_norm_no_training_matches_eager(self):
         def compiled_fn(

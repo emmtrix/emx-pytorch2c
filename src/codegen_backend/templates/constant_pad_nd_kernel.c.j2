@@ -1,0 +1,27 @@
+{{ signature }}
+{% if not has_input_shape %}
+    {{ output_access }} = {{ input_access }};
+}
+{% else %}
+    {% for size in output_shape %}
+    for (int64_t i{{ loop.index0 }} = 0; i{{ loop.index0 }} < {{ size }}; ++i{{ loop.index0 }}) {
+    {% endfor %}
+        {% for pad in pad_before %}
+        int64_t in_{{ loop.index0 }} = i{{ loop.index0 }} - {{ pad }};
+        {% endfor %}
+        bool in_range = true;
+        {% for size in input_shape %}
+        if (in_{{ loop.index0 }} < 0 || in_{{ loop.index0 }} >= {{ size }}) {
+            in_range = false;
+        }
+        {% endfor %}
+        if (in_range) {
+            {{ output_access }} = {{ input_access }};
+        } else {
+            {{ output_access }} = {{ value }};
+        }
+    {% for _ in range(output_shape|length) %}
+    }
+    {% endfor %}
+}
+{% endif %}
