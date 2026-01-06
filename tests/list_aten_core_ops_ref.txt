@@ -92,7 +92,7 @@ gelu                                     -     yes
 grid_sampler_2d                          -     -      
 gt.Scalar                                -     -      
 gt.Tensor                                -     yes    
-hardtanh                                 -     -      
+hardtanh                                 -     yes    
 index.Tensor                             -     -      
 index_put                                -     -      
 index_select                             -     -      
@@ -196,8 +196,8 @@ where.self                               -     yes
 Summary
 total aten ops: 192
 supported by cref only: 3
-supported by codegen only: 39
+supported by codegen only: 40
 supported by both: 46
-unsupported by either: 104
-supported by codegen: 85 / 192 (44.3 %)
+unsupported by either: 103
+supported by codegen: 86 / 192 (44.8 %)
 supported by c-ref: 49 / 192 (25.5 %)
