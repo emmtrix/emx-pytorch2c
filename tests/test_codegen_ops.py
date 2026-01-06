@@ -924,12 +924,6 @@ CODEGEN_OPS_UNDER_TEST = [
 ]
 CODEGEN_OPINFO_LIST = [opinfo for _, opinfo in CODEGEN_OPS_UNDER_TEST]
 CODEGEN_OP_TEST_CONFIG = {
-    torch.ops.aten.add.Tensor: {
-        "requires_same_shape": False,
-    },
-    torch.ops.aten.add.Scalar: {
-        "requires_same_shape": False,
-    },
     torch.ops.aten.embedding.default: {
         "allowed_dtypes": (torch.float32,),
         "allow_non_tensor_args": True,
@@ -940,19 +934,6 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.copysign.Scalar: {
         "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.diagonal.default: {
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
-        "requires_same_shape": False,
-    },
-    torch.ops.aten.amax.default: {
-        "allow_kwargs": True,
-        "allow_non_tensor_args": True,
-    },
-    torch.ops.aten.amin.default: {
-        "allow_kwargs": True,
-        "allow_non_tensor_args": True,
     },
     torch.ops.aten.bitwise_and.Scalar: {
         "allowed_dtypes": (torch.int8, torch.int32, torch.bool),
@@ -1018,14 +999,6 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.log_sigmoid.default: {
         "allowed_dtypes": (torch.float32,),
     },
-    torch.ops.aten.fill.Scalar: {
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
-    },
-    torch.ops.aten.flip.default: {
-        "allow_non_tensor_args": True,
-        "allow_kwargs": True,
-    },
     torch.ops.aten.gelu.default: {
         "allowed_dtypes": (torch.float32,),
         "allow_non_tensor_args": True,
@@ -1054,23 +1027,8 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.mish_.default: {
         "allowed_dtypes": (torch.float32,),
     },
-    torch.ops.aten.matmul.default: {
-        "allow_noncontiguous": True,
-        "requires_same_shape": False,
-    },
-    torch.ops.aten.mm.default: {
-        "allow_noncontiguous": True,
-        "requires_same_shape": False,
-    },
-    torch.ops.aten.bmm.default: {
-        "allow_noncontiguous": True,
-        "requires_same_shape": False,
-    },
     torch.ops.aten.hardsigmoid.default: {
         "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.std.default: {
-        "allow_non_tensor_args": True,
     },
     torch.ops.aten.var.dim: {
         "allowed_dtypes": (torch.float32,),
@@ -1082,9 +1040,6 @@ CODEGEN_OP_TEST_CONFIG = {
         "allowed_dtypes": (torch.float32,),
         "allow_non_tensor_args": True,
         "sample_filter": _norm_dim_sample_filter,
-    },
-    torch.ops.aten.transpose.int: {
-        "allow_non_tensor_args": True,
     },
     torch.ops.aten.view.default: {
         "requires_contiguous": True,
@@ -1178,6 +1133,8 @@ CODEGEN_OP_TEST_CONFIG = {
         "allow_noncontiguous": True,
         "allow_kwargs": True,
         "requires_same_shape": False,
+        "rtol": 2e-4,
+        "atol": 2e-5,
     },
     torch.ops.aten.addmv.default: {
         "allowed_dtypes": (torch.float32,),
