@@ -1245,6 +1245,7 @@ def _write_addr_kernel(
     vec1_suffix = _format_array_suffix(vec1_shape)
     vec2_suffix = _format_array_suffix(vec2_shape)
     out_suffix = _format_array_suffix(input_shape)
+    skip_input = math.isclose(beta, 0.0)
     rendered = addr_template.render(
         signature=(
             f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
@@ -1289,6 +1290,7 @@ def _write_addr_kernel(
         ),
         alpha=_format_scalar_literal(alpha, dtype),
         beta=_format_scalar_literal(beta, dtype),
+        skip_input=skip_input,
     )
     return rendered.strip().splitlines()
 
@@ -2231,6 +2233,17 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 op_node.p("dim"),
                 graph.dtype,
             )
+        elif op_node.spec.kind == "cumsum":
+            input_node = op_node.inputs[0]
+            kernel_lines = _write_cumsum_kernel(
+                index,
+                op_node.spec,
+                graph.shapes[input_node],
+                graph.strides[input_node],
+                graph.strides[op_node.node],
+                op_node.p("dim"),
+                graph.dtype,
+            )
         elif op_node.spec.kind == "concat":
             input_shapes = [graph.shapes[arg] for arg in op_node.inputs]
             input_strides = [graph.strides[arg] for arg in op_node.inputs]
@@ -3138,6 +3151,120 @@ def _write_softmax_kernel(
         is_log=op_spec.name == "log_softmax",
     )
     return rendered.strip().splitlines()
+
+
+def _write_cumsum_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    input_shape: Sequence[int],
+    input_strides: Sequence[int],
+    output_strides: Sequence[int],
+    cumsum_dim: int,
+    dtype: _CodegenDType,
+) -> List[str]:
+    input_c_type = _input_c_type(dtype.torch_dtype, dtype)
+    signature = (
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"const {input_c_type} input{_format_array_suffix(input_shape)}, "
+        f"{dtype.c_type} out{_format_array_suffix(input_shape)}) {{"
+    )
+    lines = [signature]
+    if not input_shape:
+        lines.append("    out[0] = input[0];")
+        lines.append("}")
+        return lines
+    loop_lines, indent = emit_loops(input_shape)
+    lines.extend(loop_lines)
+    output_access = _emit_strided_access(
+        "out",
+        [f"i{dim}" for dim in range(len(input_shape))],
+        output_strides,
+        _is_contiguous(input_shape, output_strides),
+        sizes=input_shape,
+        c_type=dtype.c_type,
+    )
+    acc_init = "0" if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES else "0.0f"
+    lines.append(f"{indent}{dtype.c_type} acc = {acc_init};")
+    lines.append(
+        f"{indent}for (int64_t r{cumsum_dim} = 0; r{cumsum_dim} <= i{cumsum_dim}; ++r{cumsum_dim}) {{"
+    )
+    inner_indent = f"{indent}    "
+    input_indices = [
+        f"r{cumsum_dim}" if dim == cumsum_dim else f"i{dim}"
+        for dim in range(len(input_shape))
+    ]
+    input_access = _emit_strided_access(
+        "input",
+        input_indices,
+        input_strides,
+        _is_contiguous(input_shape, input_strides),
+        sizes=input_shape,
+        c_type=input_c_type,
+    )
+    lines.append(f"{inner_indent}acc += {input_access};")
+    lines.append(f"{indent}}}")
+    lines.append(f"{indent}{output_access} = acc;")
+    lines.extend(emit_footer(input_shape, indent))
+    return lines
+
+
+def _parse_cumsum_args(
+    op_name: str, node: torch.fx.Node, input_shape: Sequence[int]
+) -> Tuple[int, torch.dtype | None]:
+    if not node.args:
+        raise RefBackendError(f"codegen {op_name} expects one input")
+    if len(node.args) > 3:
+        raise RefBackendError(
+            f"codegen {op_name} expects at most three inputs (self, dim, dtype)"
+        )
+    dim = node.args[1] if len(node.args) > 1 else None
+    dtype = node.args[2] if len(node.args) > 2 else None
+    if node.kwargs:
+        if "dim" in node.kwargs:
+            if dim is not None:
+                raise _error_kwarg_specified_once(op_name, "dim")
+            dim = node.kwargs["dim"]
+        if "dtype" in node.kwargs:
+            if dtype is not None:
+                raise _error_kwarg_specified_once(op_name, "dtype")
+            dtype = node.kwargs["dtype"]
+        extra = set(node.kwargs) - {"dim", "dtype"}
+        if extra:
+            raise RefBackendError(
+                f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
+            )
+    if dim is None:
+        raise RefBackendError(f"codegen {op_name} expects dim to be an int")
+    if isinstance(dim, torch.fx.Node):
+        raise RefBackendError(f"codegen {op_name} expects dim to be an int")
+    if isinstance(dim, (tuple, list)):
+        raise RefBackendError(f"codegen {op_name} expects dim to be an int")
+    try:
+        dim_value = operator.index(dim)
+    except TypeError as exc:
+        raise RefBackendError(
+            f"codegen {op_name} expects dim to be an int"
+        ) from exc
+    rank = len(input_shape)
+    if rank == 0:
+        if dim_value not in (-1, 0):
+            raise RefBackendError(f"codegen {op_name} dim is out of range")
+        dim_value = 0
+    else:
+        if dim_value < 0:
+            dim_value += rank
+        if dim_value < 0 or dim_value >= rank:
+            raise RefBackendError(f"codegen {op_name} dim is out of range")
+    if dtype is not None:
+        if isinstance(dtype, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_name} expects dtype to be torch.float32, torch.int8, or torch.int32"
+            )
+        if dtype not in (torch.float32, torch.int8, torch.int32):
+            raise RefBackendError(
+                f"codegen {op_name} expects dtype to be torch.float32, torch.int8, or torch.int32"
+            )
+    return dim_value, dtype
 def _parse_addmm_like_scalar(
     op_name: str, name: str, value: object | None
 ) -> float:
@@ -4263,6 +4390,46 @@ def _handle_softmax_node(
     )
 
 
+def _handle_cumsum_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> _OpNode:
+    if not node.args:
+        raise RefBackendError(f"codegen {op_spec.name} expects one input")
+    input_arg = node.args[0]
+    if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if dtype_info.torch_dtype is torch.bool:
+        raise RefBackendError("codegen cumsum does not support torch.bool tensors")
+    if dtypes[input_arg] is not dtype_info.torch_dtype:
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects inputs to share the graph dtype"
+        )
+    dim, dtype_override = _parse_cumsum_args(
+        op_spec.name, node, shapes[input_arg]
+    )
+    if dtype_override is not None and dtype_override is not dtype_info.torch_dtype:
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects dtype to match the graph dtype"
+        )
+    output_shape = shapes[input_arg]
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=[input_arg],
+        output_shape=output_shape,
+        inplace_input=None,
+        params={"dim": dim},
+    )
+
+
 def _analyze_generic_graph(
     gm: torch.fx.GraphModule, example_inputs: Sequence[object]
 ) -> _GenericGraph:
@@ -4308,6 +4475,7 @@ def _analyze_generic_graph(
                     "argmin",
                     "softmax",
                     "log_softmax",
+                    "cumsum",
                 }:
                     raise RefBackendError(f"Unsupported call_method: {node.target}")
                 op_spec = SUPPORTED_OPS[node.target]
@@ -4369,6 +4537,13 @@ def _analyze_generic_graph(
             elif op_spec.kind == "softmax":
                 op_nodes.append(
                     _handle_softmax_node(
+                        node, op_spec, dtype_info, shapes, strides, dtypes
+                    )
+                )
+                continue
+            elif op_spec.kind == "cumsum":
+                op_nodes.append(
+                    _handle_cumsum_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )

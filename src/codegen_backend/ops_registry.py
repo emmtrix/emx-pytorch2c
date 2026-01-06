@@ -14,6 +14,7 @@ _VALID_KINDS = {
     "arg_reduction",
     "reduction",
     "softmax",
+    "cumsum",
     "concat",
     "addmm",
     "addbmm",
@@ -552,6 +553,11 @@ _REGISTRY.register_unary("abs").targets(
 ).inplace(
     torch.ops.aten.abs_.default,
     torch.ops.aten.abs_,
+).build()
+_REGISTRY.register_op("cumsum", kind="cumsum").targets(
+    torch.cumsum,
+    torch.ops.aten.cumsum.default,
+    torch.ops.aten.cumsum,
 ).build()
 _REGISTRY.register_unary("absolute").targets(
     torch.absolute,
