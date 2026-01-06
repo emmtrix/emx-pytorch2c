@@ -71,7 +71,7 @@ elu                                      -     yes
 embedding                                -     yes    
 embedding_dense_backward                 -     -      
 empty.memory_format                      -     -      
-empty_strided                            -     -      
+empty_strided                            -     yes    
 eq.Scalar                                -     yes    
 eq.Tensor                                -     yes    
 erf                                      yes   yes    

@@ -749,6 +749,7 @@ CODEGEN_EXTRA_ATEN_OPS = [
     torch.ops.aten.copy.default,
     torch.ops.aten.div.Tensor_mode,
     torch.ops.aten.div.Scalar_mode,
+    torch.ops.aten.empty_strided.default,
     torch.ops.aten.prod.dim_int,
     torch.ops.aten.as_strided.default,
     torch.ops.aten.squeeze.dim,
@@ -1526,6 +1527,27 @@ class TestCodegenAdditionalOps(TestCase):
         result = compiled(*inputs)
         torch.testing.assert_close(result, expected)
 
+    def test_codegen_empty_strided_preserves_stride(self):
+        cases = [
+            ((2, 3), (3, 1)),
+            ((2, 3), (1, 2)),
+            ((2, 3), (4, 1)),
+        ]
+
+        for size, stride in cases:
+            graph = torch.fx.Graph()
+            empty_node = graph.call_function(
+                torch.ops.aten.empty_strided.default,
+                args=(size, stride),
+                kwargs={"dtype": torch.float32},
+            )
+            graph.output(empty_node)
+            gm = torch.fx.GraphModule({}, graph)
+            compiled = codegen_generic_backend(gm, [])
+            result = compiled()
+            assert result.shape == torch.Size(size)
+            assert result.stride() == stride
+            assert result.dtype is torch.float32
     def test_codegen_gather_matches_eager(self):
         aten_overload = torch.ops.aten.gather.default
         compiled = _compile_codegen_op(aten_overload)

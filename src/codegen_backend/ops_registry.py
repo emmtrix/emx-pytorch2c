@@ -34,6 +34,7 @@ _VALID_KINDS = {
     "gather",
     "batch_norm",
     "pdist",
+    "empty_strided",
     "col2im",
 }
 
@@ -1134,6 +1135,11 @@ _REGISTRY.register_op("fill", "fill").targets(
 _REGISTRY.register_op("full_like", "fill").targets(
     torch.ops.aten.full_like.default,
     torch.ops.aten.full_like,
+).build()
+_REGISTRY.register_op("empty_strided", "empty_strided").targets(
+    torch.empty_strided,
+    torch.ops.aten.empty_strided.default,
+    torch.ops.aten.empty_strided,
 ).build()
 _REGISTRY.register_op("as_strided", kind="view").targets(
     torch.ops.aten.as_strided.default,

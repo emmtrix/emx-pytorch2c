@@ -170,6 +170,7 @@ class _GenericGraph:
     op_nodes: List[_OpNode]
     output_node: torch.fx.Node
     output_value: torch.fx.Node
+    output_op: "_OpNode"
     output_inplace_input: torch.fx.Node | None
     output_structure: object
     shapes: Dict[torch.fx.Node, Tuple[int, ...]]
@@ -1176,6 +1177,20 @@ def _write_view_kernel(
     lines.append(f"{indent}{output_access} = a_ptr[offset];")
     lines.extend(emit_footer(output_shape, indent))
     return lines
+
+
+def _write_empty_strided_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    output_shape: Sequence[int],
+    dtype: _CodegenDType,
+) -> List[str]:
+    output_suffix = _format_array_suffix(output_shape)
+    signature = (
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"{dtype.c_type} out{output_suffix}) {{"
+    )
+    return [signature, "    (void)out;", "}"]
 
 
 def _write_matmul_kernel(
@@ -2818,6 +2833,13 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 graph.strides[op_node.node],
                 graph.dtype,
             )
+        elif op_node.spec.kind == "empty_strided":
+            kernel_lines = _write_empty_strided_kernel(
+                index,
+                op_node.spec,
+                op_node.output_shape,
+                graph.dtype,
+            )
         elif op_node.spec.kind == "diagonal":
             input_node = op_node.inputs[0]
             kernel_lines = _write_diagonal_kernel(
@@ -3273,6 +3295,45 @@ def _validate_example_inputs(
             raise RefBackendError(
                 "codegen backend expects all tensors to share a dtype"
             )
+    return dtype_info
+
+
+def _infer_empty_strided_dtype(
+    gm: torch.fx.GraphModule,
+) -> _CodegenDType:
+    dtype_value = None
+    for node in gm.graph.nodes:
+        if node.op != "call_function":
+            continue
+        target_info = TARGET_REGISTRY.get(node.target)
+        if target_info is None or target_info.op_spec.kind != "empty_strided":
+            continue
+        node_dtype = None
+        if len(node.args) > 2:
+            node_dtype = node.args[2]
+        if "dtype" in node.kwargs:
+            if node_dtype is not None:
+                raise _error_kwarg_specified_once("empty_strided", "dtype")
+            node_dtype = node.kwargs["dtype"]
+        if isinstance(node_dtype, torch.fx.Node):
+            raise RefBackendError(
+                "codegen empty_strided expects dtype to be a constant"
+            )
+        if node_dtype is None:
+            raise RefBackendError(
+                "codegen empty_strided requires dtype when no tensor inputs are provided"
+            )
+        if dtype_value is None:
+            dtype_value = node_dtype
+        elif dtype_value is not node_dtype:
+            raise RefBackendError(
+                "codegen empty_strided requires a consistent dtype"
+            )
+    dtype_info = _CODEGEN_DTYPES.get(dtype_value)
+    if dtype_info is None:
+        raise RefBackendError(
+            "codegen empty_strided supports only torch.float32, torch.int8, torch.int32, or torch.bool tensors"
+        )
     return dtype_info
 
 
@@ -6701,11 +6762,111 @@ def _parse_resize_size(op_name: str, size_value: object) -> Tuple[int, ...]:
     if isinstance(size_value, (list, tuple)):
         try:
             return tuple(int(operator.index(item)) for item in size_value)
-        except TypeError as exc:
-            raise RefBackendError(
-                f"codegen {op_name} expects size values to be integers"
-            ) from exc
+        except TypeError:
+            try:
+                return tuple(int(item) for item in size_value)
+            except TypeError as exc:
+                raise RefBackendError(
+                    f"codegen {op_name} expects size values to be integers"
+                ) from exc
     raise RefBackendError(f"codegen {op_name} expects size to be a sequence")
+
+
+def _parse_empty_strided_stride(
+    op_name: str, stride_value: object
+) -> Tuple[int, ...]:
+    if isinstance(stride_value, torch.Size):
+        stride_value = tuple(stride_value)
+    if isinstance(stride_value, (list, tuple)):
+        try:
+            return tuple(int(operator.index(item)) for item in stride_value)
+        except TypeError:
+            try:
+                return tuple(int(item) for item in stride_value)
+            except TypeError as exc:
+                raise RefBackendError(
+                    f"codegen {op_name} expects stride values to be integers"
+                ) from exc
+    raise RefBackendError(f"codegen {op_name} expects stride to be a sequence")
+
+
+def _handle_empty_strided_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> _OpNode:
+    if len(node.args) < 2:
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects size and stride arguments"
+        )
+    if len(node.args) > 7:
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects at most seven arguments"
+        )
+    size_arg, stride_arg = node.args[:2]
+    if isinstance(size_arg, torch.fx.Node) or isinstance(
+        stride_arg, torch.fx.Node
+    ):
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects size and stride to be constants"
+        )
+    kwargs = dict(node.kwargs)
+    positional_names = [
+        "dtype",
+        "layout",
+        "device",
+        "pin_memory",
+        "requires_grad",
+    ]
+    for index, name in enumerate(positional_names, start=2):
+        if len(node.args) > index:
+            if name in kwargs:
+                raise _error_kwarg_specified_once(op_spec.name, name)
+            kwargs[name] = node.args[index]
+    extra = set(kwargs) - {
+        "dtype",
+        "layout",
+        "device",
+        "pin_memory",
+        "requires_grad",
+    }
+    if extra:
+        raise RefBackendError(
+            f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
+        )
+    dtype_value = kwargs.get("dtype")
+    if dtype_value is not None and dtype_value is not dtype_info.torch_dtype:
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects dtype to match the graph dtype"
+        )
+    for name in ("layout", "device"):
+        if kwargs.get(name) is not None:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects {name} to be None"
+            )
+    for name in ("pin_memory", "requires_grad"):
+        if kwargs.get(name) not in (None, False):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects {name} to be False"
+            )
+    output_shape = _parse_resize_size(op_spec.name, size_arg)
+    output_strides = _parse_empty_strided_stride(op_spec.name, stride_arg)
+    if len(output_shape) != len(output_strides):
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects size and stride to match length"
+        )
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = output_strides
+    return _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=[],
+        output_shape=output_shape,
+    )
 
 
 def _handle_resize_node(
@@ -6760,7 +6921,11 @@ def _handle_resize_node(
 def _analyze_generic_graph(
     gm: torch.fx.GraphModule, example_inputs: Sequence[object]
 ) -> _GenericGraph:
-    dtype_info = _validate_example_inputs(example_inputs)
+    tensor_examples = list(_iter_example_tensors(example_inputs))
+    if tensor_examples:
+        dtype_info = _validate_example_inputs(example_inputs)
+    else:
+        dtype_info = _infer_empty_strided_dtype(gm)
     output_node = None
     placeholders: List[torch.fx.Node] = []
     tensor_placeholders: List[torch.fx.Node] = []
@@ -6985,6 +7150,13 @@ def _analyze_generic_graph(
             elif op_spec.kind == "view":
                 op_nodes.append(
                     _handle_view_node(
+                        node, op_spec, dtype_info, shapes, strides, dtypes
+                    )
+                )
+                continue
+            elif op_spec.kind == "empty_strided":
+                op_nodes.append(
+                    _handle_empty_strided_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
@@ -7474,6 +7646,17 @@ def _analyze_generic_graph(
     if output_value not in {op.node for op in op_nodes}:
         raise RefBackendError("codegen backend output must be an operator result")
 
+    output_op = next(op for op in op_nodes if op.node is output_value)
+    for op_node in op_nodes:
+        if (
+            op_node.spec.kind == "empty_strided"
+            and op_node.node is not output_value
+            and not _is_contiguous(op_node.output_shape, strides[op_node.node])
+        ):
+            raise RefBackendError(
+                "codegen empty_strided supports non-contiguous strides only for outputs"
+            )
+
     output_inplace_input = None
     for op_node in op_nodes:
         if op_node.node is output_value and op_node.inplace_input is not None:
@@ -7488,6 +7671,7 @@ def _analyze_generic_graph(
         op_nodes=op_nodes,
         output_node=output_node,
         output_value=output_value,
+        output_op=output_op,
         output_inplace_input=output_inplace_input,
         output_structure=output_structure,
         shapes=shapes,
@@ -7663,11 +7847,24 @@ def _compile_graph(
             env[output_value] = original_input
         else:
             output_dtype = graph.dtypes[output_value]
-            out = torch.empty(
-                lib.output_shape,
-                dtype=output_dtype,
-                device=contiguous_inputs[0].device,
+            device = (
+                contiguous_inputs[0].device
+                if contiguous_inputs
+                else torch.device("cpu")
             )
+            if graph.output_op.spec.kind == "empty_strided":
+                out = torch.empty_strided(
+                    graph.shapes[output_value],
+                    graph.strides[output_value],
+                    dtype=output_dtype,
+                    device=device,
+                )
+            else:
+                out = torch.empty(
+                    lib.output_shape,
+                    dtype=output_dtype,
+                    device=device,
+                )
             lib.run(contiguous_inputs, out)
             env[output_value] = out
         if graph.alias_map:
