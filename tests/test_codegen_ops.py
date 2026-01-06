@@ -61,11 +61,6 @@ def _all_same_shape(tensors):
     shape = tensors[0].shape
     return all(tensor.shape == shape for tensor in tensors[1:])
 
-
-def _norm_dim_sample_filter(sample):
-    return len(sample.args) >= 2
-
-
 def _cumsum_sample_filter(sample):
     if not isinstance(sample.input, torch.Tensor):
         return False
