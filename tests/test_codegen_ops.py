@@ -55,17 +55,6 @@ def _update_sample(sample, updated_tensors):
     return SampleInput(new_input, args=tuple(new_args), kwargs=sample.kwargs)
 
 
-def _addr_sample_filter(sample):
-    tensors = _extract_tensors(sample)
-    if len(tensors) != 3:
-        return False
-    input_tensor, vec1, vec2 = tensors
-    if input_tensor.ndim != 2 or vec1.ndim != 1 or vec2.ndim != 1:
-        return False
-    expected_shape = (vec1.shape[0], vec2.shape[0])
-    return input_tensor.shape == expected_shape
-
-
 def _all_same_shape(tensors):
     if not tensors:
         return True
@@ -1186,7 +1175,6 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.addr.default: {
         "equal_nan": True,
-        "sample_filter": _addr_sample_filter,
     },
 }
 DEFAULT_CONSTRAINTS = {

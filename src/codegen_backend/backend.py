@@ -1405,6 +1405,7 @@ def _write_addr_kernel(
     node_index: int,
     op_spec: _OpSpec,
     input_shape: Sequence[int],
+    output_shape: Sequence[int],
     vec1_shape: Sequence[int],
     vec2_shape: Sequence[int],
     input_strides: Sequence[int],
@@ -1420,13 +1421,27 @@ def _write_addr_kernel(
     input_is_contiguous = _is_contiguous(input_shape, input_strides)
     vec1_is_contiguous = _is_contiguous(vec1_shape, vec1_strides)
     vec2_is_contiguous = _is_contiguous(vec2_shape, vec2_strides)
-    output_is_contiguous = _is_contiguous(input_shape, output_strides)
-    m, n = input_shape
+    output_is_contiguous = _is_contiguous(output_shape, output_strides)
+    m, n = output_shape
     input_suffix = _format_array_suffix(input_shape)
     vec1_suffix = _format_array_suffix(vec1_shape)
     vec2_suffix = _format_array_suffix(vec2_shape)
-    out_suffix = _format_array_suffix(input_shape)
+    out_suffix = _format_array_suffix(output_shape)
     skip_input = math.isclose(beta, 0.0)
+    if not input_shape:
+        input_access = f"(({dtype.c_type}*)input)[0]"
+    else:
+        input_rank = len(input_shape)
+        input_indices = ("i", "j") if input_rank == 2 else ("j",)
+        use_contig = input_is_contiguous and input_shape == output_shape
+        input_access = _emit_strided_access(
+            "input",
+            input_indices,
+            input_strides,
+            use_contig,
+            sizes=input_shape,
+            c_type=dtype.c_type,
+        )
     rendered = addr_template.render(
         signature=(
             f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
@@ -1437,14 +1452,7 @@ def _write_addr_kernel(
         ),
         m=m,
         n=n,
-        input_access=_emit_strided_access(
-            "input",
-            ("i", "j"),
-            input_strides,
-            input_is_contiguous,
-            sizes=input_shape,
-            c_type=dtype.c_type,
-        ),
+        input_access=input_access,
         vec1_access=_emit_strided_access(
             "vec1",
             ("i",),
@@ -1466,7 +1474,7 @@ def _write_addr_kernel(
             ("i", "j"),
             output_strides,
             output_is_contiguous,
-            sizes=input_shape,
+            sizes=output_shape,
             c_type=dtype.c_type,
         ),
         alpha=_format_scalar_literal(alpha, dtype),
@@ -5489,6 +5497,16 @@ def _handle_addmm_like_node(
         )
     _validate_addmm_like_scalars(op_name, dtype_info.torch_dtype, alpha, beta)
     output_shape = _infer_output_shape(op_spec, input_shapes)
+    if op_spec.kind == "addr" and inplace_input is not None:
+        input_shape = input_shapes[inplace_input]
+        if len(input_shape) != 2:
+            raise RefBackendError(
+                "codegen addr expects 2D input and 1D vectors"
+            )
+        if input_shape != output_shape:
+            raise RefBackendError(
+                "codegen addr expects input shape to match outer product output"
+            )
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
     if inplace_input is not None:

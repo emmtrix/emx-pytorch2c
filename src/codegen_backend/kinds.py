@@ -739,6 +739,7 @@ class AddrHandler(KindHandler):
             node_index,
             op_node.spec,
             graph.shapes[input_node],
+            graph.shapes[op_node.node],
             graph.shapes[vec1_node],
             graph.shapes[vec2_node],
             graph.strides[input_node],
@@ -757,14 +758,21 @@ class AddrHandler(KindHandler):
     ) -> Tuple[int, ...]:
         backend = _backend_module()
         input_shape, vec1_shape, vec2_shape = input_shapes
-        if len(input_shape) != 2 or len(vec1_shape) != 1 or len(vec2_shape) != 1:
+        if len(vec1_shape) != 1 or len(vec2_shape) != 1:
             raise backend.RefBackendError(
-                "codegen addr expects 2D input and 1D vectors"
+                "codegen addr expects 1D vectors"
+            )
+        if len(input_shape) > 2:
+            raise backend.RefBackendError(
+                "codegen addr expects input with rank <= 2"
             )
         expected_shape = (vec1_shape[0], vec2_shape[0])
-        if input_shape != expected_shape:
+        if (
+            backend._broadcast_output_shape(op_spec, input_shape, expected_shape)
+            != expected_shape
+        ):
             raise backend.RefBackendError(
-                "codegen addr expects input shape to match outer product output"
+                "codegen addr expects input shape to be broadcastable to outer product output"
             )
         return expected_shape
 
