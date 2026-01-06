@@ -616,6 +616,8 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.nextafter.default,
     torch.ops.aten.positive.default,
     torch.ops.aten.pow.Tensor_Tensor,
+    torch.ops.aten.pow.Scalar,
+    torch.ops.aten.pow.Tensor_Scalar,
     torch.ops.aten.prod.default,
     torch.ops.aten.rad2deg.default,
     torch.ops.aten.real.default,
@@ -725,6 +727,7 @@ INPLACE_ATEN_OPS = [
     torch.ops.aten.neg_.default,
     torch.ops.aten.nextafter_.default,
     torch.ops.aten.pow_.Tensor,
+    torch.ops.aten.pow_.Scalar,
     torch.ops.aten.rad2deg_.default,
     torch.ops.aten.reciprocal_.default,
     torch.ops.aten.relu_.default,
@@ -791,6 +794,14 @@ def _clone_scalar_opinfo(aten_name, variant_test_name=""):
     )
 
 
+def _clone_tensor_scalar_opinfo(aten_name, variant_test_name=""):
+    return _clone_opinfo(
+        _lookup_opinfo(aten_name, variant_test_name),
+        name=f"{aten_name}_tensor_scalar",
+        aten_name=aten_name,
+    )
+
+
 CODEGEN_OPINFO_OVERRIDES = {
     torch.ops.aten.div.Tensor: _lookup_opinfo("div", "no_rounding_mode"),
     torch.ops.aten.div.Scalar: _clone_scalar_opinfo("div", "no_rounding_mode"),
@@ -811,6 +822,8 @@ CODEGEN_OPINFO_OVERRIDES = {
     torch.ops.aten.lt.Scalar: _clone_scalar_opinfo("lt", ""),
     torch.ops.aten.mul.Scalar: _clone_scalar_opinfo("mul", ""),
     torch.ops.aten.ne.Scalar: _clone_scalar_opinfo("ne", ""),
+    torch.ops.aten.pow.Scalar: _clone_scalar_opinfo("pow", ""),
+    torch.ops.aten.pow.Tensor_Scalar: _clone_tensor_scalar_opinfo("pow", ""),
     torch.ops.aten.remainder.Scalar: _clone_scalar_opinfo("remainder", ""),
     torch.ops.aten.sub.Scalar: _clone_scalar_opinfo("sub", ""),
     torch.ops.aten.where.Scalar: _clone_scalar_opinfo("where", ""),

@@ -122,7 +122,7 @@ mean.dim                                 -     -
 min.dim                                  -     -      
 minimum                                  yes   yes    
 mm                                       yes   yes    
-mul.Scalar                               -     -      
+mul.Scalar                               -     yes    
 mul.Tensor                               yes   yes    
 native_dropout                           -     -      
 native_group_norm                        -     -      
@@ -134,8 +134,8 @@ ne.Tensor                                -     yes
 neg                                      yes   yes    
 nonzero                                  -     -      
 permute                                  -     yes    
-pow.Scalar                               yes   -      
-pow.Tensor_Scalar                        yes   -      
+pow.Scalar                               yes   yes    
+pow.Tensor_Scalar                        yes   yes    
 pow.Tensor_Tensor                        yes   yes    
 prod                                     -     yes    
 prod.dim_int                             -     -      
@@ -195,9 +195,9 @@ where.self                               -     yes
 
 Summary
 total aten ops: 192
-supported by cref only: 2
-supported by codegen only: 43
-supported by both: 47
-unsupported by either: 100
-supported by codegen: 90 / 192 (46.9 %)
+supported by cref only: 0
+supported by codegen only: 58
+supported by both: 49
+unsupported by either: 85
+supported by codegen: 107 / 192 (55.7 %)
 supported by c-ref: 49 / 192 (25.5 %)

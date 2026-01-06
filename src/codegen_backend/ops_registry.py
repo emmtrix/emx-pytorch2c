@@ -393,10 +393,14 @@ _REGISTRY.register_binary("pow").targets(
     operator.pow,
     torch.pow,
     torch.ops.aten.pow.Tensor_Tensor,
+    torch.ops.aten.pow.Tensor_Scalar,
+    torch.ops.aten.pow.Scalar,
     torch.ops.aten.pow_.Tensor,
+    torch.ops.aten.pow_.Scalar,
     torch.ops.aten.pow_,
 ).inplace(
     torch.ops.aten.pow_.Tensor,
+    torch.ops.aten.pow_.Scalar,
     torch.ops.aten.pow_,
 ).build()
 _REGISTRY.register_binary("remainder").targets(
