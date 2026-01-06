@@ -8,7 +8,7 @@ _embedding_bag                           -     yes
 _fft_r2c                                 -     -      
 _local_scalar_dense                      -     -      
 _log_softmax                             -     yes    
-_native_batch_norm_legit                 -     -      
+_native_batch_norm_legit                 -     yes    
 _native_batch_norm_legit.no_stats        -     -      
 _native_batch_norm_legit_no_training     -     yes    
 _pdist_forward                           -     yes    
