@@ -41,7 +41,7 @@ avg_pool1d                               -     yes
 avg_pool2d                               -     yes    
 avg_pool2d_backward                      -     -      
 avg_pool3d                               -     -      
-bitwise_and.Scalar                       -     -      
+bitwise_and.Scalar                       -     yes    
 bitwise_and.Tensor                       -     yes    
 bitwise_not                              -     yes    
 bitwise_or.Scalar                        -     -      
@@ -196,8 +196,8 @@ where.self                               -     yes
 Summary
 total aten ops: 192
 supported by cref only: 3
-supported by codegen only: 40
+supported by codegen only: 42
 supported by both: 46
-unsupported by either: 103
-supported by codegen: 86 / 192 (44.8 %)
+unsupported by either: 101
+supported by codegen: 88 / 192 (45.8 %)
 supported by c-ref: 49 / 192 (25.5 %)

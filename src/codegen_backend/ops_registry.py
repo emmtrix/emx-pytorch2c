@@ -199,6 +199,7 @@ _REGISTRY.register_binary("bitwise_and").targets(
     operator.and_,
     torch.bitwise_and,
     torch.ops.aten.bitwise_and.Tensor,
+    torch.ops.aten.bitwise_and.Scalar,
     torch.ops.aten.bitwise_and_.Tensor,
     torch.ops.aten.bitwise_and_,
     torch.ops.aten.bitwise_and,

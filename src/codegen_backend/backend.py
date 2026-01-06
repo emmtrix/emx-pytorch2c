@@ -573,6 +573,15 @@ def emit_signature(
 ) -> str:
     out_suffix = _format_array_suffix(output_shape)
     if op_spec.kind == "binary":
+        if len(input_shapes) == 1:
+            a_shape = input_shapes[0]
+            a_suffix = _format_array_suffix(a_shape)
+            a_c_type = _input_c_type(input_dtypes[0], dtype)
+            return (
+                f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+                f"const {a_c_type} a{a_suffix}, "
+                f"{dtype.c_type} out{out_suffix}) {{"
+            )
         a_shape, b_shape = input_shapes
         a_suffix = _format_array_suffix(a_shape)
         b_suffix = _format_array_suffix(b_shape)
@@ -799,6 +808,23 @@ def emit_body(
     op_spec = op_node.spec
     scalar_fn = f"{dtype.scalar_prefix}{op_spec.name}"
     if op_spec.kind == "binary":
+        if "scalar" in op_node.params:
+            a_shape = input_shapes[0]
+            a_strides = input_strides[0]
+            a_index_expr = emit_input_access(
+                "a",
+                a_shape,
+                a_strides,
+                output_shape,
+                broadcast_contiguous=False,
+                c_type=_input_c_type(input_dtypes[0], dtype),
+            )
+            scalar_literal = _format_scalar_literal(
+                op_node.params["scalar"], dtype
+            )
+            return [
+                f"{indent}{output_access} = {scalar_fn}({a_index_expr}, {scalar_literal});"
+            ]
         a_shape, b_shape = input_shapes
         a_strides, b_strides = input_strides
         a_index_expr = emit_input_access(
@@ -3253,6 +3279,42 @@ def _parse_constant_int(op_name: str, name: str, value: object) -> int:
         ) from exc
 
 
+def _parse_bitwise_scalar(
+    op_name: str, value: object, dtype: torch.dtype
+) -> object:
+    if isinstance(value, torch.fx.Node):
+        meta_value = value.meta.get("val") or value.meta.get("example_value")
+        if meta_value is None:
+            raise RefBackendError(
+                f"codegen {op_name} expects scalar to be constant"
+            )
+        return _parse_bitwise_scalar(op_name, meta_value, dtype)
+    if isinstance(value, torch.Tensor):
+        if value.numel() != 1:
+            raise RefBackendError(
+                f"codegen {op_name} expects scalar to be a single value"
+            )
+        return _parse_bitwise_scalar(op_name, value.item(), dtype)
+    if dtype is torch.bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, float):
+            if not value.is_integer():
+                raise RefBackendError(
+                    f"codegen {op_name} expects scalar to be a boolean value"
+                )
+            return bool(int(value))
+        try:
+            return bool(operator.index(value))
+        except TypeError as exc:
+            raise RefBackendError(
+                f"codegen {op_name} expects scalar to be a boolean value"
+            ) from exc
+    if isinstance(value, bool):
+        return int(value)
+    return _parse_constant_int(op_name, "scalar", value)
+
+
 def _parse_parametric_unary_args(
     op_name: str, node: torch.fx.Node
 ) -> Tuple[torch.fx.Node, Dict[str, object]]:
@@ -3678,16 +3740,9 @@ def _parse_cumsum_args(
             )
     if dim is None:
         raise RefBackendError(f"codegen {op_name} expects dim to be an int")
-    if isinstance(dim, torch.fx.Node):
-        raise RefBackendError(f"codegen {op_name} expects dim to be an int")
     if isinstance(dim, (tuple, list)):
         raise RefBackendError(f"codegen {op_name} expects dim to be an int")
-    try:
-        dim_value = operator.index(dim)
-    except TypeError as exc:
-        raise RefBackendError(
-            f"codegen {op_name} expects dim to be an int"
-        ) from exc
+    dim_value = _parse_constant_int(op_name, "dim", dim)
     rank = len(input_shape)
     if rank == 0:
         if dim_value not in (-1, 0):
@@ -5157,52 +5212,75 @@ def _analyze_generic_graph(
             keepdim = False
             reduce_all = False
             param_values: Dict[str, object] = {}
-            if op_spec.kind in {"reduction", "arg_reduction"}:
-                if len(node.args) < 1:
-                    raise RefBackendError(
-                        f"codegen {op_spec.name} expects one input"
-                    )
-                args_to_check = node.args[:1]
-            elif op_spec.kind == "unary" and op_spec.name in _PARAMETRIC_UNARY_OPS:
-                input_node, param_values = _parse_parametric_unary_args(
-                    op_spec.name, node
-                )
-                args_to_check = (input_node,)
-            else:
+            input_nodes: List[torch.fx.Node] = []
+            input_shapes: List[Tuple[int, ...]] = []
+            if node.target is torch.ops.aten.bitwise_and.Scalar:
                 if node.kwargs:
                     raise RefBackendError(
-                        "codegen backend expects positional args only"
+                        "codegen bitwise_and expects positional args only"
                     )
-                if op_spec.kind == "unary":
-                    expected_arity = 1
-                elif op_spec.kind == "binary":
-                    expected_arity = 2
-                elif op_spec.kind == "where":
-                    expected_arity = 3
-                else:
-                    expected_arity = 2
-                if len(node.args) != expected_arity:
-                    if expected_arity == 1:
+                if len(node.args) != 2:
+                    raise RefBackendError(
+                        "codegen bitwise_and expects exactly two inputs"
+                    )
+                input_arg, scalar_arg = node.args
+                if not isinstance(input_arg, torch.fx.Node):
+                    raise _error_expected_tensor(op_spec.name)
+                if input_arg not in shapes:
+                    raise _error_expected_tensor(op_spec.name)
+                input_nodes = [input_arg]
+                input_shapes = [shapes[input_arg]]
+                param_values["scalar"] = _parse_bitwise_scalar(
+                    op_spec.name, scalar_arg, dtype_info.torch_dtype
+                )
+            else:
+                if op_spec.kind in {"reduction", "arg_reduction"}:
+                    if len(node.args) < 1:
                         raise RefBackendError(
                             f"codegen {op_spec.name} expects one input"
                         )
-                    if expected_arity == 2:
-                        raise RefBackendError(
-                            f"codegen {op_spec.name} expects exactly two inputs"
-                        )
-                    raise RefBackendError(
-                        f"codegen {op_spec.name} expects exactly three inputs"
+                    args_to_check = node.args[:1]
+                elif (
+                    op_spec.kind == "unary"
+                    and op_spec.name in _PARAMETRIC_UNARY_OPS
+                ):
+                    input_node, param_values = _parse_parametric_unary_args(
+                        op_spec.name, node
                     )
-                args_to_check = node.args
-            input_nodes: List[torch.fx.Node] = []
-            input_shapes: List[Tuple[int, ...]] = []
-            for arg in args_to_check:
-                if not isinstance(arg, torch.fx.Node):
-                    raise _error_expected_tensor(op_spec.name)
-                if arg not in shapes:
-                    raise _error_expected_tensor(op_spec.name)
-                input_nodes.append(arg)
-                input_shapes.append(shapes[arg])
+                    args_to_check = (input_node,)
+                else:
+                    if node.kwargs:
+                        raise RefBackendError(
+                            "codegen backend expects positional args only"
+                        )
+                    if op_spec.kind == "unary":
+                        expected_arity = 1
+                    elif op_spec.kind == "binary":
+                        expected_arity = 2
+                    elif op_spec.kind == "where":
+                        expected_arity = 3
+                    else:
+                        expected_arity = 2
+                    if len(node.args) != expected_arity:
+                        if expected_arity == 1:
+                            raise RefBackendError(
+                                f"codegen {op_spec.name} expects one input"
+                            )
+                        if expected_arity == 2:
+                            raise RefBackendError(
+                                f"codegen {op_spec.name} expects exactly two inputs"
+                            )
+                        raise RefBackendError(
+                            f"codegen {op_spec.name} expects exactly three inputs"
+                        )
+                    args_to_check = node.args
+                for arg in args_to_check:
+                    if not isinstance(arg, torch.fx.Node):
+                        raise _error_expected_tensor(op_spec.name)
+                    if arg not in shapes:
+                        raise _error_expected_tensor(op_spec.name)
+                    input_nodes.append(arg)
+                    input_shapes.append(shapes[arg])
             input_dtypes = [dtypes[arg] for arg in input_nodes]
             if op_spec.name in _BITWISE_OPS:
                 if dtype_info.torch_dtype in _INTEGER_CODEGEN_DTYPES:

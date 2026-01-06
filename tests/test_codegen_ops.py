@@ -506,6 +506,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.arcsinh.default,
     torch.ops.aten.arctan.default,
     torch.ops.aten.bitwise_and.Tensor,
+    torch.ops.aten.bitwise_and.Scalar,
     torch.ops.aten.bitwise_left_shift.Tensor,
     torch.ops.aten.bitwise_not.default,
     torch.ops.aten.bitwise_or.Tensor,
@@ -765,6 +766,11 @@ CODEGEN_OPINFO_OVERRIDES = {
     torch.ops.aten.hardsigmoid.default: _lookup_opinfo(
         "nn.functional.hardsigmoid", ""
     ),
+    torch.ops.aten.bitwise_and.Scalar: _clone_opinfo(
+        _lookup_opinfo("bitwise_and", ""),
+        name="bitwise_and_scalar",
+        aten_name="bitwise_and",
+    ),
     torch.ops.aten.elu.default: _lookup_opinfo("nn.functional.elu", ""),
     torch.ops.aten.softplus.default: _lookup_opinfo("nn.functional.softplus", ""),
     torch.ops.aten.round.default: _lookup_opinfo("round", ""),
@@ -845,6 +851,10 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.amin.default: {
         "allow_kwargs": True,
+        "allow_non_tensor_args": True,
+    },
+    torch.ops.aten.bitwise_and.Scalar: {
+        "allowed_dtypes": (torch.int8, torch.int32, torch.bool),
         "allow_non_tensor_args": True,
     },
     torch.ops.aten.bitwise_left_shift.Tensor: {
