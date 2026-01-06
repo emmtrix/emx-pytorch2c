@@ -945,9 +945,6 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.bitwise_right_shift_.Tensor: {
         "allowed_dtypes": (torch.int8, torch.int32),
     },
-    torch.ops.aten.logical_and.default: {
-        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
-    },
     torch.ops.aten.logical_or.default: {
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
     },
