@@ -1,7 +1,11 @@
 {{ signature }}
     for (int64_t i = 0; i < {{ m }}; ++i) {
         for (int64_t j = 0; j < {{ n }}; ++j) {
+            {%- if skip_input %}
+            {{ out_access }} = ({{ alpha }}) * {{ vec1_access }} * {{ vec2_access }};
+            {%- else %}
             {{ out_access }} = ({{ beta }}) * {{ input_access }} + ({{ alpha }}) * {{ vec1_access }} * {{ vec2_access }};
+            {%- endif %}
         }
     }
 }

@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import ast
-import json
 import re
 import sys
 from pathlib import Path
 from typing import Iterable, Set
 
 import torch
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -28,69 +28,39 @@ def _native_functions_path() -> Path:
     return path
 
 
-def _read_native_functions_lines(path: Path) -> list[str]:
-    content = path.read_text(encoding="utf-8")
-    marker = '<script type="application/json" data-target="react-app.embeddedData">'
-    if marker in content:
-        start = content.find(marker)
-        start = content.find(">", start) + 1
-        end = content.find("</script>", start)
-        data = json.loads(content[start:end])
-        return data["payload"]["blob"]["rawLines"]
-    return content.splitlines()
-
-
 def _core_ops_from_native_functions(path: Path) -> Set[str]:
-    lines = _read_native_functions_lines(path)
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise ValueError(f"Expected native functions YAML to be a list, got {type(data)}")
     ops: set[str] = set()
-    current_op: str | None = None
-    current_tags: list[str] = []
-    in_tags_block = False
-
-    def finalize() -> None:
-        if current_op and "core" in current_tags:
-            ops.add(current_op)
-
-    for line in lines:
-        if line.startswith("- func: "):
-            finalize()
-            func_sig = line[len("- func: ") :].strip()
-            current_op = func_sig.split("(", 1)[0].strip()
-            current_tags = []
-            in_tags_block = False
+    for entry in data:
+        if not isinstance(entry, dict):
             continue
-
-        if current_op is None:
+        func_sig = entry.get("func")
+        if not func_sig:
             continue
-
-        stripped = line.strip()
-        if stripped.startswith("tags:"):
-            in_tags_block = False
-            tag_value = stripped.split("tags:", 1)[1].strip()
-            if not tag_value:
-                current_tags = []
-                in_tags_block = True
-            elif tag_value.startswith("[") and tag_value.endswith("]"):
-                tag_items = tag_value[1:-1].split(",")
-                current_tags = [item.strip() for item in tag_items if item.strip()]
-            else:
-                current_tags = [item.strip() for item in tag_value.split(",") if item.strip()]
-            continue
-
-        if in_tags_block:
-            if stripped.startswith("- "):
-                current_tags.append(stripped[2:].strip())
-                continue
-            if stripped and not stripped.startswith("#"):
-                in_tags_block = False
-
-    finalize()
+        tags = entry.get("tags", [])
+        if isinstance(tags, str):
+            tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+        else:
+            tags_list = list(tags) if isinstance(tags, list) else []
+        if "core" in tags_list:
+            ops.add(func_sig.split("(", 1)[0].strip())
     return ops
 
 
+def _expand_op_names(op_names: Iterable[str]) -> Set[str]:
+    expanded: set[str] = set()
+    for name in op_names:
+        expanded.add(name)
+        if "." in name:
+            expanded.add(name.split(".", 1)[0])
+    return expanded
+
+
 def _ops_from_backend_source(path: Path) -> Set[str]:
-    pattern = re.compile(r"torch\.ops\.aten\.([A-Za-z0-9_]+)")
-    return set(pattern.findall(path.read_text(encoding="utf-8")))
+    pattern = re.compile(r"torch\.ops\.aten\.([A-Za-z0-9_.]+)")
+    return _expand_op_names(pattern.findall(path.read_text(encoding="utf-8")))
 
 
 def _attribute_chain(node: ast.AST) -> list[str] | None:
@@ -110,7 +80,7 @@ def _extract_aten_op_name(node: ast.AST, name_aliases: dict[str, str]) -> str | 
     if not parts:
         return None
     if len(parts) >= 4 and parts[:3] == ["torch", "ops", "aten"]:
-        return parts[3]
+        return ".".join(parts[3:])
     if len(parts) >= 2 and parts[0] in name_aliases:
         return name_aliases[parts[0]]
     return None
@@ -172,7 +142,7 @@ def _ops_from_codegen_tests(path: Path) -> Set[str]:
                 op_name = _extract_aten_op_name(node.args[0], aliases)
                 if op_name:
                     ops.add(op_name)
-    return ops
+    return _expand_op_names(ops)
 
 
 def _format_row(op_name: str, cref_supported: bool, codegen_supported: bool) -> str:

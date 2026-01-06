@@ -19,7 +19,7 @@ acos                                     yes   yes
 acosh                                    yes   yes    
 adaptive_avg_pool1d                      -     -      
 add.Scalar                               -     -      
-add.Tensor                               -     -      
+add.Tensor                               yes   yes    
 addmm                                    -     yes    
 alias                                    -     -      
 amax                                     yes   yes    
@@ -42,12 +42,12 @@ avg_pool2d                               -     yes
 avg_pool2d_backward                      -     -      
 avg_pool3d                               -     -      
 bitwise_and.Scalar                       -     -      
-bitwise_and.Tensor                       -     -      
+bitwise_and.Tensor                       -     yes    
 bitwise_not                              -     yes    
 bitwise_or.Scalar                        -     -      
-bitwise_or.Tensor                        -     -      
+bitwise_or.Tensor                        -     yes    
 bitwise_xor.Scalar                       -     -      
-bitwise_xor.Tensor                       -     -      
+bitwise_xor.Tensor                       -     yes    
 bmm                                      yes   yes    
 cat                                      -     yes    
 ceil                                     yes   yes    
@@ -62,10 +62,10 @@ copy                                     -     -
 cos                                      yes   yes    
 cosh                                     yes   yes    
 cumsum                                   -     -      
-diagonal                                 -     -      
+diagonal                                 -     yes    
 div.Scalar                               -     -      
 div.Scalar_mode                          -     -      
-div.Tensor                               -     -      
+div.Tensor                               yes   yes    
 div.Tensor_mode                          -     -      
 elu                                      -     yes    
 embedding                                -     yes    
@@ -73,7 +73,7 @@ embedding_dense_backward                 -     -
 empty.memory_format                      -     -      
 empty_strided                            -     -      
 eq.Scalar                                -     -      
-eq.Tensor                                -     -      
+eq.Tensor                                -     yes    
 erf                                      yes   yes    
 exp                                      yes   yes    
 expand                                   yes   yes    
@@ -82,16 +82,16 @@ fill.Scalar                              -     -
 flip                                     -     -      
 floor                                    yes   yes    
 fmod.Scalar                              -     -      
-fmod.Tensor                              -     -      
+fmod.Tensor                              yes   yes    
 full                                     -     -      
 full_like                                -     -      
 gather                                   -     -      
 ge.Scalar                                -     -      
-ge.Tensor                                -     -      
+ge.Tensor                                -     yes    
 gelu                                     -     yes    
 grid_sampler_2d                          -     -      
 gt.Scalar                                -     -      
-gt.Tensor                                -     -      
+gt.Tensor                                -     yes    
 hardtanh                                 -     -      
 index.Tensor                             -     -      
 index_put                                -     -      
@@ -99,7 +99,7 @@ index_select                             -     -
 isinf                                    -     yes    
 isnan                                    -     yes    
 le.Scalar                                -     -      
-le.Tensor                                -     -      
+le.Tensor                                -     yes    
 leaky_relu                               -     yes    
 log                                      yes   yes    
 log10                                    yes   yes    
@@ -110,7 +110,7 @@ logical_not                              -     yes
 logical_or                               -     yes    
 logical_xor                              -     yes    
 lt.Scalar                                -     -      
-lt.Tensor                                -     -      
+lt.Tensor                                -     yes    
 masked_scatter                           -     -      
 max.dim                                  -     -      
 max_pool2d_with_indices                  -     -      
@@ -123,20 +123,20 @@ min.dim                                  -     -
 minimum                                  yes   yes    
 mm                                       yes   -      
 mul.Scalar                               -     -      
-mul.Tensor                               -     -      
+mul.Tensor                               yes   yes    
 native_dropout                           -     -      
 native_group_norm                        -     -      
 native_group_norm_backward               -     -      
 native_layer_norm                        -     -      
 native_layer_norm_backward               -     -      
 ne.Scalar                                -     -      
-ne.Tensor                                -     -      
+ne.Tensor                                -     yes    
 neg                                      yes   yes    
 nonzero                                  -     -      
 permute                                  -     yes    
-pow.Scalar                               -     -      
-pow.Tensor_Scalar                        -     -      
-pow.Tensor_Tensor                        -     -      
+pow.Scalar                               yes   -      
+pow.Tensor_Scalar                        yes   -      
+pow.Tensor_Tensor                        yes   yes    
 prod                                     -     yes    
 prod.dim_int                             -     -      
 rand                                     -     -      
@@ -148,7 +148,7 @@ reflection_pad2d                         -     -
 reflection_pad3d                         -     -      
 relu                                     yes   yes    
 remainder.Scalar                         -     -      
-remainder.Tensor                         -     -      
+remainder.Tensor                         yes   yes    
 repeat                                   -     -      
 replication_pad2d                        -     -      
 replication_pad3d                        -     -      
@@ -160,13 +160,13 @@ scatter.src                              -     -
 scatter.value                            -     -      
 scatter_add                              -     -      
 scatter_reduce.two                       -     -      
-select.int                               -     -      
+select.int                               -     yes    
 select_scatter                           -     -      
 sigmoid                                  yes   yes    
 sign                                     yes   yes    
 sin                                      yes   yes    
 sinh                                     yes   yes    
-slice.Tensor                             -     -      
+slice.Tensor                             -     yes    
 slice_scatter                            -     -      
 sort                                     -     -      
 split_with_sizes                         -     -      
@@ -174,7 +174,7 @@ sqrt                                     yes   yes
 squeeze.dim                              -     -      
 squeeze.dims                             -     -      
 sub.Scalar                               -     -      
-sub.Tensor                               -     -      
+sub.Tensor                               yes   yes    
 sum.dim_IntList                          -     -      
 sym_is_contiguous                        -     -      
 sym_numel                                -     -      
@@ -189,9 +189,9 @@ unsqueeze                                -     yes
 upsample_bilinear2d.vec                  -     -      
 upsample_nearest2d.vec                   -     -      
 var.correction                           -     -      
-var.dim                                  -     -      
+var.dim                                  -     yes    
 view                                     -     yes    
-where.self                               -     -      
+where.self                               -     yes    
 
 Summary
 total aten ops: 192
