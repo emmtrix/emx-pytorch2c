@@ -61,7 +61,7 @@ convolution_backward                     -     -
 copy                                     -     -      
 cos                                      yes   yes    
 cosh                                     yes   yes    
-cumsum                                   -     -      
+cumsum                                   -     yes    
 diagonal                                 -     yes    
 div.Scalar                               -     -      
 div.Scalar_mode                          -     -      
@@ -195,9 +195,9 @@ where.self                               -     yes
 
 Summary
 total aten ops: 192
-supported by cref only: 1
-supported by codegen only: 23
-supported by both: 39
-unsupported by either: 129
-supported by codegen: 62 / 192 (32.3 %)
-supported by c-ref: 40 / 192 (20.8 %)
+supported by cref only: 3
+supported by codegen only: 39
+supported by both: 46
+unsupported by either: 104
+supported by codegen: 85 / 192 (44.3 %)
+supported by c-ref: 49 / 192 (25.5 %)

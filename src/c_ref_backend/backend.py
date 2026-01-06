@@ -739,7 +739,7 @@ def _run_expand(a: torch.Tensor, shape: List[int]) -> torch.Tensor:
                 raise RefBackendError("expand cannot infer leading broadcast dimension")
             dim = a.shape[idx - leading]
         resolved_shape.append(int(dim))
-    return a.expand(*resolved_shape)
+    return a.expand(tuple(resolved_shape))
 
 
 def _run_unbind(a: torch.Tensor, dim: int = 0) -> Tuple[torch.Tensor, ...]:

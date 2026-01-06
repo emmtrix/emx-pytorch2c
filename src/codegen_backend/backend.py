@@ -2338,6 +2338,15 @@ def _write_generic_source(graph: _GenericGraph) -> str:
         elif op_node.spec.kind == "flip":
             input_node = op_node.inputs[0]
             kernel_lines = _write_flip_kernel(
+                index,
+                op_node,
+                graph.shapes[input_node],
+                graph.strides[input_node],
+                graph.dtypes[input_node],
+                op_node.output_shape,
+                graph.strides[op_node.node],
+                graph.dtype,
+            )
         elif op_node.spec.kind == "diagonal":
             input_node = op_node.inputs[0]
             kernel_lines = _write_diagonal_kernel(
@@ -5091,6 +5100,10 @@ def _analyze_generic_graph(
             elif op_spec.kind == "flip":
                 op_nodes.append(
                     _handle_flip_node(
+                        node, op_spec, dtype_info, shapes, strides, dtypes
+                    )
+                )
+                continue
             elif op_spec.kind == "cumsum":
                 op_nodes.append(
                     _handle_cumsum_node(
