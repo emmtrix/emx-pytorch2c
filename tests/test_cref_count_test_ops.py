@@ -18,8 +18,8 @@ def _load_count_test_ops():
 
 def _load_test_ops():
     repo_root = Path(__file__).resolve().parents[1]
-    module_path = repo_root / "tests" / "test_ops.py"
-    return _load_module("test_ops", module_path)
+    module_path = repo_root / "tests" / "test_cref_ops.py"
+    return _load_module("test_cref_ops", module_path)
 
 
 def test_count_test_ops_runs():

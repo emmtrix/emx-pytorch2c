@@ -11,7 +11,7 @@ from torch.testing._internal.common_methods_invocations import op_db
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from tests import test_ops  # noqa: E402
+from tests import test_cref_ops  # noqa: E402
 
 
 def _dtype_name(dtype: torch.dtype) -> str:
@@ -22,8 +22,8 @@ def _count_executed_tests() -> dict[str, dict[str, int]]:
     counts: dict[str, dict[str, int]] = defaultdict(lambda: {"matches": 0, "invalid": 0})
     device = "cpu"
 
-    for op in test_ops.OPS_UNDER_TEST:
-        constraints = test_ops._constraints_for(op)
+    for op in test_cref_ops.OPS_UNDER_TEST:
+        constraints = test_cref_ops._constraints_for(op)
         allowed_dtypes = constraints["allowed_dtypes"]
         op_dtypes = set(op.dtypes)
         if allowed_dtypes is None:
@@ -32,7 +32,7 @@ def _count_executed_tests() -> dict[str, dict[str, int]]:
             dtypes = sorted(op_dtypes & set(allowed_dtypes), key=_dtype_name)
 
         for dtype in dtypes:
-            for _ in test_ops._iter_supported_samples(op, device, dtype, constraints):
+            for _ in test_cref_ops._iter_supported_samples(op, device, dtype, constraints):
                 counts[op.name]["matches"] += 1
 
     return counts
