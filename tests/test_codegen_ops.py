@@ -668,6 +668,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.sub.Tensor,
     torch.ops.aten.sub.Scalar,
     torch.ops.aten.sum.default,
+    torch.ops.aten.sum.dim_IntList,
     torch.ops.aten.tan.default,
     torch.ops.aten.tanh.default,
     torch.ops.aten.relu6.default,
@@ -912,6 +913,7 @@ ALIASED_CODEGEN_OPS = {
     torch.ops.aten.arctan.default,
     torch.ops.aten.any.dim,
     torch.ops.aten.any.dims,
+    torch.ops.aten.sum.dim_IntList,
 }
 CODEGEN_OPS_UNDER_TEST = [
     (aten_overload, _find_opinfo_for_overload(aten_overload))
@@ -1412,6 +1414,15 @@ class TestCodegenAliasedOps(TestCase):
             expected = aten_overload(tensor, dims, False)
             result = compiled(tensor, dims, False)
             torch.testing.assert_close(result, expected)
+
+    def test_codegen_sum_dim_overload_matches_eager(self):
+        tensor = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+        aten_overload = torch.ops.aten.sum.dim_IntList
+        compiled = _compile_codegen_op(aten_overload)
+        dims = (1,)
+        expected = aten_overload(tensor, dims, False)
+        result = compiled(tensor, dims, False)
+        torch.testing.assert_close(result, expected)
 
 
 class TestCodegenAdditionalOps(TestCase):
