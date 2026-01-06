@@ -1078,6 +1078,9 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.transpose.int: {
         "allow_non_tensor_args": True,
     },
+    torch.ops.aten.view.default: {
+        "requires_contiguous": True,
+    },
     torch.ops.aten.cat.default: {
         "allow_kwargs": True,
         "allow_non_tensor_args": True,
@@ -1187,11 +1190,11 @@ CODEGEN_OP_TEST_CONFIG = {
 DEFAULT_CONSTRAINTS = {
     "allowed_dtypes": (torch.float32, torch.int8, torch.int32, torch.bool),
     "allow_noncontiguous": True,
-    "allow_non_tensor_args": False,
-    "allow_kwargs": False,
+    "allow_non_tensor_args": True,
+    "allow_kwargs": True,
     "expand_input_list": False,
-    "max_ndim": 8,
-    "requires_same_shape": True,
+    "max_ndim": None,
+    "requires_same_shape": False,
     "requires_contiguous": False,
     "sample_filter": None,
     "rtol": None,
