@@ -121,8 +121,8 @@ mean                                     -     yes
 mean.dim                                 -     -      
 min.dim                                  -     -      
 minimum                                  yes   yes    
-mm                                       yes   -      
-mul.Scalar                               -     yes    
+mm                                       yes   yes    
+mul.Scalar                               -     -      
 mul.Tensor                               yes   yes    
 native_dropout                           -     -      
 native_group_norm                        -     -      
@@ -195,9 +195,9 @@ where.self                               -     yes
 
 Summary
 total aten ops: 192
-supported by cref only: 3
-supported by codegen only: 44
-supported by both: 46
-unsupported by either: 99
+supported by cref only: 2
+supported by codegen only: 43
+supported by both: 47
+unsupported by either: 100
 supported by codegen: 90 / 192 (46.9 %)
 supported by c-ref: 49 / 192 (25.5 %)

@@ -599,6 +599,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.addbmm.default,
     torch.ops.aten.addmv.default,
     torch.ops.aten.addr.default,
+    torch.ops.aten.mm.default,
     torch.ops.aten.matmul.default,
     torch.ops.aten.max_pool1d.default,
     torch.ops.aten.max_pool2d.default,
@@ -1002,6 +1003,10 @@ CODEGEN_OP_TEST_CONFIG = {
         "allowed_dtypes": (torch.float32,),
     },
     torch.ops.aten.matmul.default: {
+        "allow_noncontiguous": True,
+        "requires_same_shape": False,
+    },
+    torch.ops.aten.mm.default: {
         "allow_noncontiguous": True,
         "requires_same_shape": False,
     },
