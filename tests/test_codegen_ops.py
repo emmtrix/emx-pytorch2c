@@ -257,56 +257,6 @@ def _max_pool2d_sample_filter(sample):
     return True
 
 
-def _avg_pool2d_sample_filter(sample):
-    if not isinstance(sample.input, torch.Tensor):
-        return False
-    if sample.input.ndim != 4:
-        return False
-    if not sample.input.is_contiguous():
-        return False
-    args = list(sample.args)
-    kernel_size = args[0] if len(args) > 0 else sample.kwargs.get("kernel_size")
-    stride = args[1] if len(args) > 1 else sample.kwargs.get("stride")
-    padding = args[2] if len(args) > 2 else sample.kwargs.get("padding", 0)
-    ceil_mode = args[3] if len(args) > 3 else sample.kwargs.get("ceil_mode", False)
-    count_include_pad = (
-        args[4] if len(args) > 4 else sample.kwargs.get("count_include_pad", False)
-    )
-    divisor_override = (
-        args[5] if len(args) > 5 else sample.kwargs.get("divisor_override", None)
-    )
-    kernel_pair = _normalize_pool2d_param(kernel_size)
-    if kernel_pair is None:
-        return False
-    if stride is None:
-        stride_pair = kernel_pair
-    else:
-        stride_pair = _normalize_pool2d_param(stride)
-        if stride_pair is None:
-            return False
-    padding_pair = _normalize_pool2d_param(padding)
-    if padding_pair is None:
-        return False
-    if (
-        kernel_pair[0] <= 0
-        or kernel_pair[1] <= 0
-        or stride_pair[0] <= 0
-        or stride_pair[1] <= 0
-        or padding_pair[0] < 0
-        or padding_pair[1] < 0
-    ):
-        return False
-    if ceil_mode:
-        return False
-    if not isinstance(count_include_pad, bool):
-        return False
-    if divisor_override is not None and (
-        not isinstance(divisor_override, int) or divisor_override <= 0
-    ):
-        return False
-    return True
-
-
 def _native_batch_norm_legit_sample_filter(sample):
     if len(sample.args) < 5:
         return False
@@ -973,7 +923,6 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.avg_pool2d.default: {
         "allowed_dtypes": (torch.float32,),
-        "sample_filter": _avg_pool2d_sample_filter,
     },
     torch.ops.aten.max_pool1d.default: {
         "allowed_dtypes": (torch.float32,),

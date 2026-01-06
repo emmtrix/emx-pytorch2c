@@ -4678,7 +4678,7 @@ def _parse_avg_pool2d_args(
     stride = None
     padding = 0
     ceil_mode = False
-    count_include_pad = False
+    count_include_pad = True
     divisor_override = None
     remaining = args[2:]
     if len(remaining) >= 1:
@@ -5234,6 +5234,15 @@ def _handle_pool1d_node(
         if not isinstance(divisor_override, int) or divisor_override <= 0:
             raise RefBackendError(
                 f"codegen {op_spec.name} expects divisor_override to be a positive int"
+            )
+    if op_spec.name == "avg_pool2d":
+        effective_kh = (kernel_pair[0] - 1) * dilation_pair[0] + 1
+        effective_kw = (kernel_pair[1] - 1) * dilation_pair[1] + 1
+        max_pad_h = effective_kh // 2
+        max_pad_w = effective_kw // 2
+        if padding_pair[0] > max_pad_h or padding_pair[1] > max_pad_w:
+            raise RefBackendError(
+                "codegen avg_pool2d expects padding to be at most half of effective kernel size"
             )
     output_shape = _pool1d_output_shape_from_shapes(
         input_shape,

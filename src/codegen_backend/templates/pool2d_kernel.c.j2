@@ -28,7 +28,9 @@
                     out[n][c][oh][ow] = max_val;
                     {% else %}
                     {{ c_type }} acc = 0;
+                    {% if not has_divisor_override and not count_include_pad %}
                     int64_t count = 0;
+                    {% endif %}
                     for (int64_t kh = 0; kh < {{ k_h }}; ++kh) {
                         int64_t in_h_idx = in_h_base + kh * {{ dil_h }};
                         if (in_h_idx < 0 || in_h_idx >= {{ in_h }}) {
@@ -40,7 +42,9 @@
                                 continue;
                             }
                             acc += input[n][c][in_h_idx][in_w_idx];
+                            {% if not has_divisor_override and not count_include_pad %}
                             count += 1;
+                            {% endif %}
                         }
                     }
                     {% if has_divisor_override %}
