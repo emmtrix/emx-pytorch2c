@@ -1,8 +1,26 @@
 {{ signature }}
+    int64_t out_h = {{ out_h }};
+    int64_t out_w = {{ out_w }};
+    {% if ceil_mode %}
+    {
+        int64_t numerator_h = {{ in_h }} + 2 * {{ pad_h }} - {{ dil_h }} * ({{ k_h }} - 1) - 1;
+        int64_t numerator_w = {{ in_w }} + 2 * {{ pad_w }} - {{ dil_w }} * ({{ k_w }} - 1) - 1;
+        int64_t calc_out_h = (numerator_h + {{ stride_h }} - 1) / {{ stride_h }} + 1;
+        int64_t calc_out_w = (numerator_w + {{ stride_w }} - 1) / {{ stride_w }} + 1;
+        if ((calc_out_h - 1) * {{ stride_h }} >= {{ in_h }} + {{ pad_h }}) {
+            calc_out_h -= 1;
+        }
+        if ((calc_out_w - 1) * {{ stride_w }} >= {{ in_w }} + {{ pad_w }}) {
+            calc_out_w -= 1;
+        }
+        out_h = calc_out_h;
+        out_w = calc_out_w;
+    }
+    {% endif %}
     for (int64_t n = 0; n < {{ batch }}; ++n) {
         for (int64_t c = 0; c < {{ channels }}; ++c) {
-            for (int64_t oh = 0; oh < {{ out_h }}; ++oh) {
-                for (int64_t ow = 0; ow < {{ out_w }}; ++ow) {
+            for (int64_t oh = 0; oh < out_h; ++oh) {
+                for (int64_t ow = 0; ow < out_w; ++ow) {
                     int64_t in_h_base = oh * {{ stride_h }} - {{ pad_h }};
                     int64_t in_w_base = ow * {{ stride_w }} - {{ pad_w }};
                     {% if pool_kind == "max_pool2d" %}

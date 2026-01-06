@@ -323,6 +323,7 @@ def _pool2d_output_shape_from_shapes(
     stride: Tuple[int, int],
     padding: Tuple[int, int],
     dilation: Tuple[int, int],
+    ceil_mode: bool = False,
 ) -> Tuple[int, int, int, int]:
     batch, channels, in_h, in_w = input_shape
     k_h, k_w = kernel_size
@@ -335,8 +336,16 @@ def _pool2d_output_shape_from_shapes(
         raise RefBackendError(
             "codegen pool2d requires output shape (N, C, H_out, W_out)"
         )
-    out_h = numerator_h // stride_h + 1
-    out_w = numerator_w // stride_w + 1
+    if ceil_mode:
+        out_h = (numerator_h + stride_h - 1) // stride_h + 1
+        out_w = (numerator_w + stride_w - 1) // stride_w + 1
+        if (out_h - 1) * stride_h >= in_h + pad_h:
+            out_h -= 1
+        if (out_w - 1) * stride_w >= in_w + pad_w:
+            out_w -= 1
+    else:
+        out_h = numerator_h // stride_h + 1
+        out_w = numerator_w // stride_w + 1
     return batch, channels, out_h, out_w
 
 
@@ -4624,25 +4633,33 @@ def _parse_max_pool2d_args(
 ) -> Tuple[torch.fx.Node, object, object, object, object, object]:
     args = list(node.args)
     kwargs = dict(node.kwargs)
-    if len(args) < 2 or len(args) > 6:
+    if len(args) > 6:
         raise RefBackendError("codegen max_pool2d expects pooling arguments")
-    input_arg = args[0]
-    kernel_size = args[1]
+    input_arg = args[0] if len(args) > 0 else None
+    kernel_size = None
     stride = None
     padding = 0
     dilation = 1
     ceil_mode = False
-    remaining = args[2:]
-    if len(remaining) >= 1:
-        stride = remaining[0]
-    if len(remaining) >= 2:
-        padding = remaining[1]
-    if len(remaining) >= 3:
-        dilation = remaining[2]
-    if len(remaining) >= 4:
-        ceil_mode = remaining[3]
+    remaining = args[1:]
+    has_kernel_size = len(remaining) >= 1
+    has_stride = len(remaining) >= 2
+    has_padding = len(remaining) >= 3
+    has_dilation = len(remaining) >= 4
+    has_ceil_mode = len(remaining) >= 5
+    if has_kernel_size:
+        kernel_size = remaining[0]
+    if has_stride:
+        stride = remaining[1]
+    if has_padding:
+        padding = remaining[2]
+    if has_dilation:
+        dilation = remaining[3]
+    if has_ceil_mode:
+        ceil_mode = remaining[4]
     if kwargs:
         extra = set(kwargs) - {
+            "input",
             "kernel_size",
             "stride",
             "padding",
@@ -4653,16 +4670,32 @@ def _parse_max_pool2d_args(
             raise RefBackendError(
                 f"codegen max_pool2d got unexpected kwargs: {sorted(extra)}"
             )
+        if "input" in kwargs:
+            if input_arg is not None:
+                raise _error_kwarg_specified_once("max_pool2d", "input")
+            input_arg = kwargs["input"]
         if "kernel_size" in kwargs:
+            if has_kernel_size:
+                raise _error_kwarg_specified_once("max_pool2d", "kernel_size")
             kernel_size = kwargs["kernel_size"]
         if "stride" in kwargs:
+            if has_stride:
+                raise _error_kwarg_specified_once("max_pool2d", "stride")
             stride = kwargs["stride"]
         if "padding" in kwargs:
+            if has_padding:
+                raise _error_kwarg_specified_once("max_pool2d", "padding")
             padding = kwargs["padding"]
         if "dilation" in kwargs:
+            if has_dilation:
+                raise _error_kwarg_specified_once("max_pool2d", "dilation")
             dilation = kwargs["dilation"]
         if "ceil_mode" in kwargs:
+            if has_ceil_mode:
+                raise _error_kwarg_specified_once("max_pool2d", "ceil_mode")
             ceil_mode = kwargs["ceil_mode"]
+    if input_arg is None or kernel_size is None:
+        raise RefBackendError("codegen max_pool2d expects pooling arguments")
     return input_arg, kernel_size, stride, padding, dilation, ceil_mode
 
 
@@ -5402,9 +5435,9 @@ def _handle_pool2d_node(
         raise RefBackendError(
             f"codegen {op_spec.name} expects positive kernel, stride, and dilation with non-negative padding"
         )
-    if ceil_mode:
+    if not isinstance(ceil_mode, bool):
         raise RefBackendError(
-            f"codegen {op_spec.name} does not support ceil_mode"
+            f"codegen {op_spec.name} expects ceil_mode to be a bool"
         )
     if not isinstance(count_include_pad, bool):
         raise RefBackendError(
@@ -5421,6 +5454,7 @@ def _handle_pool2d_node(
         stride_pair,
         padding_pair,
         dilation_pair,
+        ceil_mode,
     )
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
