@@ -623,6 +623,7 @@ class Conv2dHandler(KindHandler):
             graph.shapes[input_node],
             graph.shapes[weight_node],
             op_node.output_shape,
+            bool(op_node.p("transposed", False)),
             op_node.p("stride", (1, 1)),
             op_node.p("padding", (0, 0)),
             op_node.p("dilation", (1, 1)),

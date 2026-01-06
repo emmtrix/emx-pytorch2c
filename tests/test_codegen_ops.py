@@ -62,13 +62,6 @@ def _all_same_shape(tensors):
     return all(tensor.shape == shape for tensor in tensors[1:])
 
 
-def _normalize_conv2d_param(value):
-    try:
-        return normalize_int_or_pair("value", value)
-    except ValueError:
-        return None
-
-
 def _normalize_pool2d_param(value):
     try:
         return normalize_int_or_pair("value", value)
@@ -81,57 +74,6 @@ def _normalize_pool1d_param(value):
         return normalize_int_or_tuple("value", value, 1)[0]
     except ValueError:
         return None
-
-
-def _convolution_sample_filter(sample):
-    if not isinstance(sample.input, torch.Tensor):
-        return False
-    if not sample.args:
-        return False
-    args = list(sample.args)
-    weight = args[0] if len(args) > 0 else sample.kwargs.get("weight")
-    if not isinstance(weight, torch.Tensor):
-        return False
-    stride = sample.kwargs.get("stride", args[2] if len(args) > 2 else 1)
-    padding = sample.kwargs.get("padding", args[3] if len(args) > 3 else 0)
-    dilation = sample.kwargs.get("dilation", args[4] if len(args) > 4 else 1)
-    transposed = sample.kwargs.get(
-        "transposed", args[5] if len(args) > 5 else False
-    )
-    output_padding = sample.kwargs.get(
-        "output_padding", args[6] if len(args) > 6 else 0
-    )
-    groups = sample.kwargs.get("groups", args[7] if len(args) > 7 else 1)
-    if transposed:
-        return False
-    output_padding_pair = _normalize_conv2d_param(output_padding)
-    if output_padding_pair is None or output_padding_pair != (0, 0):
-        return False
-    stride_pair = _normalize_conv2d_param(stride)
-    padding_pair = _normalize_conv2d_param(padding)
-    dilation_pair = _normalize_conv2d_param(dilation)
-    if stride_pair is None or padding_pair is None or dilation_pair is None:
-        return False
-    if (
-        stride_pair[0] <= 0
-        or stride_pair[1] <= 0
-        or dilation_pair[0] <= 0
-        or dilation_pair[1] <= 0
-        or padding_pair[0] < 0
-        or padding_pair[1] < 0
-    ):
-        return False
-    if not isinstance(groups, int) or groups <= 0:
-        return False
-    if sample.input.ndim != 4 or weight.ndim != 4:
-        return False
-    if not sample.input.is_contiguous() or not weight.is_contiguous():
-        return False
-    if sample.input.shape[1] != weight.shape[1] * groups:
-        return False
-    if weight.shape[0] % groups != 0:
-        return False
-    return True
 
 
 def _max_pool1d_sample_filter(sample):
@@ -965,7 +907,6 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.convolution.default: {
         "allowed_dtypes": (torch.float32,),
-        "sample_filter": _convolution_sample_filter,
     },
     torch.ops.aten.avg_pool1d.default: {
         "allowed_dtypes": (torch.float32,),
