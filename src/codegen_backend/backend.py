@@ -4,7 +4,6 @@ import numbers
 import operator
 import subprocess
 import tempfile
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -19,59 +18,18 @@ from c_ref_backend.cffi_bindings import (
     RefBackendError,
     _normalize_conv2d_param as _normalize_conv2d_pair,
 )
+from codegen_backend.dtypes import (
+    _C_TYPE_BY_DTYPE,
+    _CODEGEN_DTYPES,
+    _CodegenDType,
+    _EMBEDDING_INDEX_DTYPES,
+    _INTEGER_CODEGEN_DTYPES,
+)
+from codegen_backend.graph import _GenericGraph, _GenericLibrary, _OpNode
 from codegen_backend.kinds import build_kind_handlers
 from codegen_backend.ops_registry import SUPPORTED_OPS
+from codegen_backend.registry import TARGET_REGISTRY
 from codegen_backend.specs import _OpSpec
-
-@dataclass(frozen=True)
-class _CodegenDType:
-    torch_dtype: torch.dtype
-    c_type: str
-    scalar_header: str
-    scalar_prefix: str
-    suffix: str
-
-
-_CODEGEN_DTYPES = {
-    torch.float32: _CodegenDType(
-        torch_dtype=torch.float32,
-        c_type="float",
-        scalar_header="ops_scalar_f32.h",
-        scalar_prefix="ref_scalar_f32_",
-        suffix="f32",
-    ),
-    torch.int8: _CodegenDType(
-        torch_dtype=torch.int8,
-        c_type="int8_t",
-        scalar_header="ops_scalar_i8.h",
-        scalar_prefix="ref_scalar_i8_",
-        suffix="i8",
-    ),
-    torch.int32: _CodegenDType(
-        torch_dtype=torch.int32,
-        c_type="int32_t",
-        scalar_header="ops_scalar_i32.h",
-        scalar_prefix="ref_scalar_i32_",
-        suffix="i32",
-    ),
-    torch.bool: _CodegenDType(
-        torch_dtype=torch.bool,
-        c_type="bool",
-        scalar_header="ops_scalar_bool.h",
-        scalar_prefix="ref_scalar_bool_",
-        suffix="bool",
-    ),
-}
-
-_INTEGER_CODEGEN_DTYPES = {torch.int8, torch.int32}
-_C_TYPE_BY_DTYPE = {
-    torch.bool: "uint8_t",
-    torch.int8: "int8_t",
-    torch.int32: "int32_t",
-    torch.int64: "int64_t",
-    torch.float32: "float",
-}
-_EMBEDDING_INDEX_DTYPES = {torch.int32, torch.int64}
 _BITWISE_OPS = {
     "bitwise_and",
     "bitwise_or",
@@ -123,80 +81,7 @@ def _is_out_overload(target: object) -> bool:
     return schema is not None and schema.overload_name == "out"
 
 
-@dataclass(frozen=True)
-class _TargetInfo:
-    op_spec: _OpSpec
-    inplace_arg_index: int | None
-
-
-def _build_target_registry() -> Dict[object, _TargetInfo]:
-    registry: Dict[object, _TargetInfo] = {}
-    for spec in SUPPORTED_OPS.values():
-        for target in spec.supported_targets:
-            inplace_arg_index = (
-                spec.inplace_arg_index if target in spec.inplace_targets else None
-            )
-            registry[target] = _TargetInfo(
-                op_spec=spec, inplace_arg_index=inplace_arg_index
-            )
-    return registry
-
-
-TARGET_REGISTRY = _build_target_registry()
-TARGET_REGISTRY[torch.ops.aten.atan2.out] = _TargetInfo(
-    op_spec=SUPPORTED_OPS["atan2"],
-    inplace_arg_index=2,
-)
-
 _KIND_HANDLERS = build_kind_handlers()
-
-
-@dataclass
-class _OpNode:
-    node: torch.fx.Node
-    spec: _OpSpec
-    inputs: List[torch.fx.Node]
-    output_shape: Tuple[int, ...] | List[int]
-    inplace_input: int | None = None
-    reduction_dims: Tuple[int, ...] | None = None
-    keepdim: bool = False
-    params: Dict[str, Any] = field(default_factory=dict)
-
-    def p(self, key: str, default: Any = None) -> Any:
-        return self.params.get(key, default)
-
-
-@dataclass
-class _GenericGraph:
-    placeholders: List[torch.fx.Node]
-    tensor_placeholders: List[torch.fx.Node]
-    op_nodes: List[_OpNode]
-    output_node: torch.fx.Node
-    output_value: torch.fx.Node
-    output_op: "_OpNode"
-    output_inplace_input: torch.fx.Node | None
-    output_structure: object
-    shapes: Dict[torch.fx.Node, Tuple[int, ...]]
-    strides: Dict[torch.fx.Node, Tuple[int, ...]]
-    dtypes: Dict[torch.fx.Node, torch.dtype]
-    dtype: _CodegenDType
-    alias_map: Dict[torch.fx.Node, torch.fx.Node]
-
-
-@dataclass
-class _GenericLibrary:
-    so_path: Path
-    lib: object
-    input_shapes: Tuple[Tuple[int, ...], ...]
-    input_strides: Tuple[Tuple[int, ...], ...]
-    output_shape: Tuple[int, ...]
-    dtype: _CodegenDType
-
-    def run(self, inputs: Sequence[torch.Tensor], out: torch.Tensor) -> None:
-        fn = getattr(self.lib, f"ref_codegen_main_{self.dtype.suffix}")
-        args = [tensor.data_ptr() for tensor in inputs]
-        args.append(out.data_ptr())
-        fn(*args)
 
 
 _LIBRARY_CACHE: Dict[str, object] = {}

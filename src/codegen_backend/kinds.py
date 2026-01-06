@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Dict, List, Sequence, Tuple
 
 if TYPE_CHECKING:
-    from codegen_backend.backend import _GenericGraph, _OpNode
+    from codegen_backend.graph import _GenericGraph, _OpNode
     from codegen_backend.specs import _OpSpec
 
 

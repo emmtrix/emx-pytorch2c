@@ -7,13 +7,13 @@ import torch.fx
 
 from c_ref_backend.cffi_bindings import RefBackendError
 from codegen_backend.backend import (
-    _CodegenDType,
-    _GenericGraph,
     _analyze_generic_graph,
     _dtype_to_c_type,
     _input_c_type,
     _write_generic_source,
 )
+from codegen_backend.dtypes import _CodegenDType
+from codegen_backend.graph import _GenericGraph
 
 
 def _sanitize_weight_name(target: str) -> str:
