@@ -2364,6 +2364,144 @@ def _write_embedding_kernel(
     return rendered.splitlines()
 
 
+def _write_embedding_bag_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    weight_shape: Sequence[int],
+    indices_shape: Sequence[int],
+    offsets_shape: Sequence[int],
+    weight_strides: Sequence[int],
+    indices_strides: Sequence[int],
+    offsets_strides: Sequence[int],
+    output_shape: Sequence[int],
+    output_strides: Sequence[int],
+    indices_dtype: torch.dtype,
+    offsets_dtype: torch.dtype,
+    dtype: _CodegenDType,
+    mode: int,
+    padding_idx: int,
+    include_last_offset: bool,
+) -> List[str]:
+    embedding_template = _get_template_env().get_template(
+        "embedding_kernel.c.j2"
+    )
+    weight_suffix = _format_array_suffix(weight_shape)
+    indices_suffix = _format_array_suffix(indices_shape)
+    offsets_suffix = _format_array_suffix(offsets_shape)
+    out_suffix = _format_array_suffix(output_shape)
+    index_c_type = _dtype_to_c_type(indices_dtype, dtype)
+    offsets_c_type = _dtype_to_c_type(offsets_dtype, dtype)
+    signature = (
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"const {dtype.c_type} weight{weight_suffix}, "
+        f"const {index_c_type} indices{indices_suffix}, "
+        f"const {offsets_c_type} offsets{offsets_suffix}, "
+        f"{dtype.c_type} out{out_suffix}) {{"
+    )
+    loop_lines, indent = emit_loops(output_shape)
+    output_indices = [f"i{dim}" for dim in range(len(output_shape))]
+    output_access = _emit_strided_access(
+        "out",
+        output_indices,
+        output_strides,
+        _is_contiguous(output_shape, output_strides),
+        sizes=output_shape,
+        c_type=dtype.c_type,
+    )
+    offsets_access = _emit_strided_access(
+        "offsets",
+        ["i0"],
+        offsets_strides,
+        _is_contiguous(offsets_shape, offsets_strides),
+        sizes=offsets_shape,
+        c_type=offsets_c_type,
+    )
+    offsets_next_access = _emit_strided_access(
+        "offsets",
+        ["i0 + 1"],
+        offsets_strides,
+        _is_contiguous(offsets_shape, offsets_strides),
+        sizes=offsets_shape,
+        c_type=offsets_c_type,
+    )
+    indices_access = _emit_strided_access(
+        "indices",
+        ["j"],
+        indices_strides,
+        _is_contiguous(indices_shape, indices_strides),
+        sizes=indices_shape,
+        c_type=index_c_type,
+    )
+    weight_access = _emit_strided_access(
+        "weight",
+        ["idx", "i1"],
+        weight_strides,
+        _is_contiguous(weight_shape, weight_strides),
+        sizes=weight_shape,
+        c_type=dtype.c_type,
+    )
+    zero_literal = _format_scalar_literal(0.0, dtype)
+    body_lines = [
+        f"{indent}int64_t start = (int64_t)({offsets_access});",
+    ]
+    if include_last_offset:
+        body_lines.append(
+            f"{indent}int64_t end = (int64_t)({offsets_next_access});"
+        )
+    else:
+        body_lines.append(
+            f"{indent}int64_t end = (i0 + 1 < {offsets_shape[0]}) "
+            f"? (int64_t)({offsets_next_access}) "
+            f": {indices_shape[0]};"
+        )
+    body_lines.extend(
+        [
+            f"{indent}{dtype.c_type} acc = {zero_literal};",
+            f"{indent}int64_t count = 0;",
+            f"{indent}for (int64_t j = start; j < end; ++j) {{",
+        ]
+    )
+    inner_indent = f"{indent}    "
+    body_lines.append(
+        f"{inner_indent}int64_t idx = (int64_t)({indices_access});"
+    )
+    if padding_idx != -1:
+        body_lines.extend(
+            [
+                f"{inner_indent}if (idx == {padding_idx}) {{",
+                f"{inner_indent}    continue;",
+                f"{inner_indent}}}",
+            ]
+        )
+    body_lines.extend(
+        [
+            f"{inner_indent}acc += {weight_access};",
+            f"{inner_indent}count += 1;",
+            f"{indent}}}",
+        ]
+    )
+    if mode == 1:
+        body_lines.extend(
+            [
+                f"{indent}if (count == 0) {{",
+                f"{indent}    {output_access} = {zero_literal};",
+                f"{indent}}} else {{",
+                f"{indent}    {output_access} = acc / ({dtype.c_type})count;",
+                f"{indent}}}",
+            ]
+        )
+    else:
+        body_lines.append(f"{indent}{output_access} = acc;")
+    footer_lines = emit_footer(output_shape, indent)
+    rendered = embedding_template.render(
+        signature=signature,
+        loop_lines=loop_lines,
+        body_lines=body_lines,
+        footer_lines=footer_lines,
+    )
+    return rendered.splitlines()
+
+
 def _write_gather_kernel(
     node_index: int,
     op_spec: _OpSpec,
@@ -3549,6 +3687,27 @@ def _parse_constant_int(op_name: str, name: str, value: object) -> int:
         ) from exc
 
 
+def _parse_constant_bool(op_name: str, name: str, value: object) -> bool:
+    if isinstance(value, torch.fx.Node):
+        meta_value = value.meta.get("val") or value.meta.get("example_value")
+        if meta_value is None:
+            raise RefBackendError(
+                f"codegen {op_name} expects {name} to be a bool"
+            )
+        return _parse_constant_bool(op_name, name, meta_value)
+    if isinstance(value, torch.Tensor):
+        if value.numel() != 1:
+            raise RefBackendError(
+                f"codegen {op_name} expects {name} to be a bool"
+            )
+        return _parse_constant_bool(op_name, name, value.item())
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, numbers.Integral) and value in (0, 1):
+        return bool(value)
+    raise RefBackendError(f"codegen {op_name} expects {name} to be a bool")
+
+
 def _parse_bitwise_scalar(
     op_name: str, value: object, dtype: torch.dtype
 ) -> object:
@@ -4135,6 +4294,131 @@ def _parse_gather_args(
     if sparse_grad is None:
         sparse_grad = False
     return input_arg, dim, index, sparse_grad
+
+
+def _parse_embedding_args(
+    node: torch.fx.Node,
+) -> Tuple[object, object, int, bool, bool]:
+    op_name = "embedding"
+    if len(node.args) < 2:
+        raise RefBackendError(f"codegen {op_name} expects weight and indices")
+    if len(node.args) > 5:
+        raise RefBackendError(
+            f"codegen {op_name} expects at most five arguments"
+        )
+    weight = node.args[0]
+    indices = node.args[1]
+    padding_idx = node.args[2] if len(node.args) > 2 else -1
+    scale_grad_by_freq = node.args[3] if len(node.args) > 3 else False
+    sparse = node.args[4] if len(node.args) > 4 else False
+    if node.kwargs:
+        if "padding_idx" in node.kwargs:
+            if len(node.args) > 2:
+                raise _error_kwarg_specified_once(op_name, "padding_idx")
+            padding_idx = node.kwargs["padding_idx"]
+        if "scale_grad_by_freq" in node.kwargs:
+            if len(node.args) > 3:
+                raise _error_kwarg_specified_once(op_name, "scale_grad_by_freq")
+            scale_grad_by_freq = node.kwargs["scale_grad_by_freq"]
+        if "sparse" in node.kwargs:
+            if len(node.args) > 4:
+                raise _error_kwarg_specified_once(op_name, "sparse")
+            sparse = node.kwargs["sparse"]
+        extra = set(node.kwargs) - {
+            "padding_idx",
+            "scale_grad_by_freq",
+            "sparse",
+        }
+        if extra:
+            raise RefBackendError(
+                f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
+            )
+    padding_idx_value = _parse_constant_int(op_name, "padding_idx", padding_idx)
+    scale_grad_value = _parse_constant_bool(
+        op_name, "scale_grad_by_freq", scale_grad_by_freq
+    )
+    sparse_value = _parse_constant_bool(op_name, "sparse", sparse)
+    return weight, indices, padding_idx_value, scale_grad_value, sparse_value
+
+
+def _parse_embedding_bag_args(
+    node: torch.fx.Node,
+) -> Tuple[object, object, object, bool, int, bool, object, bool, int]:
+    op_name = "_embedding_bag"
+    if len(node.args) < 3:
+        raise RefBackendError(
+            f"codegen {op_name} expects weight, indices, and offsets"
+        )
+    if len(node.args) > 9:
+        raise RefBackendError(
+            f"codegen {op_name} expects at most nine arguments"
+        )
+    weight = node.args[0]
+    indices = node.args[1]
+    offsets = node.args[2]
+    scale_grad_by_freq = node.args[3] if len(node.args) > 3 else False
+    mode = node.args[4] if len(node.args) > 4 else 0
+    sparse = node.args[5] if len(node.args) > 5 else False
+    per_sample_weights = node.args[6] if len(node.args) > 6 else None
+    include_last_offset = node.args[7] if len(node.args) > 7 else False
+    padding_idx = node.args[8] if len(node.args) > 8 else -1
+    if node.kwargs:
+        if "scale_grad_by_freq" in node.kwargs:
+            if len(node.args) > 3:
+                raise _error_kwarg_specified_once(op_name, "scale_grad_by_freq")
+            scale_grad_by_freq = node.kwargs["scale_grad_by_freq"]
+        if "mode" in node.kwargs:
+            if len(node.args) > 4:
+                raise _error_kwarg_specified_once(op_name, "mode")
+            mode = node.kwargs["mode"]
+        if "sparse" in node.kwargs:
+            if len(node.args) > 5:
+                raise _error_kwarg_specified_once(op_name, "sparse")
+            sparse = node.kwargs["sparse"]
+        if "per_sample_weights" in node.kwargs:
+            if len(node.args) > 6:
+                raise _error_kwarg_specified_once(op_name, "per_sample_weights")
+            per_sample_weights = node.kwargs["per_sample_weights"]
+        if "include_last_offset" in node.kwargs:
+            if len(node.args) > 7:
+                raise _error_kwarg_specified_once(op_name, "include_last_offset")
+            include_last_offset = node.kwargs["include_last_offset"]
+        if "padding_idx" in node.kwargs:
+            if len(node.args) > 8:
+                raise _error_kwarg_specified_once(op_name, "padding_idx")
+            padding_idx = node.kwargs["padding_idx"]
+        extra = set(node.kwargs) - {
+            "scale_grad_by_freq",
+            "mode",
+            "sparse",
+            "per_sample_weights",
+            "include_last_offset",
+            "padding_idx",
+        }
+        if extra:
+            raise RefBackendError(
+                f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
+            )
+    scale_grad_value = _parse_constant_bool(
+        op_name, "scale_grad_by_freq", scale_grad_by_freq
+    )
+    mode_value = _parse_constant_int(op_name, "mode", mode)
+    sparse_value = _parse_constant_bool(op_name, "sparse", sparse)
+    include_last_offset_value = _parse_constant_bool(
+        op_name, "include_last_offset", include_last_offset
+    )
+    padding_idx_value = _parse_constant_int(op_name, "padding_idx", padding_idx)
+    return (
+        weight,
+        indices,
+        offsets,
+        scale_grad_value,
+        mode_value,
+        sparse_value,
+        per_sample_weights,
+        include_last_offset_value,
+        padding_idx_value,
+    )
 
 
 def _parse_addmm_like_scalar(
@@ -6341,6 +6625,101 @@ def _handle_embedding_node(
         params={"padding_idx": padding_idx},
     )
 
+
+def _handle_embedding_bag_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> _OpNode:
+    (
+        weight,
+        indices,
+        offsets,
+        scale_grad_by_freq,
+        mode,
+        sparse,
+        per_sample_weights,
+        include_last_offset,
+        padding_idx,
+    ) = _parse_embedding_bag_args(node)
+    if scale_grad_by_freq or sparse:
+        raise RefBackendError(
+            "codegen _embedding_bag supports only scale_grad_by_freq=False and sparse=False"
+        )
+    if per_sample_weights is not None:
+        raise RefBackendError(
+            "codegen _embedding_bag does not support per_sample_weights"
+        )
+    if not isinstance(weight, torch.fx.Node) or weight not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if not isinstance(indices, torch.fx.Node) or indices not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if not isinstance(offsets, torch.fx.Node) or offsets not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if dtype_info.torch_dtype is not torch.float32:
+        raise RefBackendError(
+            "codegen _embedding_bag supports only torch.float32 tensors"
+        )
+    if dtypes[weight] is not dtype_info.torch_dtype:
+        raise RefBackendError(
+            "codegen _embedding_bag expects weight to match the graph dtype"
+        )
+    if dtypes[indices] not in _EMBEDDING_INDEX_DTYPES:
+        raise RefBackendError(
+            "codegen _embedding_bag expects indices to have dtype torch.int32 or torch.int64"
+        )
+    if dtypes[offsets] not in _EMBEDDING_INDEX_DTYPES:
+        raise RefBackendError(
+            "codegen _embedding_bag expects offsets to have dtype torch.int32 or torch.int64"
+        )
+    weight_shape = shapes[weight]
+    if len(weight_shape) != 2:
+        raise RefBackendError("codegen _embedding_bag expects 2D weight tensor")
+    if padding_idx != -1:
+        if padding_idx < 0 or padding_idx >= weight_shape[0]:
+            raise RefBackendError(
+                "codegen _embedding_bag expects padding_idx to be -1 or within num_embeddings"
+            )
+    indices_shape = shapes[indices]
+    if len(indices_shape) != 1:
+        raise RefBackendError("codegen _embedding_bag expects 1D indices tensor")
+    offsets_shape = shapes[offsets]
+    if len(offsets_shape) != 1:
+        raise RefBackendError("codegen _embedding_bag expects 1D offsets tensor")
+    if include_last_offset and offsets_shape[0] == 0:
+        raise RefBackendError(
+            "codegen _embedding_bag expects non-empty offsets when include_last_offset is True"
+        )
+    if mode not in (0, 1):
+        raise RefBackendError(
+            "codegen _embedding_bag supports only mode=0 (sum) or mode=1 (mean)"
+        )
+    bag_count = offsets_shape[0] - 1 if include_last_offset else offsets_shape[0]
+    if bag_count < 0:
+        raise RefBackendError(
+            "codegen _embedding_bag expects offsets to contain at least one entry"
+        )
+    output_shape = (bag_count, weight_shape[1])
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=[weight, indices, offsets],
+        output_shape=output_shape,
+        inplace_input=None,
+        params={
+            "mode": mode,
+            "padding_idx": padding_idx,
+            "include_last_offset": include_last_offset,
+        },
+    )
+
+
 def _handle_cumsum_node(
     node: torch.fx.Node,
     op_spec: _OpSpec,
@@ -7317,6 +7696,8 @@ def _analyze_generic_graph(
                     torch.ops.aten._native_batch_norm_legit.default,
                     torch.ops.aten._native_batch_norm_legit_no_training,
                     torch.ops.aten._native_batch_norm_legit_no_training.default,
+                    torch.ops.aten._embedding_bag,
+                    torch.ops.aten._embedding_bag.default,
                 }:
                     raise RefBackendError(
                         "codegen backend supports getitem only for _native_batch_norm_legit* ops"
@@ -7503,6 +7884,13 @@ def _analyze_generic_graph(
             elif op_spec.kind == "embedding":
                 op_nodes.append(
                     _handle_embedding_node(
+                        node, op_spec, dtype_info, shapes, strides, dtypes
+                    )
+                )
+                continue
+            elif op_spec.kind == "embedding_bag":
+                op_nodes.append(
+                    _handle_embedding_bag_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )

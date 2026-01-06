@@ -33,6 +33,7 @@ _VALID_KINDS = {
     "pool3d",
     "pool2d_backward",
     "embedding",
+    "embedding_bag",
     "gather",
     "batch_norm",
     "pdist",
@@ -1407,6 +1408,10 @@ _REGISTRY.register_op("embedding", kind="embedding").targets(
     F.embedding,
     torch.ops.aten.embedding.default,
     torch.ops.aten.embedding,
+).build()
+_REGISTRY.register_op("_embedding_bag", kind="embedding_bag").targets(
+    torch.ops.aten._embedding_bag.default,
+    torch.ops.aten._embedding_bag,
 ).build()
 _REGISTRY.register_op("gather", kind="gather").targets(
     torch.gather,
