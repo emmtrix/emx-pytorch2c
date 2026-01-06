@@ -911,6 +911,8 @@ def emit_body(
             broadcast_contiguous=True,
             c_type=_input_c_type(input_dtypes[1], dtype),
         )
+        if op_spec.name == "copy":
+            return [f"{indent}{output_access} = {b_index_expr};"]
         return [
             f"{indent}{output_access} = {scalar_fn}({a_index_expr}, {b_index_expr});"
         ]
@@ -957,7 +959,7 @@ def emit_body(
         broadcast_contiguous=False,
         c_type=_input_c_type(input_dtypes[0], dtype),
     )
-    if op_spec.name in {"clone", "_to_copy", "resize_"}:
+    if op_spec.name in {"alias", "clone", "_to_copy", "resize_"}:
         return [f"{indent}{output_access} = {input_access};"]
     if op_spec.name in _PARAMETRIC_UNARY_OPS:
         return _emit_parametric_unary(
@@ -1051,6 +1053,48 @@ def _write_flip_kernel(
         c_type=_input_c_type(input_dtype, dtype),
     )
     lines.append(f"{indent}{output_access} = {input_access};")
+    lines.extend(emit_footer(output_shape, indent))
+    return lines
+
+
+def _write_view_kernel(
+    node_index: int,
+    op_node: _OpNode,
+    input_shape: Sequence[int],
+    input_dtype: torch.dtype,
+    output_shape: Sequence[int],
+    output_strides: Sequence[int],
+    dtype: _CodegenDType,
+) -> List[str]:
+    input_suffix = _format_array_suffix(input_shape)
+    output_suffix = _format_array_suffix(output_shape)
+    input_c_type = _input_c_type(input_dtype, dtype)
+    signature = (
+        f"void node{node_index}_{op_node.spec.name}_{dtype.suffix}("
+        f"const {input_c_type} a{input_suffix}, "
+        f"{dtype.c_type} out{output_suffix}) {{"
+    )
+    lines = [signature]
+    lines.append(f"    const {input_c_type}* a_ptr = (const {input_c_type}*)a;")
+    loop_lines, indent = emit_loops(output_shape)
+    lines.extend(loop_lines)
+    view_strides = op_node.p("view_strides", ())
+    storage_offset = int(op_node.p("storage_offset", 0))
+    if view_strides:
+        offset_terms = [
+            f"i{dim} * {stride}"
+            for dim, stride in enumerate(view_strides)
+        ]
+        offset_expr = " + ".join(offset_terms)
+    else:
+        offset_expr = "0"
+    if storage_offset:
+        offset_expr = f"{storage_offset} + {offset_expr}"
+    lines.append(f"{indent}int64_t offset = {offset_expr};")
+    output_access = emit_output_access(
+        output_shape, output_strides, c_type=dtype.c_type
+    )
+    lines.append(f"{indent}{output_access} = a_ptr[offset];")
     lines.extend(emit_footer(output_shape, indent))
     return lines
 
@@ -2535,6 +2579,17 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 graph.strides[op_node.node],
                 graph.dtype,
             )
+        elif op_node.spec.kind == "view":
+            input_node = op_node.inputs[0]
+            kernel_lines = _write_view_kernel(
+                index,
+                op_node,
+                graph.shapes[input_node],
+                graph.dtypes[input_node],
+                op_node.output_shape,
+                graph.strides[op_node.node],
+                graph.dtype,
+            )
         elif op_node.spec.kind == "diagonal":
             input_node = op_node.inputs[0]
             kernel_lines = _write_diagonal_kernel(
@@ -2952,6 +3007,14 @@ def _infer_output_shape(
     op_spec: _OpSpec, input_shapes: Sequence[Tuple[int, ...]]
 ) -> Tuple[int, ...]:
     if op_spec.kind == "binary":
+        if op_spec.name == "copy":
+            output_shape = input_shapes[0]
+            broadcast_shape = _broadcast_output_shape(op_spec, *input_shapes)
+            if broadcast_shape != output_shape:
+                raise RefBackendError(
+                    "codegen copy expects source to be broadcastable to the destination"
+                )
+            return output_shape
         return _broadcast_output_shape(op_spec, *input_shapes)
     if op_spec.kind == "where":
         return _broadcast_output_shape(op_spec, *input_shapes)
@@ -3868,7 +3931,7 @@ def _write_softmax_kernel(
         input_access_r=input_access_r,
         input_access_current=input_access_current,
         output_access=output_access,
-        is_log=op_spec.name == "log_softmax",
+        is_log=op_spec.name in {"log_softmax", "_log_softmax"},
     )
     return rendered.strip().splitlines()
 
@@ -5717,7 +5780,44 @@ def _handle_fill_node(
                 f"codegen {op_spec.name} expects a single scalar value"
             )
         value = node.kwargs["value"]
-    if node.kwargs and set(node.kwargs) != {"value"}:
+    if op_spec.name == "full_like" and "fill_value" in node.kwargs:
+        if value is not None:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects a single scalar value"
+            )
+        value = node.kwargs["fill_value"]
+    if op_spec.name == "full_like":
+        allowed = {
+            "value",
+            "fill_value",
+            "dtype",
+            "layout",
+            "device",
+            "pin_memory",
+            "memory_format",
+        }
+        extra = set(node.kwargs) - allowed
+        if extra:
+            raise RefBackendError(
+                f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
+            )
+        dtype = node.kwargs.get("dtype")
+        if dtype is not None and dtype is not dtype_info.torch_dtype:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects dtype to match the graph dtype"
+            )
+        for name in ("layout", "device", "memory_format"):
+            value_kw = node.kwargs.get(name)
+            if value_kw is not None:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects {name} to be None"
+                )
+        pin_memory = node.kwargs.get("pin_memory")
+        if pin_memory not in (None, False):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects pin_memory to be False"
+            )
+    elif node.kwargs and set(node.kwargs) != {"value"}:
         raise RefBackendError(
             f"codegen {op_spec.name} expects only 'value' as a keyword argument"
         )
@@ -5745,6 +5845,173 @@ def _handle_fill_node(
         inplace_input=inplace_input,
         params={"value": scalar_value},
     )
+
+
+def _handle_view_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> _OpNode:
+    if not node.args:
+        raise RefBackendError(f"codegen {op_spec.name} expects one input")
+    input_arg = node.args[0]
+    if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if dtypes[input_arg] is not dtype_info.torch_dtype:
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects inputs to share the graph dtype"
+        )
+    if op_spec.name == "as_strided":
+        if len(node.args) > 4:
+            raise RefBackendError(
+                "codegen as_strided expects at most four inputs"
+            )
+        size = node.args[1] if len(node.args) > 1 else None
+        stride = node.args[2] if len(node.args) > 2 else None
+        storage_offset = node.args[3] if len(node.args) > 3 else None
+        if node.kwargs:
+            if "size" in node.kwargs:
+                if size is not None:
+                    raise _error_kwarg_specified_once(op_spec.name, "size")
+                size = node.kwargs["size"]
+            if "stride" in node.kwargs:
+                if stride is not None:
+                    raise _error_kwarg_specified_once(op_spec.name, "stride")
+                stride = node.kwargs["stride"]
+            if "storage_offset" in node.kwargs:
+                if storage_offset is not None:
+                    raise _error_kwarg_specified_once(
+                        op_spec.name, "storage_offset"
+                    )
+                storage_offset = node.kwargs["storage_offset"]
+            extra = set(node.kwargs) - {"size", "stride", "storage_offset"}
+            if extra:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
+                )
+        if size is None or stride is None:
+            raise RefBackendError("codegen as_strided expects size and stride")
+        if storage_offset is None:
+            storage_offset = 0
+        if isinstance(size, torch.fx.Node) or isinstance(stride, torch.fx.Node):
+            raise RefBackendError("codegen as_strided expects size/stride to be constants")
+        if isinstance(storage_offset, torch.fx.Node):
+            raise RefBackendError(
+                "codegen as_strided expects storage_offset to be an int"
+            )
+        if not isinstance(size, (tuple, list)):
+            raise RefBackendError("codegen as_strided expects size to be a list")
+        if not isinstance(stride, (tuple, list)):
+            raise RefBackendError("codegen as_strided expects stride to be a list")
+        size_tuple = tuple(int(operator.index(dim)) for dim in size)
+        stride_tuple = tuple(int(operator.index(dim)) for dim in stride)
+        if len(size_tuple) != len(stride_tuple):
+            raise RefBackendError(
+                "codegen as_strided expects size and stride to match length"
+            )
+        storage_offset_value = int(operator.index(storage_offset))
+        if storage_offset_value < 0:
+            raise RefBackendError(
+                "codegen as_strided expects storage_offset to be non-negative"
+            )
+        output_shape = size_tuple
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        strides[node] = _contiguous_strides(output_shape)
+        return _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[input_arg],
+            output_shape=output_shape,
+            params={
+                "view_strides": stride_tuple,
+                "storage_offset": storage_offset_value,
+            },
+        )
+    if op_spec.name == "squeeze":
+        input_shape = shapes[input_arg]
+        input_strides = strides[input_arg]
+        if node.target is torch.ops.aten.squeeze.dim:
+            if len(node.args) > 2:
+                raise RefBackendError(
+                    "codegen squeeze expects at most two inputs"
+                )
+            dim = node.args[1] if len(node.args) > 1 else None
+            if node.kwargs:
+                if "dim" in node.kwargs:
+                    if dim is not None:
+                        raise _error_kwarg_specified_once(op_spec.name, "dim")
+                    dim = node.kwargs["dim"]
+                extra = set(node.kwargs) - {"dim"}
+                if extra:
+                    raise RefBackendError(
+                        f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
+                    )
+            if dim is None:
+                raise RefBackendError("codegen squeeze expects dim to be an int")
+            dim_value = _parse_constant_int(op_spec.name, "dim", dim)
+            if dim_value < 0:
+                dim_value += len(input_shape)
+            if dim_value < 0 or dim_value >= len(input_shape):
+                raise RefBackendError("codegen squeeze dim is out of range")
+            remove_dims = {
+                dim_value
+            } if input_shape[dim_value] == 1 else set()
+        else:
+            if len(node.args) > 2:
+                raise RefBackendError(
+                    "codegen squeeze expects at most two inputs"
+                )
+            dims = node.args[1] if len(node.args) > 1 else None
+            if node.kwargs:
+                if "dim" in node.kwargs:
+                    if dims is not None:
+                        raise _error_kwarg_specified_once(op_spec.name, "dim")
+                    dims = node.kwargs["dim"]
+                extra = set(node.kwargs) - {"dim"}
+                if extra:
+                    raise RefBackendError(
+                        f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
+                    )
+            if dims is None:
+                raise RefBackendError("codegen squeeze expects dim to be a list")
+            if isinstance(dims, torch.fx.Node) or not isinstance(dims, (tuple, list)):
+                raise RefBackendError("codegen squeeze expects dim to be a list")
+            dim_values = []
+            for dim in dims:
+                dim_value = _parse_constant_int(op_spec.name, "dim", dim)
+                if dim_value < 0:
+                    dim_value += len(input_shape)
+                if dim_value < 0 or dim_value >= len(input_shape):
+                    raise RefBackendError("codegen squeeze dim is out of range")
+                dim_values.append(dim_value)
+            remove_dims = {
+                dim for dim in set(dim_values) if input_shape[dim] == 1
+            }
+        output_shape = tuple(
+            size
+            for dim, size in enumerate(input_shape)
+            if dim not in remove_dims
+        )
+        view_strides = tuple(
+            stride
+            for dim, stride in enumerate(input_strides)
+            if dim not in remove_dims
+        )
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        strides[node] = _contiguous_strides(output_shape)
+        return _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[input_arg],
+            output_shape=output_shape,
+            params={"view_strides": view_strides, "storage_offset": 0},
+        )
+    raise RefBackendError(f"Unsupported view op: {op_spec.name}")
 
 
 def _parse_resize_size(op_name: str, size_value: object) -> Tuple[int, ...]:
@@ -6005,6 +6272,13 @@ def _analyze_generic_graph(
                     )
                 )
                 continue
+            elif op_spec.kind == "view":
+                op_nodes.append(
+                    _handle_view_node(
+                        node, op_spec, dtype_info, shapes, strides, dtypes
+                    )
+                )
+                continue
             elif op_spec.name == "_to_copy":
                 op_nodes.append(
                     _handle_to_copy_node(
@@ -6044,25 +6318,108 @@ def _analyze_generic_graph(
             param_values: Dict[str, object] = {}
             input_nodes: List[torch.fx.Node] = []
             input_shapes: List[Tuple[int, ...]] = []
-            if node.target is torch.ops.aten.bitwise_and.Scalar:
-                if node.kwargs:
-                    raise RefBackendError(
-                        "codegen bitwise_and expects positional args only"
-                    )
-                if len(node.args) != 2:
-                    raise RefBackendError(
-                        "codegen bitwise_and expects exactly two inputs"
-                    )
-                input_arg, scalar_arg = node.args
-                if not isinstance(input_arg, torch.fx.Node):
-                    raise _error_expected_tensor(op_spec.name)
-                if input_arg not in shapes:
-                    raise _error_expected_tensor(op_spec.name)
-                input_nodes = [input_arg]
-                input_shapes = [shapes[input_arg]]
-                param_values["scalar"] = _parse_bitwise_scalar(
-                    op_spec.name, scalar_arg, dtype_info.torch_dtype
-                )
+            if op_spec.kind == "binary" and len(node.args) == 2:
+                lhs, rhs = node.args
+                if isinstance(lhs, torch.fx.Node) ^ isinstance(rhs, torch.fx.Node):
+                    if node.kwargs:
+                        raise RefBackendError(
+                            f"codegen {op_spec.name} expects positional args only"
+                        )
+                    input_arg = lhs if isinstance(lhs, torch.fx.Node) else rhs
+                    scalar_arg = rhs if isinstance(lhs, torch.fx.Node) else lhs
+                    if input_arg not in shapes:
+                        raise _error_expected_tensor(op_spec.name)
+                    input_nodes = [input_arg]
+                    input_shapes = [shapes[input_arg]]
+                    if op_spec.name in _BITWISE_OPS:
+                        param_values["scalar"] = _parse_bitwise_scalar(
+                            op_spec.name, scalar_arg, dtype_info.torch_dtype
+                        )
+                    else:
+                        param_values["scalar"] = _normalize_scalar_value(
+                            op_spec.name, scalar_arg
+                        )
+                else:
+                    if op_spec.kind in {"reduction", "arg_reduction"}:
+                        if len(node.args) < 1:
+                            raise RefBackendError(
+                                f"codegen {op_spec.name} expects one input"
+                            )
+                        args_to_check = node.args[:1]
+                    elif (
+                        op_spec.kind == "unary"
+                        and op_spec.name in _PARAMETRIC_UNARY_OPS
+                    ):
+                        input_node, param_values = _parse_parametric_unary_args(
+                            op_spec.name, node
+                        )
+                        args_to_check = (input_node,)
+                    else:
+                        allowed_kwargs = set()
+                        if op_spec.name == "div":
+                            allowed_kwargs = {"rounding_mode"}
+                        elif op_spec.name == "copy":
+                            allowed_kwargs = {"non_blocking"}
+                        if node.kwargs and set(node.kwargs) - allowed_kwargs:
+                            raise RefBackendError(
+                                "codegen backend expects positional args only"
+                            )
+                        if op_spec.kind == "unary":
+                            expected_arity = 1
+                        elif op_spec.kind == "binary":
+                            expected_arity = 2
+                        elif op_spec.kind == "where":
+                            expected_arity = 3
+                        else:
+                            expected_arity = 2
+                        if op_spec.name == "copy":
+                            if len(node.args) not in {2, 3}:
+                                raise RefBackendError(
+                                    "codegen copy expects two inputs and optional non_blocking"
+                                )
+                        elif len(node.args) != expected_arity:
+                            if expected_arity == 1:
+                                raise RefBackendError(
+                                    f"codegen {op_spec.name} expects one input"
+                                )
+                            if expected_arity == 2:
+                                raise RefBackendError(
+                                    f"codegen {op_spec.name} expects exactly two inputs"
+                                )
+                            raise RefBackendError(
+                                f"codegen {op_spec.name} expects exactly three inputs"
+                            )
+                        if op_spec.name == "div":
+                            rounding_mode = node.kwargs.get("rounding_mode")
+                            if rounding_mode is not None:
+                                raise RefBackendError(
+                                    "codegen div expects rounding_mode to be None"
+                                )
+                        if op_spec.name == "copy":
+                            non_blocking = None
+                            if len(node.args) > 2:
+                                non_blocking = node.args[2]
+                            if "non_blocking" in node.kwargs:
+                                if len(node.args) > 2:
+                                    raise _error_kwarg_specified_once(
+                                        op_spec.name, "non_blocking"
+                                    )
+                                non_blocking = node.kwargs["non_blocking"]
+                            if non_blocking not in (None, False, 0):
+                                raise RefBackendError(
+                                    "codegen copy expects non_blocking to be False"
+                                )
+                        if op_spec.name == "copy":
+                            args_to_check = node.args[:2]
+                        else:
+                            args_to_check = node.args
+                    for arg in args_to_check:
+                        if not isinstance(arg, torch.fx.Node):
+                            raise _error_expected_tensor(op_spec.name)
+                        if arg not in shapes:
+                            raise _error_expected_tensor(op_spec.name)
+                        input_nodes.append(arg)
+                        input_shapes.append(shapes[arg])
             else:
                 if op_spec.kind in {"reduction", "arg_reduction"}:
                     if len(node.args) < 1:
@@ -6079,7 +6436,12 @@ def _analyze_generic_graph(
                     )
                     args_to_check = (input_node,)
                 else:
-                    if node.kwargs:
+                    allowed_kwargs = set()
+                    if op_spec.name == "div":
+                        allowed_kwargs = {"rounding_mode"}
+                    elif op_spec.name == "copy":
+                        allowed_kwargs = {"non_blocking"}
+                    if node.kwargs and set(node.kwargs) - allowed_kwargs:
                         raise RefBackendError(
                             "codegen backend expects positional args only"
                         )
@@ -6091,7 +6453,12 @@ def _analyze_generic_graph(
                         expected_arity = 3
                     else:
                         expected_arity = 2
-                    if len(node.args) != expected_arity:
+                    if op_spec.name == "copy":
+                        if len(node.args) not in {2, 3}:
+                            raise RefBackendError(
+                                "codegen copy expects two inputs and optional non_blocking"
+                            )
+                    elif len(node.args) != expected_arity:
                         if expected_arity == 1:
                             raise RefBackendError(
                                 f"codegen {op_spec.name} expects one input"
@@ -6103,7 +6470,30 @@ def _analyze_generic_graph(
                         raise RefBackendError(
                             f"codegen {op_spec.name} expects exactly three inputs"
                         )
-                    args_to_check = node.args
+                    if op_spec.name == "div":
+                        rounding_mode = node.kwargs.get("rounding_mode")
+                        if rounding_mode is not None:
+                            raise RefBackendError(
+                                "codegen div expects rounding_mode to be None"
+                            )
+                    if op_spec.name == "copy":
+                        non_blocking = None
+                        if len(node.args) > 2:
+                            non_blocking = node.args[2]
+                        if "non_blocking" in node.kwargs:
+                            if len(node.args) > 2:
+                                raise _error_kwarg_specified_once(
+                                    op_spec.name, "non_blocking"
+                                )
+                            non_blocking = node.kwargs["non_blocking"]
+                        if non_blocking not in (None, False, 0):
+                            raise RefBackendError(
+                                "codegen copy expects non_blocking to be False"
+                            )
+                    if op_spec.name == "copy":
+                        args_to_check = node.args[:2]
+                    else:
+                        args_to_check = node.args
                 for arg in args_to_check:
                     if not isinstance(arg, torch.fx.Node):
                         raise _error_expected_tensor(op_spec.name)

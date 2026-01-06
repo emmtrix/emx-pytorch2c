@@ -7,7 +7,7 @@ _cdist_forward                           -     -
 _embedding_bag                           -     -      
 _fft_r2c                                 -     -      
 _local_scalar_dense                      -     -      
-_log_softmax                             -     -      
+_log_softmax                             -     yes    
 _native_batch_norm_legit                 -     -      
 _native_batch_norm_legit.no_stats        -     -      
 _native_batch_norm_legit_no_training     -     yes    
@@ -21,7 +21,7 @@ adaptive_avg_pool1d                      -     yes
 add.Scalar                               -     yes    
 add.Tensor                               yes   yes    
 addmm                                    -     yes    
-alias                                    -     -      
+alias                                    -     yes    
 amax                                     yes   yes    
 amin                                     yes   yes    
 any                                      -     yes    
@@ -30,7 +30,7 @@ any.dims                                 -     yes
 arange.start_step                        -     -      
 argmax                                   -     yes    
 argmin                                   -     yes    
-as_strided                               -     -      
+as_strided                               -     yes    
 asin                                     yes   yes    
 asinh                                    yes   yes    
 atan                                     yes   yes    
@@ -58,15 +58,15 @@ col2im                                   -     -
 constant_pad_nd                          -     -      
 convolution                              yes   yes    
 convolution_backward                     -     -      
-copy                                     -     -      
+copy                                     -     yes    
 cos                                      yes   yes    
 cosh                                     yes   yes    
 cumsum                                   -     yes    
 diagonal                                 -     yes    
 div.Scalar                               -     yes    
-div.Scalar_mode                          -     -      
+div.Scalar_mode                          -     yes    
 div.Tensor                               yes   yes    
-div.Tensor_mode                          -     -      
+div.Tensor_mode                          -     yes    
 elu                                      -     yes    
 embedding                                -     yes    
 embedding_dense_backward                 -     -      
@@ -84,7 +84,7 @@ floor                                    yes   yes
 fmod.Scalar                              -     yes    
 fmod.Tensor                              yes   yes    
 full                                     -     -      
-full_like                                -     -      
+full_like                                -     yes    
 gather                                   -     -      
 ge.Scalar                                -     yes    
 ge.Tensor                                -     yes    
@@ -138,7 +138,7 @@ pow.Scalar                               yes   yes
 pow.Tensor_Scalar                        yes   yes    
 pow.Tensor_Tensor                        yes   yes    
 prod                                     -     yes    
-prod.dim_int                             -     -      
+prod.dim_int                             -     yes    
 rand                                     -     -      
 randn                                    -     -      
 randperm                                 -     -      
@@ -171,8 +171,8 @@ slice_scatter                            -     -
 sort                                     -     -      
 split_with_sizes                         -     -      
 sqrt                                     yes   yes    
-squeeze.dim                              -     -      
-squeeze.dims                             -     -      
+squeeze.dim                              -     yes    
+squeeze.dims                             -     yes    
 sub.Scalar                               -     yes    
 sub.Tensor                               yes   yes    
 sum.dim_IntList                          -     yes    
@@ -196,8 +196,8 @@ where.self                               -     yes
 Summary
 total aten ops: 192
 supported by cref only: 0
-supported by codegen only: 69
+supported by codegen only: 79
 supported by both: 49
-unsupported by either: 74
-supported by codegen: 118 / 192 (61.5 %)
+unsupported by either: 64
+supported by codegen: 128 / 192 (66.7 %)
 supported by c-ref: 49 / 192 (25.5 %)
