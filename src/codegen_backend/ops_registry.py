@@ -1291,6 +1291,7 @@ _REGISTRY.register_op("argmin", kind="arg_reduction").targets(
 ).build()
 _REGISTRY.register_op("sum", kind="reduction").targets(
     torch.ops.aten.sum.default,
+    torch.ops.aten.sum.dim_IntList,
 ).build()
 _REGISTRY.register_op("prod", kind="reduction").targets(
     torch.ops.aten.prod.default,

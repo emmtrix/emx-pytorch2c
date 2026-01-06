@@ -175,7 +175,7 @@ squeeze.dim                              -     -
 squeeze.dims                             -     -      
 sub.Scalar                               -     yes    
 sub.Tensor                               yes   yes    
-sum.dim_IntList                          -     -      
+sum.dim_IntList                          -     yes    
 sym_is_contiguous                        -     -      
 sym_numel                                -     -      
 sym_size.int                             -     -      
@@ -196,8 +196,8 @@ where.self                               -     yes
 Summary
 total aten ops: 192
 supported by cref only: 0
-supported by codegen only: 66
+supported by codegen only: 67
 supported by both: 49
-unsupported by either: 77
-supported by codegen: 115 / 192 (59.9 %)
+unsupported by either: 76
+supported by codegen: 116 / 192 (60.4 %)
 supported by c-ref: 49 / 192 (25.5 %)
