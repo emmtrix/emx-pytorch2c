@@ -663,6 +663,31 @@ def emit_input_access(
     )
 
 
+def _emit_flip_input_access(
+    name: str,
+    input_shape: Sequence[int],
+    input_strides: Sequence[int],
+    flip_dims: Sequence[int],
+    *,
+    c_type: str,
+) -> str:
+    if not input_shape:
+        return f"(({c_type}*){name})[0]"
+    indices = []
+    flip_dim_set = set(flip_dims)
+    for dim, size in enumerate(input_shape):
+        if dim in flip_dim_set:
+            indices.append(f"({size - 1} - i{dim})")
+        else:
+            indices.append(f"i{dim}")
+    return _emit_strided_access(
+        name,
+        indices,
+        input_strides,
+        contig=_is_contiguous(input_shape, input_strides),
+        sizes=input_shape,
+        c_type=c_type,
+    )
 def _format_diagonal_access(
     name: str,
     input_shape: Sequence[int],
@@ -884,6 +909,43 @@ def _write_elementwise_kernel(
             dtype,
         )
     )
+    lines.extend(emit_footer(output_shape, indent))
+    return lines
+
+
+def _write_flip_kernel(
+    node_index: int,
+    op_node: _OpNode,
+    input_shape: Sequence[int],
+    input_strides: Sequence[int],
+    input_dtype: torch.dtype,
+    output_shape: Sequence[int],
+    output_strides: Sequence[int],
+    dtype: _CodegenDType,
+) -> List[str]:
+    lines = [
+        emit_signature(
+            node_index,
+            op_node.spec,
+            output_shape,
+            [input_shape],
+            [input_dtype],
+            dtype,
+        )
+    ]
+    loop_lines, indent = emit_loops(output_shape)
+    lines.extend(loop_lines)
+    output_access = emit_output_access(
+        output_shape, output_strides, c_type=dtype.c_type
+    )
+    input_access = _emit_flip_input_access(
+        "a",
+        input_shape,
+        input_strides,
+        op_node.p("dims", ()),
+        c_type=_input_c_type(input_dtype, dtype),
+    )
+    lines.append(f"{indent}{output_access} = {input_access};")
     lines.extend(emit_footer(output_shape, indent))
     return lines
 
@@ -2273,6 +2335,9 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 output_strides,
                 graph.dtype,
             )
+        elif op_node.spec.kind == "flip":
+            input_node = op_node.inputs[0]
+            kernel_lines = _write_flip_kernel(
         elif op_node.spec.kind == "diagonal":
             input_node = op_node.inputs[0]
             kernel_lines = _write_diagonal_kernel(
@@ -2671,6 +2736,8 @@ def _infer_output_shape(
         return _broadcast_output_shape(op_spec, *input_shapes)
     if op_spec.kind == "unary":
         return input_shapes[0]
+    if op_spec.kind == "flip":
+        return input_shapes[0]
     if op_spec.kind == "softmax":
         return input_shapes[0]
     if op_spec.kind == "embedding":
@@ -2764,6 +2831,51 @@ def _infer_output_shape(
     return (a_shape[0], a_shape[1], b_shape[2])
 
 
+def _normalize_flip_dims(
+    op_name: str, dims: object, rank: int
+) -> Tuple[int, ...]:
+    if dims is None:
+        raise RefBackendError(f"codegen {op_name} expects dims to be provided")
+    if isinstance(dims, torch.fx.Node):
+        raise RefBackendError(
+            f"codegen {op_name} expects dims to be an int or tuple of ints"
+        )
+    if isinstance(dims, (tuple, list)):
+        dims_list = list(dims)
+    else:
+        dims_list = [dims]
+    if not dims_list:
+        return ()
+    if rank == 0:
+        raise RefBackendError(
+            f"codegen {op_name} expects dims to be within the input rank"
+        )
+    normalized = []
+    seen = set()
+    for item in dims_list:
+        if isinstance(item, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_name} expects dims to be an int or tuple of ints"
+            )
+        try:
+            dim = operator.index(item)
+        except TypeError as exc:
+            raise RefBackendError(
+                f"codegen {op_name} expects dims to be an int or tuple of ints"
+            ) from exc
+        if dim < 0:
+            dim += rank
+        if dim < 0 or dim >= rank:
+            raise RefBackendError(
+                f"codegen {op_name} expects dims to be within the input rank"
+            )
+        if dim in seen:
+            raise RefBackendError(
+                f"codegen {op_name} expects dims to be unique"
+            )
+        seen.add(dim)
+        normalized.append(dim)
+    return tuple(normalized)
 def _infer_diagonal_output_shape(
     input_shape: Sequence[int], offset: int, dim1: int, dim2: int
 ) -> Tuple[int, ...]:
@@ -4074,6 +4186,56 @@ def _handle_concat_node(
     )
 
 
+def _handle_flip_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> _OpNode:
+    if not node.args:
+        raise RefBackendError(f"codegen {op_spec.name} expects one input")
+    input_node = node.args[0]
+    if not isinstance(input_node, torch.fx.Node) or input_node not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    dims = None
+    if len(node.args) >= 2:
+        dims = node.args[1]
+        if len(node.args) > 2:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects one input and dims"
+            )
+    if "dims" in node.kwargs:
+        if dims is not None:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects dims only once"
+            )
+        dims = node.kwargs["dims"]
+    if node.kwargs and "dims" not in node.kwargs:
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects dims as the only keyword argument"
+        )
+    input_shape = shapes[input_node]
+    if dtypes[input_node] is not dtype_info.torch_dtype:
+        raise RefBackendError(
+            f"codegen {op_spec.name} expects inputs to share the graph dtype"
+        )
+    normalized_dims = _normalize_flip_dims(op_spec.name, dims, len(input_shape))
+    output_shape = input_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=[input_node],
+        output_shape=output_shape,
+        inplace_input=None,
+        params={"dims": normalized_dims},
+    )
+
+
 def _handle_conv1d_node(
     node: torch.fx.Node,
     op_spec: _OpSpec,
@@ -4926,6 +5088,9 @@ def _analyze_generic_graph(
                     )
                 )
                 continue
+            elif op_spec.kind == "flip":
+                op_nodes.append(
+                    _handle_flip_node(
             elif op_spec.kind == "cumsum":
                 op_nodes.append(
                     _handle_cumsum_node(

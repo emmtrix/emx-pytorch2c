@@ -538,6 +538,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.exp.default,
     torch.ops.aten.exp2.default,
     torch.ops.aten.expm1.default,
+    torch.ops.aten.flip.default,
     torch.ops.aten.floor.default,
     torch.ops.aten.floor_divide.default,
     torch.ops.aten.fmax.default,
@@ -888,6 +889,10 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.log_sigmoid.default: {
         "allowed_dtypes": (torch.float32,),
+    },
+    torch.ops.aten.flip.default: {
+        "allow_non_tensor_args": True,
+        "allow_kwargs": True,
     },
     torch.ops.aten.gelu.default: {
         "allowed_dtypes": (torch.float32,),

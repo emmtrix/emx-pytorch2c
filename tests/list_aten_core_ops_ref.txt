@@ -79,7 +79,7 @@ exp                                      yes   yes
 expand                                   yes   yes    
 expm1                                    yes   yes    
 fill.Scalar                              -     -      
-flip                                     -     -      
+flip                                     -     yes    
 floor                                    yes   yes    
 fmod.Scalar                              -     -      
 fmod.Tensor                              yes   yes    

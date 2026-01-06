@@ -11,6 +11,7 @@ _VALID_KINDS = {
     "binary",
     "unary",
     "where",
+    "flip",
     "arg_reduction",
     "reduction",
     "softmax",
@@ -488,6 +489,11 @@ _REGISTRY.register_binary("heaviside").targets(
 _REGISTRY.register_op("where", kind="where").targets(
     torch.where,
     torch.ops.aten.where.self,
+).build()
+_REGISTRY.register_op("flip", kind="flip").targets(
+    torch.flip,
+    torch.ops.aten.flip.default,
+    torch.ops.aten.flip,
 ).build()
 _REGISTRY.register_binary("ldexp").targets(
     torch.ldexp,
