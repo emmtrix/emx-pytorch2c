@@ -1137,6 +1137,67 @@ def _write_flip_kernel(
     return lines
 
 
+def _write_constant_pad_kernel(
+    node_index: int,
+    op_node: _OpNode,
+    input_shape: Sequence[int],
+    input_strides: Sequence[int],
+    input_dtype: torch.dtype,
+    output_shape: Sequence[int],
+    output_strides: Sequence[int],
+    dtype: _CodegenDType,
+) -> List[str]:
+    pad_template = _get_template_env().get_template(
+        "constant_pad_nd_kernel.c.j2"
+    )
+    signature = emit_signature(
+        node_index,
+        op_node.spec,
+        output_shape,
+        [input_shape],
+        [input_dtype],
+        dtype,
+    )
+    output_access = emit_output_access(
+        output_shape, output_strides, c_type=dtype.c_type
+    )
+    if not input_shape:
+        input_access = _format_strided_access(
+            "a",
+            input_shape,
+            input_strides,
+            output_shape,
+            c_type=_input_c_type(input_dtype, dtype),
+        )
+        rendered = pad_template.render(
+            signature=signature,
+            output_access=output_access,
+            input_access=input_access,
+            has_input_shape=False,
+        )
+        return rendered.strip().splitlines()
+    pad_before = op_node.p("pad_before", ())
+    input_access = _emit_strided_access(
+        "a",
+        [f"in_{dim}" for dim in range(len(input_shape))],
+        input_strides,
+        contig=_is_contiguous(input_shape, input_strides),
+        sizes=input_shape,
+        c_type=_input_c_type(input_dtype, dtype),
+    )
+    rendered = pad_template.render(
+        signature=signature,
+        output_access=output_access,
+        input_access=input_access,
+        has_input_shape=True,
+        output_shape=output_shape,
+        input_shape=input_shape,
+        pad_before=pad_before,
+        value=_format_scalar_literal(op_node.p("value"), dtype),
+    )
+    return rendered.strip().splitlines()
+
+
 def _write_view_kernel(
     node_index: int,
     op_node: _OpNode,
@@ -2822,6 +2883,18 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 graph.strides[op_node.node],
                 graph.dtype,
             )
+        elif op_node.spec.kind == "pad":
+            input_node = op_node.inputs[0]
+            kernel_lines = _write_constant_pad_kernel(
+                index,
+                op_node,
+                graph.shapes[input_node],
+                graph.strides[input_node],
+                graph.dtypes[input_node],
+                op_node.output_shape,
+                graph.strides[op_node.node],
+                graph.dtype,
+            )
         elif op_node.spec.kind == "view":
             input_node = op_node.inputs[0]
             kernel_lines = _write_view_kernel(
@@ -3370,6 +3443,10 @@ def _infer_output_shape(
         return input_shapes[0]
     if op_spec.kind == "flip":
         return input_shapes[0]
+    if op_spec.kind == "pad":
+        raise RefBackendError(
+            "codegen constant_pad_nd expects constant padding arguments"
+        )
     if op_spec.kind == "batch_norm":
         return input_shapes[0]
     if op_spec.kind == "pdist":
@@ -6312,6 +6389,118 @@ def _handle_cumsum_node(
     )
 
 
+def _handle_constant_pad_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> _OpNode:
+    if not node.args:
+        raise RefBackendError(
+            "codegen constant_pad_nd expects at least one argument"
+        )
+    input_arg = node.args[0]
+    if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if dtypes[input_arg] is not dtype_info.torch_dtype:
+        raise RefBackendError(
+            "codegen constant_pad_nd expects inputs to share the graph dtype"
+        )
+    pad = None
+    value = 0
+    if len(node.args) > 1:
+        pad = node.args[1]
+    if len(node.args) > 2:
+        value = node.args[2]
+    if len(node.args) > 3:
+        raise RefBackendError(
+            "codegen constant_pad_nd expects at most three positional arguments"
+        )
+    extra_kwargs = set(node.kwargs) - {"pad", "value"}
+    if extra_kwargs:
+        raise RefBackendError(
+            "codegen constant_pad_nd expects only pad and value kwargs"
+        )
+    if "pad" in node.kwargs:
+        if pad is not None:
+            raise _error_kwarg_specified_once(op_spec.name, "pad")
+        pad = node.kwargs["pad"]
+    if "value" in node.kwargs:
+        if len(node.args) > 2:
+            raise _error_kwarg_specified_once(op_spec.name, "value")
+        value = node.kwargs["value"]
+    if pad is None:
+        raise RefBackendError("codegen constant_pad_nd expects a pad argument")
+    if isinstance(pad, torch.fx.Node):
+        raise RefBackendError(
+            "codegen constant_pad_nd expects pad to be a constant list"
+        )
+    if not isinstance(pad, (tuple, list)):
+        raise RefBackendError(
+            "codegen constant_pad_nd expects pad to be a list or tuple"
+        )
+    if len(pad) % 2 != 0:
+        raise RefBackendError(
+            "codegen constant_pad_nd expects pad to have an even number of values"
+        )
+    pad_values = []
+    for item in pad:
+        if isinstance(item, numbers.Real) and not float(item).is_integer():
+            raise RefBackendError(
+                "codegen constant_pad_nd expects pad values to be integers"
+            )
+        try:
+            pad_values.append(int(operator.index(item)))
+        except TypeError:
+            try:
+                pad_values.append(int(item))
+            except (TypeError, ValueError) as exc:
+                raise RefBackendError(
+                    "codegen constant_pad_nd expects pad values to be integers"
+                ) from exc
+    input_shape = shapes[input_arg]
+    rank = len(input_shape)
+    if len(pad_values) > 2 * rank:
+        raise RefBackendError(
+            "codegen constant_pad_nd expects pad to have at most 2 * input rank values"
+        )
+    pad_before = [0] * rank
+    pad_after = [0] * rank
+    for idx in range(len(pad_values) // 2):
+        dim = rank - 1 - idx
+        pad_before[dim] = pad_values[2 * idx]
+        pad_after[dim] = pad_values[2 * idx + 1]
+    output_shape: List[int] = []
+    for size, before, after in zip(input_shape, pad_before, pad_after):
+        new_size = size + before + after
+        if new_size < 0:
+            raise RefBackendError(
+                "codegen constant_pad_nd expects non-negative output sizes"
+            )
+        output_shape.append(new_size)
+    if isinstance(value, torch.fx.Node):
+        raise RefBackendError(
+            "codegen constant_pad_nd expects a constant padding value"
+        )
+    value = _normalize_scalar_value(op_spec.name, value)
+    shapes[node] = tuple(output_shape)
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=[input_arg],
+        output_shape=tuple(output_shape),
+        params={
+            "pad_before": tuple(pad_before),
+            "pad_after": tuple(pad_after),
+            "value": value,
+        },
+    )
+
+
 def _handle_gather_node(
     node: torch.fx.Node,
     op_spec: _OpSpec,
@@ -7129,6 +7318,13 @@ def _analyze_generic_graph(
             elif op_spec.kind == "cumsum":
                 op_nodes.append(
                     _handle_cumsum_node(
+                        node, op_spec, dtype_info, shapes, strides, dtypes
+                    )
+                )
+                continue
+            elif op_spec.kind == "pad":
+                op_nodes.append(
+                    _handle_constant_pad_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )

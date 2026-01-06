@@ -34,6 +34,7 @@ _VALID_KINDS = {
     "gather",
     "batch_norm",
     "pdist",
+    "pad",
     "empty_strided",
     "col2im",
 }
@@ -179,6 +180,10 @@ _REGISTRY.register_binary("add", symbol="+").targets(
 ).inplace(
     torch.ops.aten.add_.Tensor,
     torch.ops.aten.add_,
+).build()
+_REGISTRY.register_op("constant_pad_nd", kind="pad").targets(
+    torch.ops.aten.constant_pad_nd,
+    torch.ops.aten.constant_pad_nd.default,
 ).build()
 _REGISTRY.register_op("_softmax", kind="softmax").targets(
     torch.ops.aten._softmax,
