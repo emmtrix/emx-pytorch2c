@@ -3712,17 +3712,20 @@ def _write_cumsum_kernel(
     input_strides: Sequence[int],
     output_strides: Sequence[int],
     cumsum_dim: int,
-    dtype: _CodegenDType,
+    input_dtype: torch.dtype,
+    output_dtype: torch.dtype,
+    graph_dtype: _CodegenDType,
 ) -> List[str]:
-    input_c_type = _input_c_type(dtype.torch_dtype, dtype)
+    input_c_type = _input_c_type(input_dtype, graph_dtype)
+    output_c_type = _dtype_to_c_type(output_dtype, graph_dtype)
     signature = (
-        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"void node{node_index}_{op_spec.name}_{graph_dtype.suffix}("
         f"const {input_c_type} input{_format_array_suffix(input_shape)}, "
-        f"{dtype.c_type} out{_format_array_suffix(input_shape)}) {{"
+        f"{output_c_type} out{_format_array_suffix(input_shape)}) {{"
     )
     lines = [signature]
     if not input_shape:
-        lines.append("    out[0] = input[0];")
+        lines.append(f"    out[0] = ({output_c_type})input[0];")
         lines.append("}")
         return lines
     loop_lines, indent = emit_loops(input_shape)
@@ -3733,10 +3736,10 @@ def _write_cumsum_kernel(
         output_strides,
         _is_contiguous(input_shape, output_strides),
         sizes=input_shape,
-        c_type=dtype.c_type,
+        c_type=output_c_type,
     )
-    acc_init = "0" if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES else "0.0f"
-    lines.append(f"{indent}{dtype.c_type} acc = {acc_init};")
+    acc_init = "0" if output_dtype in _INTEGER_CODEGEN_DTYPES else "0.0f"
+    lines.append(f"{indent}{output_c_type} acc = {acc_init};")
     lines.append(
         f"{indent}for (int64_t r{cumsum_dim} = 0; r{cumsum_dim} <= i{cumsum_dim}; ++r{cumsum_dim}) {{"
     )
@@ -3753,7 +3756,7 @@ def _write_cumsum_kernel(
         sizes=input_shape,
         c_type=input_c_type,
     )
-    lines.append(f"{inner_indent}acc += {input_access};")
+    lines.append(f"{inner_indent}acc += ({output_c_type}){input_access};")
     lines.append(f"{indent}}}")
     lines.append(f"{indent}{output_access} = acc;")
     lines.extend(emit_footer(input_shape, indent))
@@ -3802,9 +3805,12 @@ def _parse_cumsum_args(
             raise RefBackendError(f"codegen {op_name} dim is out of range")
     if dtype is not None:
         if isinstance(dtype, torch.fx.Node):
-            raise RefBackendError(
-                f"codegen {op_name} expects dtype to be torch.float32, torch.int8, or torch.int32"
-            )
+            meta_value = dtype.meta.get("val") or dtype.meta.get("example_value")
+            if meta_value is None:
+                raise RefBackendError(
+                    f"codegen {op_name} expects dtype to be torch.float32, torch.int8, or torch.int32"
+                )
+            dtype = meta_value
         if dtype not in (torch.float32, torch.int8, torch.int32):
             raise RefBackendError(
                 f"codegen {op_name} expects dtype to be torch.float32, torch.int8, or torch.int32"
@@ -5700,13 +5706,16 @@ def _handle_cumsum_node(
     dim, dtype_override = _parse_cumsum_args(
         op_spec.name, node, shapes[input_arg]
     )
-    if dtype_override is not None and dtype_override is not dtype_info.torch_dtype:
+    output_dtype = dtype_override or dtype_info.torch_dtype
+    if output_dtype is torch.bool:
+        raise RefBackendError("codegen cumsum does not support torch.bool tensors")
+    if output_dtype not in _CODEGEN_DTYPES:
         raise RefBackendError(
-            f"codegen {op_spec.name} expects dtype to match the graph dtype"
+            "codegen cumsum supports only torch.float32, torch.int8, or torch.int32"
         )
     output_shape = shapes[input_arg]
     shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
+    dtypes[node] = output_dtype
     strides[node] = _contiguous_strides(output_shape)
     return _OpNode(
         node=node,
