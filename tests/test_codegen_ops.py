@@ -86,24 +86,6 @@ def _cumsum_sample_filter(sample):
     return True
 
 
-def _full_like_sample_filter(sample):
-    if not isinstance(sample.input, torch.Tensor):
-        return False
-    for key, value in sample.kwargs.items():
-        if key == "dtype":
-            if value is not None and value is not sample.input.dtype:
-                return False
-        elif key in {"layout", "device", "memory_format"}:
-            if value is not None:
-                return False
-        elif key == "pin_memory":
-            if value not in (False, None):
-                return False
-        else:
-            return False
-    return True
-
-
 def _arange_sample_filter(sample):
     dtype = sample.kwargs.get("dtype")
     if dtype is None:
@@ -994,9 +976,7 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.where.self: {},
     torch.ops.aten.where.Scalar: {},
-    torch.ops.aten.full_like.default: {
-        "sample_filter": _full_like_sample_filter,
-    },
+    torch.ops.aten.full_like.default: {},
     torch.ops.aten.arange.start_step: {
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
         "allow_no_tensor_inputs": True,
