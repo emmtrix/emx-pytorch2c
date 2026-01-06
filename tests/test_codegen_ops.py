@@ -93,10 +93,6 @@ def _concat_sample_filter(sample):
     return True
 
 
-def _norm_dim_sample_filter(sample):
-    return len(sample.args) >= 2
-
-
 def _cumsum_sample_filter(sample):
     if not isinstance(sample.input, torch.Tensor):
         return False
