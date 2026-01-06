@@ -1,7 +1,7 @@
 aten op                                  cref  codegen
 --------------------------------------------------------
 _adaptive_avg_pool2d                     -     yes    
-_adaptive_avg_pool2d_backward            -     -      
+_adaptive_avg_pool2d_backward            -     yes    
 _adaptive_avg_pool3d                     -     -      
 _cdist_forward                           -     -      
 _embedding_bag                           -     -      
@@ -196,8 +196,8 @@ where.self                               -     yes
 Summary
 total aten ops: 192
 supported by cref only: 0
-supported by codegen only: 85
+supported by codegen only: 86
 supported by both: 49
-unsupported by either: 58
-supported by codegen: 134 / 192 (69.8 %)
+unsupported by either: 57
+supported by codegen: 135 / 192 (70.3 %)
 supported by c-ref: 49 / 192 (25.5 %)

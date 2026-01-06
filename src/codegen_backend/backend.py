@@ -2404,6 +2404,49 @@ def _write_pool2d_kernel(
     return rendered.strip().splitlines()
 
 
+def _write_adaptive_avg_pool2d_backward_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    grad_output_shape: Sequence[int],
+    input_shape: Sequence[int],
+    output_shape: Sequence[int],
+    kernel_size: Tuple[int, int],
+    stride: Tuple[int, int],
+    dtype: _CodegenDType,
+) -> List[str]:
+    pool2d_template = _get_template_env().get_template(
+        "adaptive_avg_pool2d_backward_kernel.c.j2"
+    )
+    batch, channels, in_h, in_w = input_shape
+    out_h, out_w = grad_output_shape[2], grad_output_shape[3]
+    k_h, k_w = kernel_size
+    stride_h, stride_w = stride
+    grad_output_suffix = _format_array_suffix(grad_output_shape)
+    input_suffix = _format_array_suffix(input_shape)
+    output_suffix = _format_array_suffix(output_shape)
+    signature = (
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"const {dtype.c_type} grad_output{grad_output_suffix}, "
+        f"const {dtype.c_type} input{input_suffix}, "
+        f"{dtype.c_type} out{output_suffix}) {{"
+    )
+    rendered = pool2d_template.render(
+        signature=signature,
+        batch=batch,
+        channels=channels,
+        in_h=in_h,
+        in_w=in_w,
+        out_h=out_h,
+        out_w=out_w,
+        k_h=k_h,
+        k_w=k_w,
+        stride_h=stride_h,
+        stride_w=stride_w,
+        c_type=dtype.c_type,
+    )
+    return rendered.strip().splitlines()
+
+
 def _write_pool1d_kernel(
     node_index: int,
     op_spec: _OpSpec,
@@ -4321,6 +4364,24 @@ def _parse_adaptive_avg_pool2d_args(
     return input_arg, output_size
 
 
+def _parse_adaptive_avg_pool2d_backward_args(
+    node: torch.fx.Node,
+) -> Tuple[torch.fx.Node, torch.fx.Node]:
+    args = list(node.args)
+    kwargs = dict(node.kwargs)
+    if len(args) != 2:
+        raise RefBackendError(
+            "codegen adaptive_avg_pool2d_backward expects grad_output and input"
+        )
+    if kwargs:
+        raise RefBackendError(
+            "codegen adaptive_avg_pool2d_backward expects no keyword arguments"
+        )
+    grad_output = args[0]
+    input_arg = args[1]
+    return grad_output, input_arg
+
+
 def _parse_max_pool2d_args(
     node: torch.fx.Node,
 ) -> Tuple[torch.fx.Node, object, object, object, object, object]:
@@ -5141,6 +5202,76 @@ def _handle_pool2d_node(
             "ceil_mode": bool(ceil_mode),
             "count_include_pad": count_include_pad,
             "divisor_override": divisor_override,
+        },
+    )
+
+
+def _handle_adaptive_avg_pool2d_backward_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> _OpNode:
+    grad_output, input_arg = _parse_adaptive_avg_pool2d_backward_args(node)
+    if not isinstance(grad_output, torch.fx.Node) or not isinstance(
+        input_arg, torch.fx.Node
+    ):
+        raise _error_expected_tensor(op_spec.name)
+    if grad_output not in shapes or input_arg not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if dtype_info.torch_dtype is not torch.float32:
+        raise RefBackendError(
+            "codegen adaptive_avg_pool2d_backward supports only torch.float32 tensors"
+        )
+    if dtypes[grad_output] is not torch.float32 or dtypes[input_arg] is not torch.float32:
+        raise RefBackendError(
+            "codegen adaptive_avg_pool2d_backward supports only torch.float32 tensors"
+        )
+    grad_output_shape = shapes[grad_output]
+    input_shape = shapes[input_arg]
+    if len(grad_output_shape) != 4 or len(input_shape) != 4:
+        raise RefBackendError(
+            "codegen adaptive_avg_pool2d_backward requires 4D input tensors"
+        )
+    if not _is_contiguous(grad_output_shape, strides[grad_output]):
+        raise RefBackendError(
+            "codegen adaptive_avg_pool2d_backward requires contiguous grad_output tensors"
+        )
+    if not _is_contiguous(input_shape, strides[input_arg]):
+        raise RefBackendError(
+            "codegen adaptive_avg_pool2d_backward requires contiguous input tensors"
+        )
+    if grad_output_shape[0] != input_shape[0] or grad_output_shape[1] != input_shape[1]:
+        raise RefBackendError(
+            "codegen adaptive_avg_pool2d_backward requires matching batch and channel sizes"
+        )
+    out_h, out_w = grad_output_shape[2], grad_output_shape[3]
+    in_h, in_w = input_shape[2], input_shape[3]
+    if out_h <= 0 or out_w <= 0:
+        raise RefBackendError(
+            "codegen adaptive_avg_pool2d_backward expects positive output size"
+        )
+    if in_h % out_h != 0 or in_w % out_w != 0:
+        raise RefBackendError(
+            "codegen adaptive_avg_pool2d_backward requires input sizes divisible by output size"
+        )
+    kernel_pair = (in_h // out_h, in_w // out_w)
+    stride_pair = kernel_pair
+    output_shape = input_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=[grad_output, input_arg],
+        output_shape=output_shape,
+        inplace_input=None,
+        params={
+            "kernel_size": kernel_pair,
+            "stride": stride_pair,
         },
     )
 
@@ -6636,6 +6767,13 @@ def _analyze_generic_graph(
             if op_spec.kind == "pool2d":
                 op_nodes.append(
                     _handle_pool2d_node(
+                        node, op_spec, dtype_info, shapes, strides, dtypes
+                    )
+                )
+                continue
+            if op_spec.kind == "pool2d_backward":
+                op_nodes.append(
+                    _handle_adaptive_avg_pool2d_backward_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )

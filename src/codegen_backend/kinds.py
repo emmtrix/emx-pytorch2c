@@ -426,6 +426,24 @@ class Pool2dHandler(KindHandler):
         )
 
 
+class Pool2dBackwardHandler(KindHandler):
+    def emit_kernel(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        backend = _backend_module()
+        grad_output_node, input_node = op_node.inputs
+        return backend._write_adaptive_avg_pool2d_backward_kernel(
+            node_index,
+            op_node.spec,
+            graph.shapes[grad_output_node],
+            graph.shapes[input_node],
+            op_node.output_shape,
+            op_node.p("kernel_size", (1, 1)),
+            op_node.p("stride", (1, 1)),
+            graph.dtype,
+        )
+
+
 class Pool1dHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
@@ -852,6 +870,7 @@ def build_kind_handlers() -> Dict[str, KindHandler]:
         "gather": GatherHandler(),
         "concat": ConcatHandler(),
         "pool2d": Pool2dHandler(),
+        "pool2d_backward": Pool2dBackwardHandler(),
         "pool1d": Pool1dHandler(),
         "col2im": Col2imHandler(),
         "batch_norm": BatchNormHandler(),

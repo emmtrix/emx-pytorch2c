@@ -62,41 +62,6 @@ def _all_same_shape(tensors):
     return all(tensor.shape == shape for tensor in tensors[1:])
 
 
-def _concat_sample_filter(sample):
-    if not isinstance(sample.input, (list, tuple)):
-        return False
-    tensors = _extract_tensors(sample)
-    if not tensors:
-        return False
-    dim = sample.kwargs.get("dim", 0)
-    if sample.args:
-        dim = sample.args[0]
-    if not isinstance(dim, int):
-        return False
-    rank = tensors[0].ndim
-    if rank == 0:
-        return False
-    if dim < 0:
-        dim += rank
-    if dim < 0 or dim >= rank:
-        return False
-    for tensor in tensors:
-        if tensor.ndim != rank:
-            return False
-    base_shape = tensors[0].shape
-    for tensor in tensors[1:]:
-        for dim_index, size in enumerate(tensor.shape):
-            if dim_index == dim:
-                continue
-            if size != base_shape[dim_index]:
-                return False
-    return True
-
-
-def _norm_dim_sample_filter(sample):
-    return len(sample.args) >= 2
-
-
 def _full_like_sample_filter(sample):
     if not isinstance(sample.input, torch.Tensor):
         return False
@@ -681,6 +646,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten._to_copy.default,
     torch.ops.aten.adaptive_avg_pool1d.default,
     torch.ops.aten._adaptive_avg_pool2d.default,
+    torch.ops.aten._adaptive_avg_pool2d_backward.default,
     torch.ops.aten._native_batch_norm_legit_no_training.default,
     torch.ops.aten._pdist_forward.default,
 ]
@@ -963,6 +929,7 @@ CODEGEN_SPECIAL_TEST_OPS = [
     torch.ops.aten._to_copy.default,
     torch.ops.aten.adaptive_avg_pool1d.default,
     torch.ops.aten._adaptive_avg_pool2d.default,
+    torch.ops.aten._adaptive_avg_pool2d_backward.default,
     torch.ops.aten._native_batch_norm_legit_no_training.default,
     torch.ops.aten._pdist_forward.default,
 ]
@@ -1273,6 +1240,23 @@ class TestCodegenOpInfo(TestCase):
                 compare_kwargs["rtol"] = constraints["rtol"] or 0.0
                 compare_kwargs["atol"] = constraints["atol"] or 0.0
             torch.testing.assert_close(result, expected, **compare_kwargs)
+
+
+class TestCodegenSpecialOps(TestCase):
+    def test_codegen_adaptive_avg_pool2d_backward(self):
+        grad_output = torch.randn(1, 2, 2, 2)
+        input_tensor = torch.randn(1, 2, 4, 4)
+        compiled = torch.compile(
+            lambda grad, inp: torch.ops.aten._adaptive_avg_pool2d_backward.default(
+                grad, inp
+            ),
+            backend=codegen_generic_backend,
+        )
+        expected = torch.ops.aten._adaptive_avg_pool2d_backward.default(
+            grad_output, input_tensor
+        )
+        result = compiled(grad_output, input_tensor)
+        torch.testing.assert_close(result, expected)
 
 
 instantiate_device_type_tests(TestCodegenOpInfo, globals(), only_for="cpu")
