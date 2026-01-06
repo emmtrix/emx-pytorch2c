@@ -36,6 +36,7 @@ _VALID_KINDS = {
     "gather",
     "batch_norm",
     "pdist",
+    "cdist",
     "pad",
     "empty_strided",
     "resize",
@@ -1542,6 +1543,10 @@ _REGISTRY.register_op("_native_batch_norm_legit_no_training", kind="batch_norm")
 _REGISTRY.register_op("_pdist_forward", kind="pdist").targets(
     torch.ops.aten._pdist_forward,
     torch.ops.aten._pdist_forward.default,
+).build()
+_REGISTRY.register_op("_cdist_forward", kind="cdist").targets(
+    torch.ops.aten._cdist_forward,
+    torch.ops.aten._cdist_forward.default,
 ).build()
 
 SUPPORTED_OPS = _REGISTRY.build()

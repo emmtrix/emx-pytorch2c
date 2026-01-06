@@ -582,6 +582,43 @@ class PdistHandler(KindHandler):
         return (n * (n - 1) // 2,)
 
 
+class CdistHandler(KindHandler):
+    def emit_kernel(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        backend = _backend_module()
+        x1_node, x2_node = op_node.inputs
+        return backend._write_cdist_kernel(
+            node_index,
+            op_node.spec,
+            graph.shapes[x1_node],
+            graph.shapes[x2_node],
+            op_node.output_shape,
+            graph.dtype,
+        )
+
+    def infer_output_shape(
+        self,
+        op_spec: _OpSpec,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        backend = _backend_module()
+        if len(input_shapes) < 2:
+            raise backend.RefBackendError(
+                "codegen cdist expects two input tensors"
+            )
+        x1_shape, x2_shape = input_shapes[:2]
+        if len(x1_shape) != 2 or len(x2_shape) != 2:
+            raise backend.RefBackendError(
+                "codegen cdist expects 2D input tensors"
+            )
+        if x1_shape[1] != x2_shape[1]:
+            raise backend.RefBackendError(
+                "codegen cdist expects matching feature dimensions"
+            )
+        return (x1_shape[0], x2_shape[0])
+
+
 class Conv1dHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
@@ -623,6 +660,7 @@ class Conv2dHandler(KindHandler):
             graph.shapes[input_node],
             graph.shapes[weight_node],
             op_node.output_shape,
+            bool(op_node.p("transposed", False)),
             op_node.p("stride", (1, 1)),
             op_node.p("padding", (0, 0)),
             op_node.p("dilation", (1, 1)),
@@ -918,6 +956,7 @@ def build_kind_handlers() -> Dict[str, KindHandler]:
         "col2im": Col2imHandler(),
         "batch_norm": BatchNormHandler(),
         "pdist": PdistHandler(),
+        "cdist": CdistHandler(),
         "conv1d": Conv1dHandler(),
         "conv2d": Conv2dHandler(),
         "addmm": AddmmHandler(),

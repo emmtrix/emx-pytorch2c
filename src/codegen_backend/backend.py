@@ -29,6 +29,7 @@ from codegen_backend.graph import _GenericGraph, _GenericLibrary, _OpNode
 from codegen_backend.kinds import build_kind_handlers
 from codegen_backend.ops_registry import SUPPORTED_OPS
 from codegen_backend.param_normalize import (
+    normalize_bool,
     normalize_int_or_pair,
     normalize_int_or_tuple,
     normalize_padding,
@@ -240,6 +241,55 @@ def _conv2d_output_shape_from_shapes(
     return out_channels, out_h, out_w
 
 
+def _conv2d_transposed_output_shape_from_shapes(
+    input_shape: Sequence[int],
+    weight_shape: Sequence[int],
+    stride: Tuple[int, int],
+    padding: Tuple[int, int],
+    dilation: Tuple[int, int],
+    output_padding: Tuple[int, int],
+    groups: int,
+) -> Tuple[int, ...]:
+    has_batch, batch, in_channels, in_h, in_w = _unpack_conv2d_input_shape(
+        input_shape
+    )
+    weight_in_channels, weight_out_channels, kernel_h, kernel_w = weight_shape
+    if in_channels != weight_in_channels:
+        raise RefBackendError(
+            "codegen conv2d requires input channels to match weight channels"
+        )
+    if in_channels % groups != 0:
+        raise RefBackendError(
+            "codegen conv2d requires input channels to be divisible by groups"
+        )
+    out_channels = weight_out_channels * groups
+    stride_h, stride_w = stride
+    pad_h, pad_w = padding
+    dil_h, dil_w = dilation
+    out_pad_h, out_pad_w = output_padding
+    out_h = (
+        (in_h - 1) * stride_h
+        - 2 * pad_h
+        + dil_h * (kernel_h - 1)
+        + out_pad_h
+        + 1
+    )
+    out_w = (
+        (in_w - 1) * stride_w
+        - 2 * pad_w
+        + dil_w * (kernel_w - 1)
+        + out_pad_w
+        + 1
+    )
+    if out_h <= 0 or out_w <= 0:
+        raise RefBackendError(
+            "codegen conv2d requires output shape (N, C_out, H_out, W_out)"
+        )
+    if has_batch:
+        return batch, out_channels, out_h, out_w
+    return out_channels, out_h, out_w
+
+
 def _conv2d_same_padding(
     input_shape: Sequence[int],
     weight_shape: Sequence[int],
@@ -306,6 +356,7 @@ def _pool1d_output_shape_from_shapes(
     stride: int,
     padding: int,
     dilation: int,
+    ceil_mode: bool,
 ) -> Tuple[int, int, int]:
     batch, channels, in_l = input_shape
     numerator = in_l + 2 * padding - dilation * (kernel_size - 1) - 1
@@ -313,7 +364,12 @@ def _pool1d_output_shape_from_shapes(
         raise RefBackendError(
             "codegen pool1d requires output shape (N, C, L_out)"
         )
-    out_l = numerator // stride + 1
+    if ceil_mode:
+        out_l = (numerator + stride - 1) // stride + 1
+        if (out_l - 1) * stride >= in_l + padding:
+            out_l -= 1
+    else:
+        out_l = numerator // stride + 1
     return batch, channels, out_l
 
 
@@ -323,6 +379,7 @@ def _pool2d_output_shape_from_shapes(
     stride: Tuple[int, int],
     padding: Tuple[int, int],
     dilation: Tuple[int, int],
+    ceil_mode: bool = False,
 ) -> Tuple[int, int, int, int]:
     batch, channels, in_h, in_w = input_shape
     k_h, k_w = kernel_size
@@ -335,8 +392,16 @@ def _pool2d_output_shape_from_shapes(
         raise RefBackendError(
             "codegen pool2d requires output shape (N, C, H_out, W_out)"
         )
-    out_h = numerator_h // stride_h + 1
-    out_w = numerator_w // stride_w + 1
+    if ceil_mode:
+        out_h = (numerator_h + stride_h - 1) // stride_h + 1
+        out_w = (numerator_w + stride_w - 1) // stride_w + 1
+        if (out_h - 1) * stride_h >= in_h + pad_h:
+            out_h -= 1
+        if (out_w - 1) * stride_w >= in_w + pad_w:
+            out_w -= 1
+    else:
+        out_h = numerator_h // stride_h + 1
+        out_w = numerator_w // stride_w + 1
     return batch, channels, out_h, out_w
 
 
@@ -2438,6 +2503,7 @@ def _write_conv2d_kernel(
     input_shape: Sequence[int],
     weight_shape: Sequence[int],
     output_shape: Sequence[int],
+    transposed: bool,
     stride: Tuple[int, int],
     padding: Tuple[int, int],
     dilation: Tuple[int, int],
@@ -2445,11 +2511,18 @@ def _write_conv2d_kernel(
     dtype: _CodegenDType,
     has_bias: bool,
 ) -> List[str]:
-    conv2d_template = _get_template_env().get_template("conv2d_kernel.c.j2")
+    template_name = (
+        "conv2d_transpose_kernel.c.j2" if transposed else "conv2d_kernel.c.j2"
+    )
+    conv2d_template = _get_template_env().get_template(template_name)
     has_batch, batch, in_channels, in_h, in_w = _unpack_conv2d_input_shape(
         input_shape
     )
-    out_channels, _, k_h, k_w = weight_shape
+    if transposed:
+        weight_in_channels, weight_out_channels, k_h, k_w = weight_shape
+        out_channels = weight_out_channels * groups
+    else:
+        out_channels, _, k_h, k_w = weight_shape
     if has_batch:
         out_h, out_w = output_shape[2], output_shape[3]
     else:
@@ -2820,6 +2893,36 @@ def _write_pdist_kernel(
     rendered = pdist_template.render(
         signature=signature,
         n=n,
+        m=m,
+        c_type=dtype.c_type,
+    )
+    return rendered.strip().splitlines()
+
+
+def _write_cdist_kernel(
+    node_index: int,
+    op_spec: _OpSpec,
+    x1_shape: Sequence[int],
+    x2_shape: Sequence[int],
+    output_shape: Sequence[int],
+    dtype: _CodegenDType,
+) -> List[str]:
+    cdist_template = _get_template_env().get_template("cdist_kernel.c.j2")
+    n, m = x1_shape
+    r, _ = x2_shape
+    x1_suffix = _format_array_suffix(x1_shape)
+    x2_suffix = _format_array_suffix(x2_shape)
+    output_suffix = _format_array_suffix(output_shape)
+    signature = (
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+        f"const {dtype.c_type} x1{x1_suffix}, "
+        f"const {dtype.c_type} x2{x2_suffix}, "
+        f"{dtype.c_type} out{output_suffix}) {{"
+    )
+    rendered = cdist_template.render(
+        signature=signature,
+        n=n,
+        r=r,
         m=m,
         c_type=dtype.c_type,
     )
@@ -4254,16 +4357,26 @@ def _parse_conv2d_args(
             dilation = remaining[3]
         if len(remaining) >= 5:
             groups = remaining[4]
-    elif len(args) == 9:
-        (
-            bias,
-            stride,
-            padding,
-            dilation,
-            transposed,
-            output_padding,
-            groups,
-        ) = remaining
+    elif len(args) in {8, 9}:
+        if len(args) == 8:
+            (
+                stride,
+                padding,
+                dilation,
+                transposed,
+                output_padding,
+                groups,
+            ) = remaining
+        else:
+            (
+                bias,
+                stride,
+                padding,
+                dilation,
+                transposed,
+                output_padding,
+                groups,
+            ) = remaining
 
     if kwargs:
         extra = set(kwargs) - {
@@ -4624,25 +4737,33 @@ def _parse_max_pool2d_args(
 ) -> Tuple[torch.fx.Node, object, object, object, object, object]:
     args = list(node.args)
     kwargs = dict(node.kwargs)
-    if len(args) < 2 or len(args) > 6:
+    if len(args) > 6:
         raise RefBackendError("codegen max_pool2d expects pooling arguments")
-    input_arg = args[0]
-    kernel_size = args[1]
+    input_arg = args[0] if len(args) > 0 else None
+    kernel_size = None
     stride = None
     padding = 0
     dilation = 1
     ceil_mode = False
-    remaining = args[2:]
-    if len(remaining) >= 1:
-        stride = remaining[0]
-    if len(remaining) >= 2:
-        padding = remaining[1]
-    if len(remaining) >= 3:
-        dilation = remaining[2]
-    if len(remaining) >= 4:
-        ceil_mode = remaining[3]
+    remaining = args[1:]
+    has_kernel_size = len(remaining) >= 1
+    has_stride = len(remaining) >= 2
+    has_padding = len(remaining) >= 3
+    has_dilation = len(remaining) >= 4
+    has_ceil_mode = len(remaining) >= 5
+    if has_kernel_size:
+        kernel_size = remaining[0]
+    if has_stride:
+        stride = remaining[1]
+    if has_padding:
+        padding = remaining[2]
+    if has_dilation:
+        dilation = remaining[3]
+    if has_ceil_mode:
+        ceil_mode = remaining[4]
     if kwargs:
         extra = set(kwargs) - {
+            "input",
             "kernel_size",
             "stride",
             "padding",
@@ -4653,16 +4774,32 @@ def _parse_max_pool2d_args(
             raise RefBackendError(
                 f"codegen max_pool2d got unexpected kwargs: {sorted(extra)}"
             )
+        if "input" in kwargs:
+            if input_arg is not None:
+                raise _error_kwarg_specified_once("max_pool2d", "input")
+            input_arg = kwargs["input"]
         if "kernel_size" in kwargs:
+            if has_kernel_size:
+                raise _error_kwarg_specified_once("max_pool2d", "kernel_size")
             kernel_size = kwargs["kernel_size"]
         if "stride" in kwargs:
+            if has_stride:
+                raise _error_kwarg_specified_once("max_pool2d", "stride")
             stride = kwargs["stride"]
         if "padding" in kwargs:
+            if has_padding:
+                raise _error_kwarg_specified_once("max_pool2d", "padding")
             padding = kwargs["padding"]
         if "dilation" in kwargs:
+            if has_dilation:
+                raise _error_kwarg_specified_once("max_pool2d", "dilation")
             dilation = kwargs["dilation"]
         if "ceil_mode" in kwargs:
+            if has_ceil_mode:
+                raise _error_kwarg_specified_once("max_pool2d", "ceil_mode")
             ceil_mode = kwargs["ceil_mode"]
+    if input_arg is None or kernel_size is None:
+        raise RefBackendError("codegen max_pool2d expects pooling arguments")
     return input_arg, kernel_size, stride, padding, dilation, ceil_mode
 
 
@@ -4984,14 +5121,10 @@ def _handle_conv2d_node(
         raise RefBackendError(
             "codegen conv2d expects constant stride, padding, and dilation"
         )
-    if isinstance(transposed, torch.fx.Node) or transposed:
-        raise RefBackendError("codegen conv2d does not support transposed")
-    if isinstance(output_padding, torch.fx.Node) or output_padding not in (
-        (0, 0),
-        [0, 0],
-        0,
-    ):
-        raise RefBackendError("codegen conv2d expects zero output padding")
+    if isinstance(transposed, torch.fx.Node):
+        raise RefBackendError("codegen conv2d expects constant transposed value")
+    if isinstance(output_padding, torch.fx.Node):
+        raise RefBackendError("codegen conv2d expects constant output_padding")
     if isinstance(groups, torch.fx.Node):
         raise RefBackendError("codegen conv2d expects constant groups")
     if dtype_info.torch_dtype is not torch.float32:
@@ -5007,21 +5140,31 @@ def _handle_conv2d_node(
             raise RefBackendError("codegen conv2d supports only torch.float32 tensors")
     input_shape = shapes[input_arg]
     weight_shape = shapes[weight_arg]
-    if bias_node is not None:
-        bias_shape = shapes[bias_node]
-        if len(bias_shape) != 1 or bias_shape[0] != weight_shape[0]:
-            raise RefBackendError(
-                "codegen conv2d expects bias shape to match output channels"
-            )
     if len(weight_shape) != 4:
         raise RefBackendError("codegen conv2d requires 4D weight tensors")
     if len(input_shape) not in (3, 4):
         raise RefBackendError("codegen conv2d requires 3D or 4D input tensors")
+    transposed_value = _normalize_param(
+        normalize_bool, "transposed", transposed
+    )
     stride_pair = _normalize_param(normalize_int_or_pair, "stride", stride)
     dilation_pair = _normalize_param(normalize_int_or_pair, "dilation", dilation)
     padding_value = _normalize_param(
         normalize_padding, "padding", padding, 2, allow_strings=("same", "valid")
     )
+    output_padding_pair = _normalize_param(
+        normalize_int_or_pair, "output_padding", output_padding
+    )
+    try:
+        groups_value = operator.index(groups)
+    except TypeError as exc:
+        raise RefBackendError("codegen conv2d expects constant groups") from exc
+    if not transposed_value and output_padding_pair != (0, 0):
+        raise RefBackendError("codegen conv2d expects zero output padding")
+    if transposed_value and isinstance(padding_value, str):
+        raise RefBackendError(
+            "codegen conv2d expects numeric padding for transposed convolutions"
+        )
     if isinstance(padding_value, str):
         if padding_value == "valid":
             padding_pair = (0, 0)
@@ -5031,11 +5174,11 @@ def _handle_conv2d_node(
                 stride_pair,
                 padding_pair,
                 dilation_pair,
-                groups,
+                groups_value,
             )
         else:
             has_batch, out_channels = _conv2d_validate_channels(
-                input_shape, weight_shape, groups
+                input_shape, weight_shape, groups_value
             )
             padding_pair, (out_h, out_w) = _conv2d_same_padding(
                 input_shape, weight_shape, stride_pair, dilation_pair
@@ -5046,14 +5189,25 @@ def _handle_conv2d_node(
                 output_shape = (out_channels, out_h, out_w)
     else:
         padding_pair = padding_value
-        output_shape = _conv2d_output_shape_from_shapes(
-            input_shape,
-            weight_shape,
-            stride_pair,
-            padding_pair,
-            dilation_pair,
-            groups,
-        )
+        if transposed_value:
+            output_shape = _conv2d_transposed_output_shape_from_shapes(
+                input_shape,
+                weight_shape,
+                stride_pair,
+                padding_pair,
+                dilation_pair,
+                output_padding_pair,
+                groups_value,
+            )
+        else:
+            output_shape = _conv2d_output_shape_from_shapes(
+                input_shape,
+                weight_shape,
+                stride_pair,
+                padding_pair,
+                dilation_pair,
+                groups_value,
+            )
     if (
         stride_pair[0] <= 0
         or stride_pair[1] <= 0
@@ -5065,8 +5219,22 @@ def _handle_conv2d_node(
         raise RefBackendError(
             "codegen conv2d expects stride and dilation to be positive and padding to be non-negative"
         )
-    if not isinstance(groups, int) or groups <= 0:
+    if output_padding_pair[0] < 0 or output_padding_pair[1] < 0:
+        raise RefBackendError(
+            "codegen conv2d expects output_padding to be non-negative"
+        )
+    if groups_value <= 0:
         raise RefBackendError("codegen conv2d requires positive groups")
+    if bias_node is not None:
+        bias_shape = shapes[bias_node]
+        if len(output_shape) == 4:
+            out_channels = output_shape[1]
+        else:
+            out_channels = output_shape[0]
+        if len(bias_shape) != 1 or bias_shape[0] != out_channels:
+            raise RefBackendError(
+                "codegen conv2d expects bias shape to match output channels"
+            )
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
     strides[node] = _contiguous_strides(output_shape)
@@ -5083,7 +5251,9 @@ def _handle_conv2d_node(
             "stride": stride_pair,
             "padding": padding_pair,
             "dilation": dilation_pair,
-            "groups": groups,
+            "groups": groups_value,
+            "transposed": transposed_value,
+            "output_padding": output_padding_pair,
             "has_bias": bias_node is not None,
         },
     )
@@ -5222,16 +5392,28 @@ def _handle_pool1d_node(
         raise RefBackendError(
             f"codegen {op_spec.name} expects positive kernel, stride, and dilation with non-negative padding"
         )
-    if ceil_mode:
+    if ceil_mode and op_spec.name != "max_pool1d":
         raise RefBackendError(
             f"codegen {op_spec.name} does not support ceil_mode"
         )
-    if not isinstance(count_include_pad, bool):
+    if isinstance(count_include_pad, bool):
+        count_include_pad_value = count_include_pad
+    elif isinstance(count_include_pad, numbers.Integral):
+        count_include_pad_value = bool(count_include_pad)
+    else:
         raise RefBackendError(
             f"codegen {op_spec.name} expects count_include_pad to be a bool"
         )
+    divisor_override_value = divisor_override
     if divisor_override is not None:
-        if not isinstance(divisor_override, int) or divisor_override <= 0:
+        if isinstance(divisor_override, bool) or not isinstance(
+            divisor_override, numbers.Integral
+        ):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects divisor_override to be a positive int"
+            )
+        divisor_override_value = int(divisor_override)
+        if divisor_override_value <= 0:
             raise RefBackendError(
                 f"codegen {op_spec.name} expects divisor_override to be a positive int"
             )
@@ -5250,6 +5432,7 @@ def _handle_pool1d_node(
         stride_value,
         padding_value,
         dilation_value,
+        bool(ceil_mode),
     )
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
@@ -5266,8 +5449,8 @@ def _handle_pool1d_node(
             "padding": padding_value,
             "dilation": dilation_value,
             "ceil_mode": bool(ceil_mode),
-            "count_include_pad": count_include_pad,
-            "divisor_override": divisor_override,
+            "count_include_pad": count_include_pad_value,
+            "divisor_override": divisor_override_value,
         },
     )
 
@@ -5411,9 +5594,9 @@ def _handle_pool2d_node(
         raise RefBackendError(
             f"codegen {op_spec.name} expects positive kernel, stride, and dilation with non-negative padding"
         )
-    if ceil_mode:
+    if not isinstance(ceil_mode, bool):
         raise RefBackendError(
-            f"codegen {op_spec.name} does not support ceil_mode"
+            f"codegen {op_spec.name} expects ceil_mode to be a bool"
         )
     if not isinstance(count_include_pad, bool):
         raise RefBackendError(
@@ -5430,6 +5613,7 @@ def _handle_pool2d_node(
         stride_pair,
         padding_pair,
         dilation_pair,
+        ceil_mode,
     )
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
@@ -6060,6 +6244,86 @@ def _handle_pdist_node(
         node=node,
         spec=op_spec,
         inputs=[input_arg],
+        output_shape=output_shape,
+        inplace_input=None,
+        params={},
+    )
+
+
+def _handle_cdist_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+) -> _OpNode:
+    if len(node.args) < 3:
+        raise RefBackendError(
+            "codegen _cdist_forward expects two inputs and a p value"
+        )
+    if len(node.args) > 4:
+        raise RefBackendError(
+            "codegen _cdist_forward expects at most four inputs"
+        )
+    if node.kwargs:
+        raise RefBackendError(
+            "codegen _cdist_forward expects positional args only"
+        )
+    x1_arg = node.args[0]
+    x2_arg = node.args[1]
+    p_value = node.args[2]
+    compute_mode = node.args[3] if len(node.args) > 3 else None
+    if not isinstance(x1_arg, torch.fx.Node) or x1_arg not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if not isinstance(x2_arg, torch.fx.Node) or x2_arg not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if dtype_info.torch_dtype is not torch.float32:
+        raise RefBackendError("codegen _cdist_forward supports only torch.float32")
+    if dtypes[x1_arg] is not torch.float32 or dtypes[x2_arg] is not torch.float32:
+        raise RefBackendError("codegen _cdist_forward supports only torch.float32")
+    if isinstance(p_value, torch.fx.Node):
+        raise RefBackendError("codegen _cdist_forward expects constant p value")
+    try:
+        p_value = float(p_value)
+    except (TypeError, ValueError) as exc:
+        raise RefBackendError(
+            "codegen _cdist_forward expects p to be a float"
+        ) from exc
+    if p_value != 2.0:
+        raise RefBackendError("codegen _cdist_forward supports only p=2")
+    if isinstance(compute_mode, torch.fx.Node):
+        raise RefBackendError(
+            "codegen _cdist_forward expects constant compute_mode value"
+        )
+    if compute_mode not in (None, 0):
+        raise RefBackendError(
+            "codegen _cdist_forward supports only compute_mode=None or 0"
+        )
+    x1_shape = shapes[x1_arg]
+    x2_shape = shapes[x2_arg]
+    if len(x1_shape) != 2 or len(x2_shape) != 2:
+        raise RefBackendError(
+            "codegen _cdist_forward expects 2D input tensors"
+        )
+    if x1_shape[1] != x2_shape[1]:
+        raise RefBackendError(
+            "codegen _cdist_forward expects matching feature dimensions"
+        )
+    if not _is_contiguous(x1_shape, strides[x1_arg]) or not _is_contiguous(
+        x2_shape, strides[x2_arg]
+    ):
+        raise RefBackendError(
+            "codegen _cdist_forward requires contiguous inputs"
+        )
+    output_shape = (x1_shape[0], x2_shape[0])
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=[x1_arg, x2_arg],
         output_shape=output_shape,
         inplace_input=None,
         params={},
@@ -7323,6 +7587,13 @@ def _analyze_generic_graph(
                     )
                 )
                 continue
+            if op_spec.kind == "cdist":
+                op_nodes.append(
+                    _handle_cdist_node(
+                        node, op_spec, dtype_info, shapes, strides, dtypes
+                    )
+                )
+                continue
             if op_spec.kind == "conv1d":
                 op_nodes.append(
                     _handle_conv1d_node(
@@ -8028,16 +8299,6 @@ def _compile_graph(
     gm: torch.fx.GraphModule, example_inputs: List[object]
 ) -> Callable[..., torch.Tensor]:
     graph = _analyze_generic_graph(gm, example_inputs)
-    lib = _compile_generic_library(graph)
-    output_structure = graph.output_structure
-    output_value = graph.output_value
-    output_inplace_input = graph.output_inplace_input
-    library_cache: Dict[
-        Tuple[Tuple[Tuple[int, ...], ...], Tuple[Tuple[int, ...], ...]],
-        _GenericLibrary,
-    ] = {
-        (lib.input_shapes, lib.input_strides): lib,
-    }
     conv_contiguous_indices = tuple(
         sorted(
             {
@@ -8050,9 +8311,40 @@ def _compile_graph(
         )
     )
 
+    def _normalize_conv_inputs(
+        inputs: Sequence[object],
+    ) -> List[object]:
+        normalized = list(inputs)
+        for index in conv_contiguous_indices:
+            placeholder = graph.tensor_placeholders[index]
+            placeholder_index = graph.placeholders.index(placeholder)
+            value = normalized[placeholder_index]
+            if isinstance(value, torch.Tensor) and not value.is_contiguous():
+                normalized[placeholder_index] = value.contiguous()
+        return normalized
+
+    normalized_example_inputs = (
+        _normalize_conv_inputs(example_inputs)
+        if conv_contiguous_indices
+        else list(example_inputs)
+    )
+    graph = _analyze_generic_graph(gm, normalized_example_inputs)
+    lib = _compile_generic_library(graph)
+    output_structure = graph.output_structure
+    output_value = graph.output_value
+    output_inplace_input = graph.output_inplace_input
+    library_cache: Dict[
+        Tuple[Tuple[Tuple[int, ...], ...], Tuple[Tuple[int, ...], ...]],
+        _GenericLibrary,
+    ] = {
+        (lib.input_shapes, lib.input_strides): lib,
+    }
+
     def _recompile(new_inputs: Sequence[object]) -> None:
         nonlocal graph, lib, output_inplace_input
-        graph = _analyze_generic_graph(gm, new_inputs)
+        graph = _analyze_generic_graph(
+            gm, _normalize_conv_inputs(new_inputs)
+        )
         lib = _compile_generic_library(graph)
         output_inplace_input = graph.output_inplace_input
 
@@ -8101,7 +8393,15 @@ def _compile_graph(
         cache_key = (input_shapes, input_strides)
         cached_lib = library_cache.get(cache_key)
         if cached_lib is None:
-            updated_graph = _analyze_generic_graph(gm, list(normalized_args))
+            analysis_inputs = list(normalized_args)
+            if conv_contiguous_indices:
+                for index in conv_contiguous_indices:
+                    placeholder = graph.tensor_placeholders[index]
+                    placeholder_index = graph.placeholders.index(placeholder)
+                    analysis_inputs[placeholder_index] = contiguous_inputs[
+                        index
+                    ]
+            updated_graph = _analyze_generic_graph(gm, analysis_inputs)
             cached_lib = _compile_generic_library(updated_graph)
             library_cache[cache_key] = cached_lib
         lib = cached_lib

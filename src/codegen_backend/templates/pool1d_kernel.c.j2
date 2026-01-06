@@ -29,12 +29,12 @@
                     acc += input[n][c][in_l_idx];
                     count += 1;
                 }
-                {% if has_divisor_override %}
-                int64_t divisor = {{ divisor_override }};
-                {% elif count_include_pad %}
-                int64_t divisor = {{ k_l }};
-                {% else %}
                 int64_t divisor = count;
+                {% if count_include_pad %}
+                divisor = {{ k_l }};
+                {% endif %}
+                {% if has_divisor_override %}
+                divisor = {{ divisor_override }};
                 {% endif %}
                 out[n][c][ol] = acc / ({{ c_type }})divisor;
                 {% endif %}
