@@ -6079,16 +6079,10 @@ def _handle_fill_node(
                 f"codegen {op_spec.name} expects a single scalar value"
             )
         value = node.kwargs["value"]
-    if op_spec.name == "full_like" and "fill_value" in node.kwargs:
-        if value is not None:
-            raise RefBackendError(
-                f"codegen {op_spec.name} expects a single scalar value"
-            )
-        value = node.kwargs["fill_value"]
     if op_spec.name == "full_like":
         allowed = {
-            "value",
             "fill_value",
+            "value",
             "dtype",
             "layout",
             "device",
@@ -6100,22 +6094,73 @@ def _handle_fill_node(
             raise RefBackendError(
                 f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
             )
+        if "fill_value" in node.kwargs:
+            if value is not None:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects a single scalar value"
+                )
+            value = node.kwargs["fill_value"]
+        if "value" in node.kwargs:
+            if value is not None:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects a single scalar value"
+                )
+            value = node.kwargs["value"]
         dtype = node.kwargs.get("dtype")
+        if isinstance(dtype, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects dtype to be a constant"
+            )
         if dtype is not None and dtype is not dtype_info.torch_dtype:
             raise RefBackendError(
                 f"codegen {op_spec.name} expects dtype to match the graph dtype"
             )
-        for name in ("layout", "device", "memory_format"):
-            value_kw = node.kwargs.get(name)
-            if value_kw is not None:
-                raise RefBackendError(
-                    f"codegen {op_spec.name} expects {name} to be None"
-                )
+        layout = node.kwargs.get("layout")
+        if isinstance(layout, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects layout to be a constant"
+            )
+        if layout is not None and layout is not torch.strided:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects layout to be None or torch.strided"
+            )
+        device = node.kwargs.get("device")
+        if isinstance(device, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects device to be a constant"
+            )
+        if device is not None and device != "cpu" and device != torch.device("cpu"):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects device to be None or cpu"
+            )
         pin_memory = node.kwargs.get("pin_memory")
+        if isinstance(pin_memory, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects pin_memory to be a constant"
+            )
         if pin_memory not in (None, False):
             raise RefBackendError(
                 f"codegen {op_spec.name} expects pin_memory to be False"
             )
+        memory_format = node.kwargs.get("memory_format")
+        if isinstance(memory_format, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects memory_format to be a constant"
+            )
+        if memory_format not in (
+            None,
+            torch.contiguous_format,
+            torch.preserve_format,
+        ):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects memory_format to be None, "
+                "torch.contiguous_format, or torch.preserve_format"
+            )
+        if memory_format in (None, torch.preserve_format):
+            if strides[input_arg] != _contiguous_strides(shapes[input_arg]):
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects contiguous input when memory_format preserves format"
+                )
     elif node.kwargs and set(node.kwargs) != {"value"}:
         raise RefBackendError(
             f"codegen {op_spec.name} expects only 'value' as a keyword argument"
