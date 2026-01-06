@@ -514,12 +514,14 @@ def _is_integer_dtype(dtype: torch.dtype) -> bool:
 
 
 def _format_scalar_literal(value: float, dtype: _CodegenDType) -> str:
+    if dtype.torch_dtype is torch.bool:
+        return str(int(value))
     if _is_integer_dtype(dtype.torch_dtype):
         return str(int(value))
     if dtype.torch_dtype is torch.float32:
         return f"{float(value)}f"
     raise RefBackendError(
-        "codegen addmm-like ops support only floating point tensors"
+        "codegen addmm-like ops support only floating point or integer tensors"
     )
 
 
@@ -2512,6 +2514,22 @@ def _normalize_reduction_dims(
         raise RefBackendError(
             f"codegen {op_name} expects dim to be an int or tuple of ints"
         )
+    if rank == 0:
+        dims = dim if isinstance(dim, (tuple, list)) else (dim,)
+        for item in dims:
+            if isinstance(item, torch.fx.Node):
+                raise RefBackendError(
+                    f"codegen {op_name} expects dim to be an int or tuple of ints"
+                )
+            try:
+                dim_value = operator.index(item)
+            except TypeError as exc:
+                raise RefBackendError(
+                    f"codegen {op_name} expects dim to be an int or tuple of ints"
+                ) from exc
+            if dim_value not in (-1, 0):
+                raise RefBackendError(f"codegen {op_name} dim is out of range")
+        return ()
     if isinstance(dim, (tuple, list)):
         dims = dim
     else:
@@ -3054,6 +3072,17 @@ def _parse_addmm_like_scalar(
         raise RefBackendError(
             f"codegen {op_name} expects {name} to be a number"
         ) from exc
+
+
+def _validate_addmm_like_scalars(
+    op_name: str, dtype: torch.dtype, alpha: float, beta: float
+) -> None:
+    if dtype in _INTEGER_CODEGEN_DTYPES or dtype is torch.bool:
+        for name, value in (("alpha", alpha), ("beta", beta)):
+            if not float(value).is_integer():
+                raise RefBackendError(
+                    f"codegen {op_name} expects {name} to be an integer for integral tensors"
+                )
 
 
 def _parse_addmm_like_args(
@@ -3841,14 +3870,11 @@ def _handle_addmm_like_node(
             raise _error_expected_tensor(op_name)
         input_shapes.append(shapes[arg])
     input_dtypes = [dtypes[arg] for arg in input_nodes]
-    if dtype_info.torch_dtype is not torch.float32:
-        raise RefBackendError(
-            f"codegen {op_name} supports only torch.float32 tensors"
-        )
     if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
         raise RefBackendError(
             f"codegen {op_name} expects inputs to share the graph dtype"
         )
+    _validate_addmm_like_scalars(op_name, dtype_info.torch_dtype, alpha, beta)
     output_shape = _infer_output_shape(op_spec, input_shapes)
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
