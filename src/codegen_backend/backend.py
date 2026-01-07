@@ -43,6 +43,7 @@ from codegen_backend.analysis_helpers import (
 from codegen_backend.backend_helpers import _kernel_inputs
 from codegen_backend.compiler import Compiler
 from codegen_backend.emitter import Emitter
+from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.graph_builder import GraphBuilder
 from codegen_backend.ops_parsing import _parse_where_inputs
 from codegen_backend.parser import Parser
@@ -2703,6 +2704,9 @@ class CodegenBackend:
         self._supported_ops: Dict[str, _OpSpec] | None = None
         self._target_registry: Dict[object, "_TargetInfo"] | None = None
         self._kind_handlers: Dict[OpKind, "OpKindHandler"] | None = None
+        self._kind_handler_registrations: Dict[
+            OpKind, KindHandlerRegistration
+        ] | None = None
         self._analysis_service = (
             analysis_service
             if analysis_service is not None
@@ -2720,6 +2724,7 @@ class CodegenBackend:
         self._emitter = Emitter(
             templates_env=lambda: self.templates_env,
             kind_handlers=lambda: self.kind_handlers,
+            kind_handler_registrations=lambda: self.kind_handler_registrations,
         )
         self._compiler = Compiler(self._graph_builder, self._emitter)
         self._context_provider = BackendContextProvider(self)
@@ -2743,6 +2748,14 @@ class CodegenBackend:
                 self._context_provider
             )
         return self._kind_handlers
+
+    @property
+    def kind_handler_registrations(self) -> Dict[OpKind, KindHandlerRegistration]:
+        if self._kind_handler_registrations is None:
+            self._kind_handler_registrations = (
+                self.group_registry.merged_kind_handler_registrations()
+            )
+        return self._kind_handler_registrations
 
     @property
     def analysis_service(self) -> GraphAnalysisService:

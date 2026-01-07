@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from importlib import metadata
 from typing import Dict, Iterable, List, Sequence
 
+from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.groups.analysis import GroupAnalyzer
 from codegen_backend.groups.base import OperatorGroupDefinition
 from codegen_backend.kinds import HandlerContextProvider, OpKindHandler
@@ -45,6 +46,14 @@ class GroupRegistry:
         merged: Dict[object, _TargetInfo] = {}
         for group in self.groups:
             merged.update(group.target_registry())
+        return merged
+
+    def merged_kind_handler_registrations(
+        self,
+    ) -> Dict[OpKind, KindHandlerRegistration]:
+        merged: Dict[OpKind, KindHandlerRegistration] = {}
+        for group in self.groups:
+            merged.update(group.kind_handler_registrations())
         return merged
 
 
