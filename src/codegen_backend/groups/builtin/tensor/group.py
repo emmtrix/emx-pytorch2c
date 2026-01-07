@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Mapping, Sequence
 
+from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.groups.base import OperatorGroupDefinition
 from codegen_backend.groups.builtin.tensor.analyzer import TensorAnalyzer
 from codegen_backend.groups.builtin.tensor import handlers
@@ -12,7 +13,7 @@ from codegen_backend.groups.builtin.tensor.registry import (
 )
 from codegen_backend.kinds import OpKindHandlerFactory
 from codegen_backend.registry import _TargetInfo
-from codegen_backend.specs import _OpSpec
+from codegen_backend.specs import OpKind, _OpSpec
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,11 @@ class TensorGroup(OperatorGroupDefinition):
 
     def kind_handler_factories(self) -> List[OpKindHandlerFactory]:
         return [handlers.TensorKindHandlerFactory()]
+
+    def build_kind_handler_registrations(
+        self,
+    ) -> Mapping[OpKind, KindHandlerRegistration]:
+        return handlers.build_kind_handler_registrations()
 
     def build_supported_ops(self) -> Mapping[str, _OpSpec]:
         return build_supported_ops()

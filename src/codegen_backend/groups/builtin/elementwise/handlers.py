@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Callable, Dict, List, Sequence, TYPE_CHECKING, Tuple
 
 import torch
 import torch.fx
 
+from codegen_backend import shape_utils
 from codegen_backend.c_types import _normalize_scalar_value
 from codegen_backend.dtypes import _CodegenDType, _INTEGER_CODEGEN_DTYPES
 from codegen_backend.emitters.elementwise import (
@@ -12,13 +13,12 @@ from codegen_backend.emitters.elementwise import (
     _PARAMETRIC_UNARY_OPS,
     ElementwiseEmitter,
 )
-from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.errors import CodegenBackendError
-from codegen_backend.graph import _OpNode
+from codegen_backend.graph import _GenericGraph, _OpNode
 from codegen_backend.indexing import _contiguous_strides
 from codegen_backend.kinds import (
-    ElementwiseHandler,
     ElementwiseContext,
+    HandlerContext,
     HandlerContextProvider,
     OpKindHandler,
     OpKindHandlerFactory,
@@ -32,6 +32,10 @@ from codegen_backend.groups.builtin.elementwise.analysis import (
     parse_parametric_unary_args,
     parse_where_inputs,
 )
+
+if TYPE_CHECKING:
+    from codegen_backend.emitters.base import KindEmitter
+    from codegen_backend.emitters.registry import KindHandlerRegistration
 
 
 _BITWISE_OPS = {
@@ -48,6 +52,82 @@ _BITWISE_BOOL_OPS = {
     "bitwise_xor",
     "bitwise_not",
 }
+
+
+class ElementwiseHandler(OpKindHandler):
+    def __init__(
+        self,
+        context: HandlerContext,
+        emitter: "KindEmitter | None",
+        elementwise_kind: str,
+        builder: Callable[
+            [
+                "torch.fx.Node",
+                "_OpSpec",
+                "_CodegenDType | None",
+                Dict["torch.fx.Node", Tuple[int, ...]],
+                Dict["torch.fx.Node", Tuple[int, ...]],
+                Dict["torch.fx.Node", "torch.dtype"],
+                Dict["torch.fx.Node", object],
+                int | None,
+            ],
+            OpNodeBuildResult | None,
+        ]
+        | None = None,
+    ) -> None:
+        super().__init__(context, emitter, builder)
+        self._elementwise_kind = elementwise_kind
+
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        signature_kind = "unary"
+        if self._elementwise_kind == "binary":
+            signature_kind = (
+                "binary_scalar"
+                if "scalar" in op_node.params
+                else "binary"
+            )
+        elif self._elementwise_kind == "where":
+            signature_kind = "where"
+        params = {
+            "elementwise_kind": self._elementwise_kind,
+            "signature_kind": signature_kind,
+        }
+        return self._emit_standard(
+            node_index, op_node, graph, params=params
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        op_spec = op_node.spec
+        if op_spec.kind == OpKind.BINARY:
+            if op_spec.name == "copy":
+                output_shape = input_shapes[0]
+                broadcast_shape = shape_utils.broadcast_output_shape(
+                    op_spec.name, *input_shapes
+                )
+                if broadcast_shape != output_shape:
+                    raise CodegenBackendError(
+                        "codegen copy expects source to be broadcastable to the destination"
+                    )
+                return output_shape
+            return shape_utils.broadcast_output_shape(
+                op_spec.name, *input_shapes
+            )
+        if op_spec.kind == OpKind.WHERE:
+            return shape_utils.broadcast_output_shape(
+                op_spec.name, *input_shapes
+            )
+        if op_spec.kind in {OpKind.UNARY, OpKind.FILL}:
+            return input_shapes[0]
+        raise NotImplementedError(
+            "Shape inference not implemented for kind "
+            f"'{op_spec.kind.value}'."
+        )
 
 
 class _BackendElementwiseHandler(ElementwiseHandler):
@@ -387,7 +467,9 @@ class ElementwiseKindHandlerFactory:
         return build_handlers(context_provider.elementwise)
 
 
-def build_kind_handler_registrations() -> Dict[OpKind, KindHandlerRegistration]:
+def build_kind_handler_registrations() -> Dict[OpKind, "KindHandlerRegistration"]:
+    from codegen_backend.emitters.registry import KindHandlerRegistration
+
     return {
         OpKind.BINARY: KindHandlerRegistration(
             _BackendElementwiseHandler, ElementwiseEmitter

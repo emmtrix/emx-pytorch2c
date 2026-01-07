@@ -32,25 +32,16 @@ from codegen_backend.groups.builtin.tensor.parsing import (
     parse_resize_size,
 )
 from codegen_backend.groups.registry import get_group_registry
-from codegen_backend.kinds import (
-    ConvContext,
-    ElementwiseContext,
-    EmbeddingContext,
-    HandlerContextProvider,
-    OpNodeBuildResult,
-    PoolingContext,
-    ReductionContext,
-    TensorContext,
-)
+from codegen_backend.kinds import OpNodeBuildResult
 from codegen_backend.analysis_helpers import (
     channels_last_3d_strides,
     channels_last_strides,
     normalize_as_strided_sequence,
     resolve_scalar_arg,
 )
-from codegen_backend.backend_helpers import _kernel_inputs
 from codegen_backend.compiler import Compiler
 from codegen_backend.emitter import Emitter
+from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.graph_builder import GraphBuilder
 from codegen_backend.ops_parsing import _parse_where_inputs
 from codegen_backend.parser import Parser
@@ -1487,86 +1478,6 @@ def _handle_resize_node(
         raise CodegenBackendError("Unsupported memory formatPreserve")
     strides[node] = output_strides
     return op_node
-
-
-
-
-class _BackendKernelContext:
-    def __init__(self, backend: "CodegenBackend") -> None:
-        self._backend = backend
-
-    @property
-    def analysis_service(self) -> GraphAnalysisService:
-        return self._backend.analysis_service
-
-    def kernel_inputs(self, op_node: _OpNode) -> List[torch.fx.Node]:
-        return _kernel_inputs(op_node)
-
-
-class _BackendElementwiseContext(_BackendKernelContext):
-    pass
-
-
-class _BackendReductionContext(_BackendKernelContext):
-    def __init__(self, backend: "CodegenBackend") -> None:
-        super().__init__(backend)
-        self._arg_parser = ReductionsArgParser()
-
-    @property
-    def arg_parser(self) -> ReductionsArgParser:
-        return self._arg_parser
-
-
-class _BackendPoolingContext(_BackendKernelContext):
-    pass
-
-
-class _BackendConvContext(_BackendKernelContext):
-    pass
-
-
-class _BackendEmbeddingContext(_BackendKernelContext):
-    pass
-
-
-class _BackendTensorContext(_BackendKernelContext):
-    pass
-
-
-class BackendContextProvider(HandlerContextProvider):
-    def __init__(self, backend: "CodegenBackend") -> None:
-        self._elementwise = _BackendElementwiseContext(backend)
-        self._reductions = _BackendReductionContext(backend)
-        self._pooling = _BackendPoolingContext(backend)
-        self._conv = _BackendConvContext(backend)
-        self._embedding = _BackendEmbeddingContext(backend)
-        self._tensor = _BackendTensorContext(backend)
-
-    @property
-    def elementwise(self) -> ElementwiseContext:
-        return self._elementwise
-
-    @property
-    def reductions(self) -> ReductionContext:
-        return self._reductions
-
-    @property
-    def pooling(self) -> PoolingContext:
-        return self._pooling
-
-    @property
-    def conv(self) -> ConvContext:
-        return self._conv
-
-    @property
-    def embedding(self) -> EmbeddingContext:
-        return self._embedding
-
-    @property
-    def tensor(self) -> TensorContext:
-        return self._tensor
-
-
 class CodegenBackend:
     def __init__(
         self,
@@ -1584,6 +1495,9 @@ class CodegenBackend:
         self._supported_ops: Dict[str, _OpSpec] | None = None
         self._target_registry: Dict[object, "_TargetInfo"] | None = None
         self._kind_handlers: Dict[OpKind, "OpKindHandler"] | None = None
+        self._kind_handler_registrations: Dict[
+            OpKind, KindHandlerRegistration
+        ] | None = None
         self._analysis_service = (
             analysis_service
             if analysis_service is not None
@@ -1601,9 +1515,10 @@ class CodegenBackend:
         self._emitter = Emitter(
             templates_env=lambda: self.templates_env,
             kind_handlers=lambda: self.kind_handlers,
+            kind_handler_registrations=lambda: self.kind_handler_registrations,
         )
         self._compiler = Compiler(self._graph_builder, self._emitter)
-        self._context_provider = BackendContextProvider(self)
+        self._context_provider = self.group_registry.build_context_provider(self)
 
     @property
     def supported_ops(self) -> Dict[str, _OpSpec]:
@@ -1624,6 +1539,14 @@ class CodegenBackend:
                 self._context_provider
             )
         return self._kind_handlers
+
+    @property
+    def kind_handler_registrations(self) -> Dict[OpKind, KindHandlerRegistration]:
+        if self._kind_handler_registrations is None:
+            self._kind_handler_registrations = (
+                self.group_registry.merged_kind_handler_registrations()
+            )
+        return self._kind_handler_registrations
 
     @property
     def analysis_service(self) -> GraphAnalysisService:

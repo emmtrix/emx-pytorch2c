@@ -8,6 +8,7 @@ import torch.fx
 from codegen_backend.backend_helpers import _kernel_inputs, _resolve_alias
 from codegen_backend.c_types import _dtype_to_c_type, _input_c_type
 from codegen_backend.emitters.base import _format_array_suffix
+from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.graph import _GenericGraph
 from codegen_backend.kinds import OpKind, OpKindHandler
@@ -19,9 +20,18 @@ class Emitter:
         *,
         templates_env: Callable[[], object],
         kind_handlers: Callable[[], Dict[OpKind, OpKindHandler]],
+        kind_handler_registrations: Callable[
+            [], Dict[OpKind, KindHandlerRegistration]
+        ]
+        | None = None,
     ) -> None:
         self._templates_env = templates_env
         self._kind_handlers = kind_handlers
+        self._kind_handler_registrations = (
+            kind_handler_registrations
+            if kind_handler_registrations is not None
+            else lambda: {}
+        )
 
     def emit(self, graph: _GenericGraph) -> str:
         return self._write_generic_source(graph)
@@ -39,6 +49,12 @@ class Emitter:
         for index, op_node in enumerate(op_nodes, start=1):
             handler = kind_handlers.get(op_node.spec.kind)
             if handler is None:
+                registrations = self._kind_handler_registrations()
+                if op_node.spec.kind in registrations:
+                    raise CodegenBackendError(
+                        "codegen backend did not build handler for kind "
+                        f"'{op_node.spec.kind.value}'"
+                    )
                 raise CodegenBackendError(
                     "codegen backend does not support kind "
                     f"'{op_node.spec.kind.value}'"
