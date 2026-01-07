@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, List
 
 from codegen_backend.groups.analysis import GroupAnalyzer
+from codegen_backend.groups.base import OperatorGroupDefinition
 from codegen_backend.kinds import HandlerContextProvider, OpKindHandler
 from codegen_backend.registry import _TargetInfo
 from codegen_backend.specs import OpKind, _OpSpec
@@ -11,9 +12,9 @@ from codegen_backend.specs import OpKind, _OpSpec
 
 @dataclass(frozen=True)
 class GroupRegistry:
-    groups: List[object]
+    groups: List[OperatorGroupDefinition]
 
-    def register(self, group: object) -> "GroupRegistry":
+    def register(self, group: OperatorGroupDefinition) -> "GroupRegistry":
         return GroupRegistry(groups=[*self.groups, group])
 
     def build_kind_handlers(
@@ -28,7 +29,9 @@ class GroupRegistry:
     def build_group_analyzers(self) -> List[GroupAnalyzer]:
         analyzers: List[GroupAnalyzer] = []
         for group in self.groups:
-            analyzers.extend(group.analyzers())
+            supported_ops = group.supported_ops()
+            target_registry = group.target_registry()
+            analyzers.extend(group.build_analyzers(supported_ops, target_registry))
         return analyzers
 
     def merged_supported_ops(self) -> Dict[object, _OpSpec]:

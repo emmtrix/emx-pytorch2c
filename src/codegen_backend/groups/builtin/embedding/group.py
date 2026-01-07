@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Mapping, Sequence
 
-from codegen_backend.groups.analysis import GroupAnalyzer
+from codegen_backend.groups.base import OperatorGroupDefinition
 from codegen_backend.groups.builtin.embedding.analyzer import EmbeddingAnalyzer
 from codegen_backend.groups.builtin.embedding import handlers
 from codegen_backend.groups.builtin.embedding.registry import (
@@ -16,21 +16,25 @@ from codegen_backend.specs import _OpSpec
 
 
 @dataclass(frozen=True)
-class EmbeddingGroup:
+class EmbeddingGroup(OperatorGroupDefinition):
     name: str = "embedding"
 
     def kind_handler_factories(self) -> List[OpKindHandlerFactory]:
         return [handlers.EmbeddingKindHandlerFactory()]
 
-    def supported_ops(self) -> Mapping[str, _OpSpec]:
+    def build_supported_ops(self) -> Mapping[str, _OpSpec]:
         return build_supported_ops()
 
-    def target_registry(self) -> Mapping[object, _TargetInfo]:
-        return build_target_registry(self.supported_ops())
+    def build_target_registry(
+        self, supported_ops: Mapping[str, _OpSpec]
+    ) -> Mapping[object, _TargetInfo]:
+        return build_target_registry(supported_ops)
 
-    def analyzers(self) -> Sequence[GroupAnalyzer]:
-        supported_ops = self.supported_ops()
-        target_registry = build_target_registry(supported_ops)
+    def build_analyzers(
+        self,
+        supported_ops: Mapping[str, _OpSpec],
+        target_registry: Mapping[object, _TargetInfo],
+    ) -> Sequence[EmbeddingAnalyzer]:
         return [EmbeddingAnalyzer(supported_ops, target_registry)]
 
 
