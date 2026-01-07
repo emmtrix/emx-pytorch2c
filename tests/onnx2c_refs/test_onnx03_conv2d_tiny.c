@@ -3,12 +3,12 @@
 #include "ops_scalar_f32.h"
 
 static const float weight_Conv_weight[9] = {
-    0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
-    0.0f
+    0x0.0p+0f, 0x0.0p+0f, 0x0.0p+0f, 0x0.0p+0f, 0x1.000000p+0f, 0x0.0p+0f, 0x0.0p+0f, 0x0.0p+0f,
+    0x0.0p+0f
 };
 
 static const float weight_Conv_bias[1] = {
-    0.0f
+    0x0.0p+0f
 };
 
 void node1_conv2d_f32(const float input[1][1][5][5], const float weight[1][1][3][3], const float bias[1], float out[1][1][3][3]) {

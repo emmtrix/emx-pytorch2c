@@ -3,7 +3,7 @@
 #include "ops_scalar_f32.h"
 
 static const float weight_initializers_onnx_initializer_0[4] = {
-    0.10000000149011612f, -0.20000000298023224f, 0.30000001192092896f, 0.0f
+    0x1.4ccccdp-4f, -0x1.4ccccdp-3f, 0x1.19999ap-2f, 0x0.0p+0f
 };
 
 void node1_add_f32(const float a[1][4], const float b[4], float out[1][4]) {
