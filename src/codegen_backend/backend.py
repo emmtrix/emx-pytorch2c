@@ -754,66 +754,98 @@ def _parse_argminmax_args(
     return (dim_value,), keepdim, False
 
 
-def _parse_constant_float(op_name: str, name: str, value: object) -> float:
+def _constant_error_message(
+    op_name: str, name: str, expected_type: type, *, node_error: bool = False
+) -> str:
+    if expected_type is int:
+        return f"codegen {op_name} expects {name} to be an int"
+    if expected_type is bool:
+        return f"codegen {op_name} expects {name} to be a bool"
+    if expected_type is float:
+        if node_error:
+            return f"codegen {op_name} expects {name} to be constant"
+        return f"codegen {op_name} expects {name} to be numeric"
+    raise ValueError(f"Unsupported expected type: {expected_type}")
+
+
+def resolve_node_constant(
+    value: object,
+    expected_type: type,
+    *,
+    fallback_meta_keys: Tuple[str, ...] = ("val", "example_value"),
+    allow_scalar_tensor: bool = False,
+    op_name: str,
+    name: str,
+) -> object:
+    type_error_message = _constant_error_message(op_name, name, expected_type)
+    node_error_message = _constant_error_message(
+        op_name, name, expected_type, node_error=True
+    )
     if isinstance(value, torch.fx.Node):
-        raise CodegenBackendError(f"codegen {op_name} expects {name} to be constant")
-    if isinstance(value, bool):
-        return float(value)
-    if isinstance(value, (int, float)):
-        return float(value)
-    raise CodegenBackendError(f"codegen {op_name} expects {name} to be numeric")
+        for key in fallback_meta_keys:
+            if key in value.meta:
+                value = value.meta[key]
+                break
+        else:
+            keys_list = ", ".join(fallback_meta_keys)
+            raise CodegenBackendError(
+                f"{node_error_message}; missing node.meta for keys: {keys_list}"
+            )
+    if allow_scalar_tensor and isinstance(value, torch.Tensor):
+        if value.numel() != 1:
+            raise CodegenBackendError(type_error_message)
+        value = value.item()
+    if expected_type is int:
+        if isinstance(value, bool):
+            raise CodegenBackendError(type_error_message)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError as exc:
+                raise CodegenBackendError(type_error_message) from exc
+        if isinstance(value, float):
+            if value.is_integer():
+                return int(value)
+            raise CodegenBackendError(type_error_message)
+        try:
+            return operator.index(value)
+        except TypeError as exc:
+            raise CodegenBackendError(type_error_message) from exc
+    if expected_type is bool:
+        if isinstance(value, bool):
+            return value
+        raise CodegenBackendError(type_error_message)
+    if expected_type is float:
+        if isinstance(value, bool):
+            return float(value)
+        if isinstance(value, (int, float)):
+            return float(value)
+        raise CodegenBackendError(type_error_message)
+    raise ValueError(f"Unsupported expected type: {expected_type}")
+
+
+def _parse_constant_float(op_name: str, name: str, value: object) -> float:
+    return resolve_node_constant(value, float, op_name=op_name, name=name)
 
 
 def _parse_constant_int(op_name: str, name: str, value: object) -> int:
-    if isinstance(value, torch.fx.Node):
-        meta_value = value.meta.get("val") or value.meta.get("example_value")
-        if meta_value is None:
-            raise CodegenBackendError(f"codegen {op_name} expects {name} to be an int")
-        return _parse_constant_int(op_name, name, meta_value)
-    if isinstance(value, bool):
-        raise CodegenBackendError(f"codegen {op_name} expects {name} to be an int")
-    if isinstance(value, torch.Tensor):
-        if value.numel() != 1:
-            raise CodegenBackendError(f"codegen {op_name} expects {name} to be an int")
-        return _parse_constant_int(op_name, name, value.item())
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError as exc:
-            raise CodegenBackendError(
-                f"codegen {op_name} expects {name} to be an int"
-            ) from exc
-    if isinstance(value, float):
-        if value.is_integer():
-            return int(value)
-        raise CodegenBackendError(f"codegen {op_name} expects {name} to be an int")
-    try:
-        return operator.index(value)
-    except TypeError as exc:
-        raise CodegenBackendError(
-            f"codegen {op_name} expects {name} to be an int"
-        ) from exc
+    return resolve_node_constant(
+        value,
+        int,
+        allow_scalar_tensor=True,
+        op_name=op_name,
+        name=name,
+    )
 
 
 def _parse_constant_bool(op_name: str, name: str, value: object) -> bool:
-    if isinstance(value, torch.fx.Node):
-        meta_value = value.meta.get("val") or value.meta.get("example_value")
-        if meta_value is None:
-            raise CodegenBackendError(
-                f"codegen {op_name} expects {name} to be a bool"
-            )
-        return _parse_constant_bool(op_name, name, meta_value)
-    if isinstance(value, torch.Tensor):
-        if value.numel() != 1:
-            raise CodegenBackendError(
-                f"codegen {op_name} expects {name} to be a bool"
-            )
-        return _parse_constant_bool(op_name, name, value.item())
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, numbers.Integral) and value in (0, 1):
-        return bool(value)
-    raise CodegenBackendError(f"codegen {op_name} expects {name} to be a bool")
+    return resolve_node_constant(
+        value,
+        bool,
+        allow_scalar_tensor=True,
+        op_name=op_name,
+        name=name,
+    )
 
 
 def _parse_bitwise_scalar(
