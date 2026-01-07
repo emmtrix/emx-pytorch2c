@@ -102,14 +102,14 @@ def _get_group_registry():
 def _get_supported_ops() -> Dict[str, _OpSpec]:
     global _SUPPORTED_OPS
     if _SUPPORTED_OPS is None:
-        _SUPPORTED_OPS = _get_group_registry().build_supported_ops()
+        _SUPPORTED_OPS = _get_group_registry().merged_supported_ops()
     return _SUPPORTED_OPS
 
 
 def _get_target_registry() -> Dict[object, "_TargetInfo"]:
     global _TARGET_REGISTRY
     if _TARGET_REGISTRY is None:
-        _TARGET_REGISTRY = _get_group_registry().build_target_registry()
+        _TARGET_REGISTRY = _get_group_registry().merged_target_registry()
     return _TARGET_REGISTRY
 
 

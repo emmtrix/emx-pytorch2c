@@ -27,7 +27,7 @@ from codegen_backend.specs import OpKind, _OpSpec
 
 
 @dataclass(frozen=True)
-class LegacyGroup:
+class LegacyBackendGroup:
     name: str = "legacy"
 
     def kind_handlers(
@@ -103,13 +103,14 @@ class LegacyGroup:
         )
         return kind_handlers
 
-    @property
-    def supported_ops(self) -> Mapping[str, _OpSpec]:
+    def supported_ops(self) -> Mapping[object, _OpSpec]:
         return SUPPORTED_OPS
 
-    @property
     def target_registry(self) -> Mapping[object, _TargetInfo]:
         return TARGET_REGISTRY
 
 
-__all__ = ["LegacyGroup"]
+OperatorGroup = LegacyBackendGroup
+
+
+__all__ = ["LegacyBackendGroup", "OperatorGroup"]
