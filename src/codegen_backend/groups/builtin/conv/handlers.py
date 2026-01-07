@@ -25,7 +25,7 @@ from codegen_backend.kinds import (
 from codegen_backend.param_normalize import normalize_int_or_pair, normalize_int_or_tuple, normalize_padding
 from codegen_backend.specs import OpKind, _OpSpec
 from codegen_backend.analysis_helpers import normalize_param
-from codegen_backend.groups.builtin.conv.analysis import (
+from codegen_backend.groups.builtin.conv.parsing import (
     parse_conv1d_args,
     parse_conv2d_args,
 )

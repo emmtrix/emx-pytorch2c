@@ -22,7 +22,7 @@ from codegen_backend.kinds import (
     OpNodeBuildResult,
 )
 from codegen_backend.specs import OpKind, _OpSpec
-from codegen_backend.groups.builtin.embedding.analysis import (
+from codegen_backend.groups.builtin.embedding.parsing import (
     parse_embedding_args,
     parse_embedding_bag_args,
 )

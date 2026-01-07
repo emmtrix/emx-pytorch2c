@@ -72,6 +72,8 @@ from codegen_backend.groups.builtin.tensor.analysis import (
     handle_pdist_node,
     handle_resize_node,
     handle_view_node,
+)
+from codegen_backend.groups.builtin.tensor.parsing import (
     parse_arange_dtype,
     parse_concat_args,
     parse_empty_strided_stride,
