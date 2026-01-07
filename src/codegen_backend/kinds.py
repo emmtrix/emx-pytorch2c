@@ -43,6 +43,38 @@ class KindHandler(ABC):
     def __init__(self, context: HandlerContext) -> None:
         self._ctx = context
 
+    def _make_standard_request(
+        self,
+        node_index: int,
+        op_node: _OpNode,
+        graph: _GenericGraph,
+        *,
+        inputs: Sequence["torch.fx.Node"] | None = None,
+        params: Dict[str, object] | None = None,
+    ) -> KernelEmitRequest:
+        resolved_inputs = (
+            list(inputs) if inputs is not None else self._ctx.kernel_inputs(op_node)
+        )
+        req = _make_request(node_index, op_node, graph, resolved_inputs)
+        if params:
+            req.params.update(params)
+        return req
+
+    def _emit_standard(
+        self,
+        kind: str | OpKind,
+        node_index: int,
+        op_node: _OpNode,
+        graph: _GenericGraph,
+        *,
+        inputs: Sequence["torch.fx.Node"] | None = None,
+        params: Dict[str, object] | None = None,
+    ) -> List[str]:
+        req = self._make_standard_request(
+            node_index, op_node, graph, inputs=inputs, params=params
+        )
+        return self._ctx.emit_kernel(kind, req)
+
     @abstractmethod
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
@@ -430,8 +462,9 @@ class ArangeHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        req = _make_request(node_index, op_node, graph, ())
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(
+            op_node.spec.kind, node_index, op_node, graph, inputs=()
+        )
 
     def infer_output_shape(
         self,
@@ -448,9 +481,7 @@ class ElementwiseHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        kernel_inputs = self._ctx.kernel_inputs(op_node)
-        req = _make_request(node_index, op_node, graph, kernel_inputs)
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
 
     def infer_output_shape(
         self,
@@ -488,9 +519,7 @@ class FlipHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_node = op_node.inputs[0]
-        req = _make_request(node_index, op_node, graph, (input_node,))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
 
     def infer_output_shape(
         self,
@@ -504,9 +533,7 @@ class PadHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_node = op_node.inputs[0]
-        req = _make_request(node_index, op_node, graph, (input_node,))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
 
     def infer_output_shape(
         self,
@@ -535,9 +562,7 @@ class ViewHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_node = op_node.inputs[0]
-        req = _make_request(node_index, op_node, graph, (input_node,))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
 
     def infer_output_shape(
         self,
@@ -569,9 +594,7 @@ class ResizeHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_node = op_node.inputs[0]
-        req = _make_request(node_index, op_node, graph, (input_node,))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
 
     def infer_output_shape(
         self,
@@ -588,8 +611,9 @@ class EmptyStridedHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        req = _make_request(node_index, op_node, graph, ())
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(
+            op_node.spec.kind, node_index, op_node, graph, inputs=()
+        )
 
     def infer_output_shape(
         self,
@@ -606,9 +630,7 @@ class DiagonalHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_node = op_node.inputs[0]
-        req = _make_request(node_index, op_node, graph, (input_node,))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
 
     def infer_output_shape(
         self,
@@ -627,8 +649,7 @@ class ReductionHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_node = op_node.inputs[0]
-        req = _make_request(node_index, op_node, graph, (input_node,))
+        req = self._make_standard_request(node_index, op_node, graph)
         req.reduction_dims = op_node.reduction_dims or ()
         req.keepdim = op_node.keepdim
         if op_node.spec.name in {"std", "var"}:
@@ -654,8 +675,7 @@ class ArgReductionHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_node = op_node.inputs[0]
-        req = _make_request(node_index, op_node, graph, (input_node,))
+        req = self._make_standard_request(node_index, op_node, graph)
         req.reduction_dims = op_node.reduction_dims or ()
         req.keepdim = op_node.keepdim
         req.params["reduce_all"] = bool(op_node.p("reduce_all", False))
@@ -678,10 +698,13 @@ class SoftmaxHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_node = op_node.inputs[0]
-        req = _make_request(node_index, op_node, graph, (input_node,))
-        req.params["dim"] = op_node.p("dim")
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            params={"dim": op_node.p("dim")},
+        )
 
     def infer_output_shape(
         self,
@@ -695,11 +718,16 @@ class CumsumHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_node = op_node.inputs[0]
-        req = _make_request(node_index, op_node, graph, (input_node,))
-        req.params["dim"] = op_node.p("dim")
-        req.params["output_dtype"] = graph.dtypes[op_node.node]
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            params={
+                "dim": op_node.p("dim"),
+                "output_dtype": graph.dtypes[op_node.node],
+            },
+        )
 
     def infer_output_shape(
         self,
@@ -714,11 +742,14 @@ class EmbeddingHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         weight_node, indices_node = op_node.inputs
-        req = _make_request(
-            node_index, op_node, graph, (weight_node, indices_node)
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            inputs=(weight_node, indices_node),
+            params={"padding_idx": int(op_node.p("padding_idx", -1))},
         )
-        req.params["padding_idx"] = int(op_node.p("padding_idx", -1))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -738,18 +769,20 @@ class EmbeddingBagHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         weight_node, indices_node, offsets_node = op_node.inputs
-        req = _make_request(
+        return self._emit_standard(
+            op_node.spec.kind,
             node_index,
             op_node,
             graph,
-            (weight_node, indices_node, offsets_node),
+            inputs=(weight_node, indices_node, offsets_node),
+            params={
+                "mode": int(op_node.p("mode", 0)),
+                "padding_idx": int(op_node.p("padding_idx", -1)),
+                "include_last_offset": bool(
+                    op_node.p("include_last_offset", False)
+                ),
+            },
         )
-        req.params["mode"] = int(op_node.p("mode", 0))
-        req.params["padding_idx"] = int(op_node.p("padding_idx", -1))
-        req.params["include_last_offset"] = bool(
-            op_node.p("include_last_offset", False)
-        )
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -774,10 +807,13 @@ class GatherHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_node, index_node = op_node.inputs
-        req = _make_request(node_index, op_node, graph, (input_node, index_node))
-        req.params["dim"] = int(op_node.p("dim"))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            params={"dim": int(op_node.p("dim"))},
+        )
 
     def infer_output_shape(
         self,
@@ -791,9 +827,13 @@ class ConcatHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        req = _make_request(node_index, op_node, graph, op_node.inputs)
-        req.params["dim"] = op_node.p("dim", 0)
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            params={"dim": op_node.p("dim", 0)},
+        )
 
     def infer_output_shape(
         self,
@@ -816,18 +856,23 @@ class Pool2dHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_node = op_node.inputs[0]
-        req = _make_request(node_index, op_node, graph, (input_node,))
-        req.params["kernel_size"] = op_node.p("kernel_size", (1, 1))
-        req.params["stride"] = op_node.p("stride", (1, 1))
-        req.params["padding"] = op_node.p("padding", (0, 0))
-        req.params["dilation"] = op_node.p("dilation", (1, 1))
-        req.params["ceil_mode"] = bool(op_node.p("ceil_mode", False))
-        req.params["count_include_pad"] = bool(
-            op_node.p("count_include_pad", False)
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            params={
+                "kernel_size": op_node.p("kernel_size", (1, 1)),
+                "stride": op_node.p("stride", (1, 1)),
+                "padding": op_node.p("padding", (0, 0)),
+                "dilation": op_node.p("dilation", (1, 1)),
+                "ceil_mode": bool(op_node.p("ceil_mode", False)),
+                "count_include_pad": bool(
+                    op_node.p("count_include_pad", False)
+                ),
+                "divisor_override": op_node.p("divisor_override"),
+            },
         )
-        req.params["divisor_override"] = op_node.p("divisor_override")
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -848,18 +893,23 @@ class Pool3dHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_node = op_node.inputs[0]
-        req = _make_request(node_index, op_node, graph, (input_node,))
-        req.params["kernel_size"] = op_node.p("kernel_size", (1, 1, 1))
-        req.params["stride"] = op_node.p("stride", (1, 1, 1))
-        req.params["padding"] = op_node.p("padding", (0, 0, 0))
-        req.params["dilation"] = op_node.p("dilation", (1, 1, 1))
-        req.params["ceil_mode"] = bool(op_node.p("ceil_mode", False))
-        req.params["count_include_pad"] = bool(
-            op_node.p("count_include_pad", False)
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            params={
+                "kernel_size": op_node.p("kernel_size", (1, 1, 1)),
+                "stride": op_node.p("stride", (1, 1, 1)),
+                "padding": op_node.p("padding", (0, 0, 0)),
+                "dilation": op_node.p("dilation", (1, 1, 1)),
+                "ceil_mode": bool(op_node.p("ceil_mode", False)),
+                "count_include_pad": bool(
+                    op_node.p("count_include_pad", False)
+                ),
+                "divisor_override": op_node.p("divisor_override"),
+            },
         )
-        req.params["divisor_override"] = op_node.p("divisor_override")
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -880,12 +930,17 @@ class Pool2dBackwardHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         grad_output_node, input_node = op_node.inputs
-        req = _make_request(
-            node_index, op_node, graph, (grad_output_node, input_node)
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            inputs=(grad_output_node, input_node),
+            params={
+                "kernel_size": op_node.p("kernel_size", (1, 1)),
+                "stride": op_node.p("stride", (1, 1)),
+            },
         )
-        req.params["kernel_size"] = op_node.p("kernel_size", (1, 1))
-        req.params["stride"] = op_node.p("stride", (1, 1))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -900,18 +955,23 @@ class Pool1dHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_node = op_node.inputs[0]
-        req = _make_request(node_index, op_node, graph, (input_node,))
-        req.params["kernel_size"] = op_node.p("kernel_size", 1)
-        req.params["stride"] = op_node.p("stride", 1)
-        req.params["padding"] = op_node.p("padding", 0)
-        req.params["dilation"] = op_node.p("dilation", 1)
-        req.params["ceil_mode"] = bool(op_node.p("ceil_mode", False))
-        req.params["count_include_pad"] = bool(
-            op_node.p("count_include_pad", False)
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            params={
+                "kernel_size": op_node.p("kernel_size", 1),
+                "stride": op_node.p("stride", 1),
+                "padding": op_node.p("padding", 0),
+                "dilation": op_node.p("dilation", 1),
+                "ceil_mode": bool(op_node.p("ceil_mode", False)),
+                "count_include_pad": bool(
+                    op_node.p("count_include_pad", False)
+                ),
+                "divisor_override": op_node.p("divisor_override"),
+            },
         )
-        req.params["divisor_override"] = op_node.p("divisor_override")
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -932,16 +992,21 @@ class Col2imHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_node = op_node.inputs[0]
-        req = _make_request(node_index, op_node, graph, (input_node,))
-        req.params["output_size"] = op_node.p("output_size", (1, 1))
-        req.params["kernel_size"] = op_node.p("kernel_size", (1, 1))
-        req.params["dilation"] = op_node.p("dilation", (1, 1))
-        req.params["padding"] = op_node.p("padding", (0, 0))
-        req.params["stride"] = op_node.p("stride", (1, 1))
-        req.params["out_blocks_h"] = op_node.p("out_blocks_h", 1)
-        req.params["out_blocks_w"] = op_node.p("out_blocks_w", 1)
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            params={
+                "output_size": op_node.p("output_size", (1, 1)),
+                "kernel_size": op_node.p("kernel_size", (1, 1)),
+                "dilation": op_node.p("dilation", (1, 1)),
+                "padding": op_node.p("padding", (0, 0)),
+                "stride": op_node.p("stride", (1, 1)),
+                "out_blocks_h": op_node.p("out_blocks_h", 1),
+                "out_blocks_w": op_node.p("out_blocks_w", 1),
+            },
+        )
 
     def infer_output_shape(
         self,
@@ -1003,12 +1068,17 @@ class BatchNormHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_node = op_node.inputs[0]
-        req = _make_request(node_index, op_node, graph, (input_node,))
-        req.params["eps"] = float(op_node.p("eps", 1e-5))
-        req.params["has_weight"] = bool(op_node.p("has_weight", False))
-        req.params["has_bias"] = bool(op_node.p("has_bias", False))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            params={
+                "eps": float(op_node.p("eps", 1e-5)),
+                "has_weight": bool(op_node.p("has_weight", False)),
+                "has_bias": bool(op_node.p("has_bias", False)),
+            },
+        )
 
     def infer_output_shape(
         self,
@@ -1022,9 +1092,7 @@ class PdistHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_node = op_node.inputs[0]
-        req = _make_request(node_index, op_node, graph, (input_node,))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
 
     def infer_output_shape(
         self,
@@ -1043,9 +1111,7 @@ class CdistHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        x1_node, x2_node = op_node.inputs
-        req = _make_request(node_index, op_node, graph, (x1_node, x2_node))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
 
     def infer_output_shape(
         self,
@@ -1073,13 +1139,21 @@ class Conv1dHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, weight_node, *_ = op_node.inputs
-        req = _make_request(node_index, op_node, graph, (input_node, weight_node))
-        req.params["stride"] = op_node.p("stride", 1)
-        req.params["padding"] = op_node.p("padding", 0)
-        req.params["dilation"] = op_node.p("dilation", 1)
-        req.params["groups"] = op_node.p("groups", 1)
-        req.params["has_bias"] = bool(op_node.p("has_bias", False))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        # Only the input and weight tensors are part of the kernel signature.
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            inputs=(input_node, weight_node),
+            params={
+                "stride": op_node.p("stride", 1),
+                "padding": op_node.p("padding", 0),
+                "dilation": op_node.p("dilation", 1),
+                "groups": op_node.p("groups", 1),
+                "has_bias": bool(op_node.p("has_bias", False)),
+            },
+        )
 
     def infer_output_shape(
         self,
@@ -1130,14 +1204,22 @@ class Conv2dHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, weight_node, *_ = op_node.inputs
-        req = _make_request(node_index, op_node, graph, (input_node, weight_node))
-        req.params["transposed"] = bool(op_node.p("transposed", False))
-        req.params["stride"] = op_node.p("stride", (1, 1))
-        req.params["padding"] = op_node.p("padding", (0, 0))
-        req.params["dilation"] = op_node.p("dilation", (1, 1))
-        req.params["groups"] = op_node.p("groups", 1)
-        req.params["has_bias"] = bool(op_node.p("has_bias", False))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        # Only the input and weight tensors are part of the kernel signature.
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            inputs=(input_node, weight_node),
+            params={
+                "transposed": bool(op_node.p("transposed", False)),
+                "stride": op_node.p("stride", (1, 1)),
+                "padding": op_node.p("padding", (0, 0)),
+                "dilation": op_node.p("dilation", (1, 1)),
+                "groups": op_node.p("groups", 1),
+                "has_bias": bool(op_node.p("has_bias", False)),
+            },
+        )
 
     def infer_output_shape(
         self,
@@ -1197,12 +1279,17 @@ class AddmmHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, mat1_node, mat2_node = op_node.inputs
-        req = _make_request(
-            node_index, op_node, graph, (input_node, mat1_node, mat2_node)
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            inputs=(input_node, mat1_node, mat2_node),
+            params={
+                "alpha": float(op_node.p("alpha", 1.0)),
+                "beta": float(op_node.p("beta", 1.0)),
+            },
         )
-        req.params["alpha"] = float(op_node.p("alpha", 1.0))
-        req.params["beta"] = float(op_node.p("beta", 1.0))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1234,12 +1321,17 @@ class AddbmmHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, batch1_node, batch2_node = op_node.inputs
-        req = _make_request(
-            node_index, op_node, graph, (input_node, batch1_node, batch2_node)
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            inputs=(input_node, batch1_node, batch2_node),
+            params={
+                "alpha": float(op_node.p("alpha", 1.0)),
+                "beta": float(op_node.p("beta", 1.0)),
+            },
         )
-        req.params["alpha"] = float(op_node.p("alpha", 1.0))
-        req.params["beta"] = float(op_node.p("beta", 1.0))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1281,12 +1373,17 @@ class AddmvHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, mat_node, vec_node = op_node.inputs
-        req = _make_request(
-            node_index, op_node, graph, (input_node, mat_node, vec_node)
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            inputs=(input_node, mat_node, vec_node),
+            params={
+                "alpha": float(op_node.p("alpha", 1.0)),
+                "beta": float(op_node.p("beta", 1.0)),
+            },
         )
-        req.params["alpha"] = float(op_node.p("alpha", 1.0))
-        req.params["beta"] = float(op_node.p("beta", 1.0))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1320,12 +1417,17 @@ class AddrHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, vec1_node, vec2_node = op_node.inputs
-        req = _make_request(
-            node_index, op_node, graph, (input_node, vec1_node, vec2_node)
+        return self._emit_standard(
+            op_node.spec.kind,
+            node_index,
+            op_node,
+            graph,
+            inputs=(input_node, vec1_node, vec2_node),
+            params={
+                "alpha": float(op_node.p("alpha", 1.0)),
+                "beta": float(op_node.p("beta", 1.0)),
+            },
         )
-        req.params["alpha"] = float(op_node.p("alpha", 1.0))
-        req.params["beta"] = float(op_node.p("beta", 1.0))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1358,9 +1460,7 @@ class MatmulHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        lhs, rhs = op_node.inputs
-        req = _make_request(node_index, op_node, graph, (lhs, rhs))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
 
     def infer_output_shape(
         self,
