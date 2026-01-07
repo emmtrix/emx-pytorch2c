@@ -24,12 +24,6 @@ from codegen_backend.kinds import (
     SoftmaxHandler,
 )
 from codegen_backend.specs import OpKind, _OpSpec
-from codegen_backend.groups.builtin.reductions.analysis import (
-    parse_argminmax_args,
-    parse_norm_args,
-    parse_reduction_args,
-    parse_softmax_args,
-)
 
 
 class _BackendReductionHandler(ReductionHandler):
@@ -68,17 +62,18 @@ class _BackendReductionHandler(ReductionHandler):
                 f"codegen {op_spec.name} expects inputs to share the graph dtype"
             )
         param_values: Dict[str, object] = {}
+        parser = self._ctx.arg_parser
         if op_spec.name == "norm":
             if dtype_info.torch_dtype is not torch.float32:
                 raise CodegenBackendError(
                     "codegen norm supports only torch.float32 tensors"
                 )
-            reduction_dims, keepdim, reduce_all, norm_p = parse_norm_args(
+            reduction_dims, keepdim, reduce_all, norm_p = parser.parse_norm_args(
                 op_spec.name, node, input_shapes[0]
             )
             param_values["norm_p"] = norm_p
         else:
-            reduction_dims, keepdim, reduce_all, unbiased = parse_reduction_args(
+            reduction_dims, keepdim, reduce_all, unbiased = parser.parse_reduction_args(
                 op_spec.name, node, input_shapes[0]
             )
             if unbiased is not None:
@@ -150,7 +145,7 @@ class _BackendArgReductionHandler(ArgReductionHandler):
             raise CodegenBackendError(
                 f"codegen {op_spec.name} expects inputs to share the graph dtype"
             )
-        reduction_dims, keepdim, reduce_all = parse_argminmax_args(
+        reduction_dims, keepdim, reduce_all = self._ctx.arg_parser.parse_argminmax_args(
             op_spec.name, node, input_shapes[0]
         )
         reduction_count = 1
@@ -215,7 +210,9 @@ class _BackendSoftmaxHandler(SoftmaxHandler):
             raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32 tensors"
             )
-        dim, dtype = parse_softmax_args(op_spec.name, node, shapes[input_arg])
+        dim, dtype = self._ctx.arg_parser.parse_softmax_args(
+            op_spec.name, node, shapes[input_arg]
+        )
         if dtype is not None and dtype is not torch.float32:
             raise CodegenBackendError(
                 f"codegen {op_spec.name} expects dtype to be torch.float32 or None"
