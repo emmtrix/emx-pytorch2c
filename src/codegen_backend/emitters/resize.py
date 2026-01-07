@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List
 
-from c_ref_backend.cffi_bindings import RefBackendError
+from codegen_backend.errors import CodegenBackendError
 from codegen_backend.c_types import _input_c_type
 from codegen_backend.emitters.base import (
     KindEmitterBase,
@@ -19,7 +19,7 @@ class ResizeEmitter(KindEmitterBase):
     def emit(self, req: KernelEmitRequest) -> List[str]:
         op_spec = req.op_spec
         if op_spec is None:
-            raise RefBackendError("resize requires op spec")
+            raise CodegenBackendError("resize requires op spec")
         input_shape = req.input_shapes[0]
         input_strides = req.input_strides[0]
         input_dtype = req.input_dtypes[0]

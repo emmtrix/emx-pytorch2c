@@ -4,7 +4,7 @@ from typing import Dict, List, Sequence
 
 import torch
 
-from c_ref_backend.cffi_bindings import RefBackendError
+from codegen_backend.errors import CodegenBackendError
 from codegen_backend.c_types import _format_scalar_literal, _input_c_type
 from codegen_backend.emitters.base import (
     KindEmitterBase,
@@ -36,10 +36,10 @@ class ElementwiseEmitter(KindEmitterBase):
     def emit(self, req: KernelEmitRequest) -> List[str]:
         op_spec = req.op_spec
         if op_spec is None:
-            raise RefBackendError("elementwise requires op spec")
+            raise CodegenBackendError("elementwise requires op spec")
         elementwise_kind = req.params.get("elementwise_kind")
         if elementwise_kind is None:
-            raise RefBackendError("elementwise requires elementwise_kind")
+            raise CodegenBackendError("elementwise requires elementwise_kind")
         elementwise_template = get_template_env().get_template(
             "elementwise_kernel.c.j2"
         )
@@ -176,7 +176,7 @@ class ElementwiseEmitter(KindEmitterBase):
             )
             if op_spec.name in _PARAMETRIC_UNARY_OPS:
                 if req.dtype.torch_dtype is not torch.float32:
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         f"codegen {op_spec.name} supports only torch.float32 tensors"
                     )
                 context.update(

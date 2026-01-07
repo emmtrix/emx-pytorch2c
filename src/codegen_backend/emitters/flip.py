@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List, Sequence
 
-from c_ref_backend.cffi_bindings import RefBackendError
+from codegen_backend.errors import CodegenBackendError
 from codegen_backend.c_types import _input_c_type
 from codegen_backend.emitters.base import (
     KindEmitterBase,
@@ -47,7 +47,7 @@ class FlipEmitter(KindEmitterBase):
     def emit(self, req: KernelEmitRequest) -> List[str]:
         op_spec = req.op_spec
         if op_spec is None:
-            raise RefBackendError("flip requires op spec")
+            raise CodegenBackendError("flip requires op spec")
         input_shape = req.input_shapes[0]
         input_strides = req.input_strides[0]
         input_dtype = req.input_dtypes[0]

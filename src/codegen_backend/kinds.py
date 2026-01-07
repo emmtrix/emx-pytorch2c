@@ -7,7 +7,7 @@ import math
 import numbers
 from typing import TYPE_CHECKING, Callable, Dict, List, Protocol, Sequence, Tuple
 
-from c_ref_backend.cffi_bindings import RefBackendError
+from codegen_backend.errors import CodegenBackendError
 from codegen_backend import shape_utils
 from codegen_backend.specs import OpKind
 
@@ -244,7 +244,7 @@ class OpKindHandler(ABC):
         params: Dict[str, object] | None = None,
     ) -> List[str]:
         if self._emitter is None:
-            raise RefBackendError("codegen handler requires an emitter")
+            raise CodegenBackendError("codegen handler requires an emitter")
         req = self._make_standard_request(
             node_index, op_node, graph, inputs=inputs, params=params
         )
@@ -252,7 +252,7 @@ class OpKindHandler(ABC):
 
     def _emit_request(self, req: KernelEmitRequest) -> List[str]:
         if self._emitter is None:
-            raise RefBackendError("codegen handler requires an emitter")
+            raise CodegenBackendError("codegen handler requires an emitter")
         return self._emitter.emit(req)
 
     def build_op_node(
@@ -345,7 +345,7 @@ def _compute_arange_size(
     step: float | int | bool,
 ) -> int:
     if step == 0:
-        raise RefBackendError("codegen arange expects step to be non-zero")
+        raise CodegenBackendError("codegen arange expects step to be non-zero")
     if all(
         isinstance(value, numbers.Integral) for value in (start, end, step)
     ):
@@ -353,7 +353,7 @@ def _compute_arange_size(
         end_value = int(end)
         step_value = int(step)
         if step_value == 0:
-            raise RefBackendError("codegen arange expects step to be non-zero")
+            raise CodegenBackendError("codegen arange expects step to be non-zero")
         if step_value > 0 and end_value <= start_value:
             return 0
         if step_value < 0 and end_value >= start_value:
@@ -418,7 +418,7 @@ def _unpack_conv2d_input_shape(
     if len(input_shape) == 3:
         in_channels, in_h, in_w = input_shape
         return False, 1, in_channels, in_h, in_w
-    raise RefBackendError("codegen conv2d requires 3D or 4D input tensors")
+    raise CodegenBackendError("codegen conv2d requires 3D or 4D input tensors")
 
 
 def _conv2d_output_shape_from_shapes(
@@ -434,11 +434,11 @@ def _conv2d_output_shape_from_shapes(
     )
     out_channels, weight_in_channels, kernel_h, kernel_w = weight_shape
     if in_channels != weight_in_channels * groups:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen conv2d requires input channels to match weight channels * groups"
         )
     if out_channels % groups != 0:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen conv2d requires output channels to be divisible by groups"
         )
     stride_h, stride_w = stride
@@ -447,7 +447,7 @@ def _conv2d_output_shape_from_shapes(
     numerator_h = in_h + 2 * pad_h - dil_h * (kernel_h - 1) - 1
     numerator_w = in_w + 2 * pad_w - dil_w * (kernel_w - 1) - 1
     if numerator_h < 0 or numerator_w < 0:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen conv2d requires output shape (N, C_out, H_out, W_out)"
         )
     out_h = numerator_h // stride_h + 1
@@ -471,11 +471,11 @@ def _conv2d_transposed_output_shape_from_shapes(
     )
     weight_in_channels, weight_out_channels, kernel_h, kernel_w = weight_shape
     if in_channels != weight_in_channels:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen conv2d requires input channels to match weight channels"
         )
     if in_channels % groups != 0:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen conv2d requires input channels to be divisible by groups"
         )
     out_channels = weight_out_channels * groups
@@ -498,7 +498,7 @@ def _conv2d_transposed_output_shape_from_shapes(
         + 1
     )
     if out_h <= 0 or out_w <= 0:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen conv2d requires output shape (N, C_out, H_out, W_out)"
         )
     if has_batch:
@@ -539,11 +539,11 @@ def _conv2d_validate_channels(
     has_batch, _, in_channels, _, _ = _unpack_conv2d_input_shape(input_shape)
     out_channels, weight_in_channels, _, _ = weight_shape
     if in_channels != weight_in_channels * groups:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen conv2d requires input channels to match weight channels * groups"
         )
     if out_channels % groups != 0:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen conv2d requires output channels to be divisible by groups"
         )
     return has_batch, out_channels
@@ -557,11 +557,11 @@ def _conv1d_validate_channels(
     batch, in_channels, _ = input_shape
     out_channels, weight_in_channels, _ = weight_shape
     if in_channels != weight_in_channels * groups:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen conv1d requires input channels to match weight channels * groups"
         )
     if out_channels % groups != 0:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen conv1d requires output channels to be divisible by groups"
         )
     return batch, out_channels
@@ -599,7 +599,7 @@ def _conv1d_output_shape_from_shapes(
     kernel_l = weight_shape[2]
     numerator = in_l + 2 * padding - dilation * (kernel_l - 1) - 1
     if numerator < 0:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen conv1d requires output shape (N, C_out, L_out)"
         )
     out_l = numerator // stride + 1
@@ -617,7 +617,7 @@ def _pool1d_output_shape_from_shapes(
     batch, channels, in_l = input_shape
     numerator = in_l + 2 * padding - dilation * (kernel_size - 1) - 1
     if numerator < 0:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen pool1d requires output shape (N, C, L_out)"
         )
     if ceil_mode:
@@ -645,7 +645,7 @@ def _pool2d_output_shape_from_shapes(
     numerator_h = in_h + 2 * pad_h - dil_h * (k_h - 1) - 1
     numerator_w = in_w + 2 * pad_w - dil_w * (k_w - 1) - 1
     if numerator_h < 0 or numerator_w < 0:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen pool2d requires output shape (N, C, H_out, W_out)"
         )
     if ceil_mode:
@@ -677,7 +677,7 @@ def _pool3d_output_shape_from_shapes(
     numerator_h = in_h + 2 * pad_h - dil_h * (k_h - 1) - 1
     numerator_w = in_w + 2 * pad_w - dil_w * (k_w - 1) - 1
     if numerator_d < 0 or numerator_h < 0 or numerator_w < 0:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen pool3d requires output shape (N, C, D_out, H_out, W_out)"
         )
     out_d = numerator_d // stride_d + 1
@@ -762,7 +762,7 @@ class ElementwiseHandler(OpKindHandler):
                     op_spec.name, *input_shapes
                 )
                 if broadcast_shape != output_shape:
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         "codegen copy expects source to be broadcastable to the destination"
                     )
                 return output_shape
@@ -810,14 +810,14 @@ class PadHandler(OpKindHandler):
         pad_before = op_node.p("pad_before", ())
         pad_after = op_node.p("pad_after", ())
         if not pad_before or not pad_after:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen constant_pad_nd expects constant padding arguments"
             )
         output_shape = []
         for size, before, after in zip(input_shape, pad_before, pad_after):
             new_size = size + before + after
             if new_size < 0:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen constant_pad_nd expects non-negative output sizes"
                 )
             output_shape.append(new_size)
@@ -838,7 +838,7 @@ class ViewHandler(OpKindHandler):
         if op_node.spec.name == "as_strided":
             size = op_node.p("size", None)
             if size is None:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen as_strided expects size and stride"
                 )
             return tuple(size)
@@ -853,7 +853,7 @@ class ViewHandler(OpKindHandler):
                 for dim, size in enumerate(input_shape)
                 if dim not in remove_dims
             )
-        raise RefBackendError(f"Unsupported view op: {op_node.spec.name}")
+        raise CodegenBackendError(f"Unsupported view op: {op_node.spec.name}")
 
 
 class ResizeHandler(OpKindHandler):
@@ -869,7 +869,7 @@ class ResizeHandler(OpKindHandler):
     ) -> Tuple[int, ...]:
         size = op_node.p("size", None)
         if size is None:
-            raise RefBackendError("codegen resize_ expects a size argument")
+            raise CodegenBackendError("codegen resize_ expects a size argument")
         return tuple(size)
 
 
@@ -888,7 +888,7 @@ class EmptyStridedHandler(OpKindHandler):
     ) -> Tuple[int, ...]:
         size = op_node.p("size", None)
         if size is None:
-            raise RefBackendError("codegen empty_strided expects a size argument")
+            raise CodegenBackendError("codegen empty_strided expects a size argument")
         return tuple(size)
 
 
@@ -1021,7 +1021,7 @@ class EmbeddingHandler(OpKindHandler):
     ) -> Tuple[int, ...]:
         weight_shape, indices_shape = input_shapes
         if len(weight_shape) != 2:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen embedding expects 2D weight tensor"
             )
         return tuple(indices_shape) + (weight_shape[1],)
@@ -1053,11 +1053,11 @@ class EmbeddingBagHandler(OpKindHandler):
     ) -> Tuple[int, ...]:
         weight_shape, _indices_shape, offsets_shape = input_shapes
         if len(weight_shape) != 2:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen _embedding_bag expects 2D weight tensor"
             )
         if len(offsets_shape) != 1:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen _embedding_bag expects 1D offsets tensor"
             )
         include_last_offset = bool(op_node.p("include_last_offset", False))
@@ -1101,7 +1101,7 @@ class ConcatHandler(OpKindHandler):
         input_shapes: Sequence[Tuple[int, ...]],
     ) -> Tuple[int, ...]:
         if not input_shapes:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen cat expects a non-empty tensor list input"
             )
         concat_dim = int(op_node.p("dim", 0))
@@ -1284,7 +1284,7 @@ class Col2imHandler(OpKindHandler):
             batch = 1
             has_batch = False
         if channels_divisor <= 0 or col_channels % channels_divisor != 0:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen col2im expects input channels divisible by kernel_size"
             )
         out_h, out_w = output_pair
@@ -1301,14 +1301,14 @@ class Col2imHandler(OpKindHandler):
             or numerator_h % stride_h != 0
             or numerator_w % stride_w != 0
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen col2im expects output_size to be compatible with kernel_size, dilation, padding, and stride"
             )
         out_blocks_h = numerator_h // stride_h + 1
         out_blocks_w = numerator_w // stride_w + 1
         expected_length = out_blocks_h * out_blocks_w
         if col_length != expected_length:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen col2im expects input length to match output_size and stride"
             )
         op_node.params["out_blocks_h"] = out_blocks_h
@@ -1354,7 +1354,7 @@ class PdistHandler(OpKindHandler):
         input_shapes: Sequence[Tuple[int, ...]],
     ) -> Tuple[int, ...]:
         if len(input_shapes[0]) != 2:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen pdist expects a 2D input tensor"
             )
         n = input_shapes[0][0]
@@ -1373,16 +1373,16 @@ class CdistHandler(OpKindHandler):
         input_shapes: Sequence[Tuple[int, ...]],
     ) -> Tuple[int, ...]:
         if len(input_shapes) < 2:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen cdist expects two input tensors"
             )
         x1_shape, x2_shape = input_shapes[:2]
         if len(x1_shape) != 2 or len(x2_shape) != 2:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen cdist expects 2D input tensors"
             )
         if x1_shape[1] != x2_shape[1]:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen cdist expects matching feature dimensions"
             )
         return (x1_shape[0], x2_shape[0])
@@ -1549,9 +1549,9 @@ class AddmmHandler(OpKindHandler):
     ) -> Tuple[int, ...]:
         input_shape, mat1_shape, mat2_shape = input_shapes
         if len(input_shape) > 2 or len(mat1_shape) != 2 or len(mat2_shape) != 2:
-            raise RefBackendError("codegen addmm expects 2D inputs")
+            raise CodegenBackendError("codegen addmm expects 2D inputs")
         if mat1_shape[1] != mat2_shape[0]:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen addmm requires inner dimensions to match"
             )
         expected_shape = (mat1_shape[0], mat2_shape[1])
@@ -1561,7 +1561,7 @@ class AddmmHandler(OpKindHandler):
             )
             != expected_shape
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen addmm expects input shape to be broadcastable to matmul output"
             )
         return expected_shape
@@ -1594,15 +1594,15 @@ class AddbmmHandler(OpKindHandler):
             or len(batch1_shape) != 3
             or len(batch2_shape) != 3
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen addbmm expects 0-2D input and 3D batches"
             )
         if batch1_shape[0] != batch2_shape[0]:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen addbmm requires batch dimensions to match"
             )
         if batch1_shape[2] != batch2_shape[1]:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen addbmm requires inner dimensions to match"
             )
         expected_shape = (batch1_shape[1], batch2_shape[2])
@@ -1612,7 +1612,7 @@ class AddbmmHandler(OpKindHandler):
             )
             != expected_shape
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen addbmm expects input shape to be broadcastable to bmm output"
             )
         return expected_shape
@@ -1641,11 +1641,11 @@ class AddmvHandler(OpKindHandler):
     ) -> Tuple[int, ...]:
         input_shape, mat_shape, vec_shape = input_shapes
         if len(input_shape) not in (0, 1) or len(mat_shape) != 2 or len(vec_shape) != 1:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen addmv expects a scalar or 1D input and 2D matrix/1D vector"
             )
         if mat_shape[1] != vec_shape[0]:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen addmv requires inner dimensions to match"
             )
         expected_shape = (mat_shape[0],)
@@ -1655,7 +1655,7 @@ class AddmvHandler(OpKindHandler):
             )
             != expected_shape
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen addmv expects input shape to be broadcastable to mat-vec output"
             )
         return expected_shape
@@ -1684,11 +1684,11 @@ class AddrHandler(OpKindHandler):
     ) -> Tuple[int, ...]:
         input_shape, vec1_shape, vec2_shape = input_shapes
         if len(vec1_shape) != 1 or len(vec2_shape) != 1:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen addr expects 1D vectors"
             )
         if len(input_shape) > 2:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen addr expects input with rank <= 2"
             )
         expected_shape = (vec1_shape[0], vec2_shape[0])
@@ -1698,7 +1698,7 @@ class AddrHandler(OpKindHandler):
             )
             != expected_shape
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen addr expects input shape to be broadcastable to outer product output"
             )
         return expected_shape
@@ -1720,27 +1720,27 @@ class MatmulHandler(OpKindHandler):
         if op_spec.name == "matmul":
             if len(a_shape) == 1 and len(b_shape) == 1:
                 if a_shape[0] != b_shape[0]:
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         "codegen matmul requires inner dimensions to match"
                     )
                 return ()
             if len(a_shape) != 2 or len(b_shape) != 2:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen matmul requires 1D or 2D inputs"
                 )
             if a_shape[1] != b_shape[0]:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen matmul requires inner dimensions to match"
                 )
             return (a_shape[0], b_shape[1])
         if len(a_shape) != 3 or len(b_shape) != 3:
-            raise RefBackendError("codegen bmm requires 3D inputs")
+            raise CodegenBackendError("codegen bmm requires 3D inputs")
         if a_shape[0] != b_shape[0]:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen bmm requires batch dimensions to match"
             )
         if a_shape[2] != b_shape[1]:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen bmm requires inner dimensions to match"
             )
         return (a_shape[0], a_shape[1], b_shape[2])

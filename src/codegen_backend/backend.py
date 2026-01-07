@@ -11,7 +11,7 @@ import torch.nn.functional as F
 import torch.fx
 from torch.fx.immutable_collections import immutable_list
 
-from c_ref_backend.cffi_bindings import RefBackendError
+from codegen_backend.errors import CodegenBackendError
 from codegen_backend.c_types import (
     _dtype_to_c_type,
     _input_c_type,
@@ -108,7 +108,7 @@ _C_SRC_DIR = Path(__file__).resolve().parents[2] / "csrc"
 
 def _channels_last_strides(shape: Sequence[int]) -> Tuple[int, ...]:
     if len(shape) != 4:
-        raise RefBackendError("required rank 4 tensor to use channels_last format")
+        raise CodegenBackendError("required rank 4 tensor to use channels_last format")
     batch, channels, height, width = (
         max(shape[0], 1),
         max(shape[1], 1),
@@ -125,7 +125,7 @@ def _channels_last_strides(shape: Sequence[int]) -> Tuple[int, ...]:
 
 def _channels_last_3d_strides(shape: Sequence[int]) -> Tuple[int, ...]:
     if len(shape) != 5:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "required rank 5 tensor to use channels_last_3d format"
         )
     batch, channels, depth, height, width = (
@@ -150,13 +150,13 @@ def _normalize_col2im_output_size(
     if isinstance(value, torch.Size):
         value = tuple(value)
     if not isinstance(value, (list, tuple)) or len(value) != 2:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} expects output_size to be a tuple of two ints"
         )
     try:
         return normalize_int_or_tuple("output_size", value, 2)
     except ValueError as exc:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} expects output_size to be a tuple of ints"
         ) from exc
 
@@ -174,7 +174,7 @@ def _resolve_scalar_arg(
             meta_value = value.meta.get("example_value")
         if meta_value is not None:
             return _normalize_scalar_value(op_name, meta_value)
-        raise RefBackendError(f"codegen {op_name} expects a scalar value")
+        raise CodegenBackendError(f"codegen {op_name} expects a scalar value")
     return _normalize_scalar_value(op_name, value)
 
 
@@ -186,13 +186,13 @@ def _normalize_as_strided_sequence(
     elif isinstance(value, ABCSequence) and not isinstance(value, (str, bytes)):
         seq = value
     else:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} expects {arg_name} to be a sequence"
         )
     try:
         return tuple(int(operator.index(item)) for item in seq)
     except TypeError as exc:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} expects {arg_name} entries to be int-like"
         ) from exc
 
@@ -227,7 +227,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
     for index, op_node in enumerate(op_nodes, start=1):
         handler = _KIND_HANDLERS.get(op_node.spec.kind)
         if handler is None:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen backend does not support kind "
                 f"'{op_node.spec.kind.value}'"
             )
@@ -321,13 +321,13 @@ def _validate_example_inputs(
     ]
     if not tensor_examples:
         if all_tensor_examples:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen backend supports only torch.float32, torch.int8, torch.int32, or torch.bool tensors"
             )
         return None
     for example in _iter_example_tensors(example_inputs):
         if example.device.type != "cpu":
-            raise RefBackendError("codegen backend supports only CPU tensors")
+            raise CodegenBackendError("codegen backend supports only CPU tensors")
     non_bool_examples = [
         example for example in tensor_examples if example.dtype is not torch.bool
     ]
@@ -339,7 +339,7 @@ def _validate_example_inputs(
             if dtype not in _EMBEDDING_INDEX_DTYPES
         }
         if len(non_index_dtypes) > 1:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen backend expects all tensors to share a dtype"
             )
         if non_index_dtypes:
@@ -350,7 +350,7 @@ def _validate_example_inputs(
         first_dtype = torch.bool
     dtype_info = _CODEGEN_DTYPES.get(first_dtype)
     if dtype_info is None:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen backend supports only torch.float32, torch.int8, torch.int32, or torch.bool tensors"
         )
     for example in tensor_examples:
@@ -360,7 +360,7 @@ def _validate_example_inputs(
             example.dtype is not first_dtype
             and example.dtype not in _EMBEDDING_INDEX_DTYPES
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen backend expects all tensors to share a dtype"
             )
     return dtype_info
@@ -385,14 +385,14 @@ def _infer_empty_strided_dtype(
         if dtype_value is None:
             dtype_value = node_dtype
         elif dtype_value is not node_dtype:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen empty_strided requires a consistent dtype"
             )
     if dtype_value is None:
         return None
     dtype_info = _CODEGEN_DTYPES.get(dtype_value)
     if dtype_info is None:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen empty_strided supports only torch.float32, torch.int8, torch.int32, or torch.bool tensors"
         )
     return dtype_info
@@ -403,12 +403,12 @@ def _unwrap_output_node(output_node: torch.fx.Node) -> Tuple[torch.fx.Node, obje
     output_structure = output_value
     if isinstance(output_value, (tuple, list, immutable_list)):
         if not output_value:
-            raise RefBackendError("codegen backend expects a non-empty output list")
+            raise CodegenBackendError("codegen backend expects a non-empty output list")
         if not all(isinstance(item, torch.fx.Node) for item in output_value):
-            raise RefBackendError("codegen backend expects output nodes only")
+            raise CodegenBackendError("codegen backend expects output nodes only")
         output_value = output_value[0]
     if not isinstance(output_value, torch.fx.Node):
-        raise RefBackendError("codegen backend expects a single output node")
+        raise CodegenBackendError("codegen backend expects a single output node")
     return output_value, output_structure
 
 
@@ -417,7 +417,7 @@ def _infer_output_shape(
 ) -> Tuple[int, ...]:
     handler = _KIND_HANDLERS.get(op_node.spec.kind)
     if handler is None:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen backend does not support kind '{op_node.spec.kind.value}'"
         )
     return handler.infer_shapes(op_node, input_shapes)
@@ -427,9 +427,9 @@ def _normalize_flip_dims(
     op_name: str, dims: object, rank: int
 ) -> Tuple[int, ...]:
     if dims is None:
-        raise RefBackendError(f"codegen {op_name} expects dims to be provided")
+        raise CodegenBackendError(f"codegen {op_name} expects dims to be provided")
     if isinstance(dims, torch.fx.Node):
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} expects dims to be an int or tuple of ints"
         )
     if isinstance(dims, (tuple, list)):
@@ -439,30 +439,30 @@ def _normalize_flip_dims(
     if not dims_list:
         return ()
     if rank == 0:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} expects dims to be within the input rank"
         )
     normalized = []
     seen = set()
     for item in dims_list:
         if isinstance(item, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects dims to be an int or tuple of ints"
             )
         try:
             dim = operator.index(item)
         except TypeError as exc:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects dims to be an int or tuple of ints"
             ) from exc
         if dim < 0:
             dim += rank
         if dim < 0 or dim >= rank:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects dims to be within the input rank"
             )
         if dim in seen:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects dims to be unique"
             )
         seen.add(dim)
@@ -474,24 +474,24 @@ def _normalize_reduction_dims(
     if dim is None:
         return tuple(range(rank))
     if isinstance(dim, torch.fx.Node):
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} expects dim to be an int or tuple of ints"
         )
     if rank == 0:
         dims = dim if isinstance(dim, (tuple, list)) else (dim,)
         for item in dims:
             if isinstance(item, torch.fx.Node):
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_name} expects dim to be an int or tuple of ints"
                 )
             try:
                 dim_value = operator.index(item)
             except TypeError as exc:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_name} expects dim to be an int or tuple of ints"
                 ) from exc
             if dim_value not in (-1, 0):
-                raise RefBackendError(f"codegen {op_name} dim is out of range")
+                raise CodegenBackendError(f"codegen {op_name} dim is out of range")
         return ()
     if isinstance(dim, (tuple, list)):
         dims = dim
@@ -501,19 +501,19 @@ def _normalize_reduction_dims(
     seen: set[int] = set()
     for item in dims:
         if isinstance(item, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects dim to be an int or tuple of ints"
             )
         try:
             dim_value = operator.index(item)
         except TypeError as exc:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects dim to be an int or tuple of ints"
             ) from exc
         if dim_value < 0:
             dim_value += rank
         if dim_value < 0 or dim_value >= rank:
-            raise RefBackendError(f"codegen {op_name} dim is out of range")
+            raise CodegenBackendError(f"codegen {op_name} dim is out of range")
         if dim_value in seen:
             continue
         seen.add(dim_value)
@@ -521,32 +521,32 @@ def _normalize_reduction_dims(
     return tuple(sorted(normalized))
 
 
-def _error_expected_tensor(op_name: str) -> RefBackendError:
-    return RefBackendError(f"codegen {op_name} expects tensor inputs only")
+def _error_expected_tensor(op_name: str) -> CodegenBackendError:
+    return CodegenBackendError(f"codegen {op_name} expects tensor inputs only")
 
 
-def _error_kwarg_specified_once(op_name: str, kwarg: str) -> RefBackendError:
-    return RefBackendError(f"codegen {op_name} expects {kwarg} to be specified once")
+def _error_kwarg_specified_once(op_name: str, kwarg: str) -> CodegenBackendError:
+    return CodegenBackendError(f"codegen {op_name} expects {kwarg} to be specified once")
 
 
 def _normalize_param(normalizer: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     try:
         return normalizer(*args, **kwargs)
     except ValueError as exc:
-        raise RefBackendError(str(exc)) from exc
+        raise CodegenBackendError(str(exc)) from exc
 
 
 def _parse_reduction_args(
     op_name: str, node: torch.fx.Node, input_shape: Sequence[int]
 ) -> Tuple[Tuple[int, ...], bool, bool, bool | None]:
     if not node.args:
-        raise RefBackendError(f"codegen {op_name} expects one input")
+        raise CodegenBackendError(f"codegen {op_name} expects one input")
     if len(node.args) > 4:
-        raise RefBackendError(f"codegen {op_name} expects at most four inputs")
+        raise CodegenBackendError(f"codegen {op_name} expects at most four inputs")
     if op_name == "std":
         unbiased = True
         if len(node.args) > 2:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen std expects at most two inputs (self, unbiased)"
             )
         if len(node.args) > 1:
@@ -558,20 +558,20 @@ def _parse_reduction_args(
                 unbiased = node.kwargs["unbiased"]
             extra = set(node.kwargs) - {"unbiased"}
             if extra:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen std got unexpected kwargs: {sorted(extra)}"
                 )
         if isinstance(unbiased, torch.fx.Node):
-            raise RefBackendError("codegen std expects unbiased to be a bool")
+            raise CodegenBackendError("codegen std expects unbiased to be a bool")
         if not isinstance(unbiased, bool):
-            raise RefBackendError("codegen std expects unbiased to be a bool")
+            raise CodegenBackendError("codegen std expects unbiased to be a bool")
         reduction_dims = tuple(range(len(input_shape)))
         keepdim = False
         reduce_all = True
         return reduction_dims, keepdim, reduce_all, unbiased
     if op_name == "var":
         if len(node.args) > 4:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen var expects at most four inputs (self, dim, unbiased, keepdim)"
             )
         dim = node.args[1] if len(node.args) > 1 else None
@@ -595,25 +595,25 @@ def _parse_reduction_args(
                 correction = node.kwargs["correction"]
             extra = set(node.kwargs) - {"dim", "unbiased", "keepdim", "correction"}
             if extra:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen var got unexpected kwargs: {sorted(extra)}"
                 )
         if isinstance(unbiased, torch.fx.Node):
-            raise RefBackendError("codegen var expects unbiased to be a bool")
+            raise CodegenBackendError("codegen var expects unbiased to be a bool")
         if not isinstance(unbiased, bool):
-            raise RefBackendError("codegen var expects unbiased to be a bool")
+            raise CodegenBackendError("codegen var expects unbiased to be a bool")
         if isinstance(keepdim, torch.fx.Node):
-            raise RefBackendError("codegen var expects keepdim to be a bool")
+            raise CodegenBackendError("codegen var expects keepdim to be a bool")
         if not isinstance(keepdim, bool):
-            raise RefBackendError("codegen var expects keepdim to be a bool")
+            raise CodegenBackendError("codegen var expects keepdim to be a bool")
         if correction is not None:
             if isinstance(correction, torch.fx.Node):
-                raise RefBackendError("codegen var expects correction to be 0 or 1")
+                raise CodegenBackendError("codegen var expects correction to be 0 or 1")
             if not isinstance(correction, numbers.Number):
-                raise RefBackendError("codegen var expects correction to be 0 or 1")
+                raise CodegenBackendError("codegen var expects correction to be 0 or 1")
             correction_value = float(correction)
             if correction_value not in (0.0, 1.0):
-                raise RefBackendError("codegen var expects correction to be 0 or 1")
+                raise CodegenBackendError("codegen var expects correction to be 0 or 1")
             unbiased = bool(int(correction_value))
         reduction_dims = _normalize_reduction_dims(op_name, dim, len(input_shape))
         reduce_all = dim is None
@@ -636,20 +636,20 @@ def _parse_reduction_args(
             dtype = node.kwargs["dtype"]
         extra = set(node.kwargs) - {"dim", "keepdim", "dtype"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
             )
     if isinstance(keepdim, torch.fx.Node):
-        raise RefBackendError(f"codegen {op_name} expects keepdim to be a bool")
+        raise CodegenBackendError(f"codegen {op_name} expects keepdim to be a bool")
     if not isinstance(keepdim, bool):
-        raise RefBackendError(f"codegen {op_name} expects keepdim to be a bool")
+        raise CodegenBackendError(f"codegen {op_name} expects keepdim to be a bool")
     if dtype is not None:
         if isinstance(dtype, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects dtype to be torch.float32, torch.int8, torch.int32, or torch.bool"
             )
         if dtype not in (torch.float32, torch.int8, torch.int32, torch.bool):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects dtype to be torch.float32, torch.int8, torch.int32, or torch.bool"
             )
     reduction_dims = _normalize_reduction_dims(op_name, dim, len(input_shape))
@@ -661,9 +661,9 @@ def _parse_norm_args(
     op_name: str, node: torch.fx.Node, input_shape: Sequence[int]
 ) -> Tuple[Tuple[int, ...], bool, bool, float]:
     if not node.args:
-        raise RefBackendError(f"codegen {op_name} expects one input")
+        raise CodegenBackendError(f"codegen {op_name} expects one input")
     if len(node.args) > 4:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} expects at most four inputs (self, p, dim, keepdim)"
         )
     p = node.args[1] if len(node.args) > 1 else None
@@ -684,15 +684,15 @@ def _parse_norm_args(
             keepdim = node.kwargs["keepdim"]
         extra = set(node.kwargs) - {"p", "dim", "keepdim"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
             )
     if isinstance(keepdim, torch.fx.Node):
-        raise RefBackendError(f"codegen {op_name} expects keepdim to be a bool")
+        raise CodegenBackendError(f"codegen {op_name} expects keepdim to be a bool")
     if not isinstance(keepdim, bool):
-        raise RefBackendError(f"codegen {op_name} expects keepdim to be a bool")
+        raise CodegenBackendError(f"codegen {op_name} expects keepdim to be a bool")
     if isinstance(p, torch.fx.Node):
-        raise RefBackendError(f"codegen {op_name} expects p to be a number")
+        raise CodegenBackendError(f"codegen {op_name} expects p to be a number")
     if p is None:
         p_value = 2.0
     elif isinstance(p, bool):
@@ -700,9 +700,9 @@ def _parse_norm_args(
     elif isinstance(p, (int, float)):
         p_value = float(p)
     else:
-        raise RefBackendError(f"codegen {op_name} expects p to be a number")
+        raise CodegenBackendError(f"codegen {op_name} expects p to be a number")
     if math.isinf(p_value) or math.isnan(p_value):
-        raise RefBackendError(f"codegen {op_name} expects p to be finite")
+        raise CodegenBackendError(f"codegen {op_name} expects p to be finite")
     reduction_dims = _normalize_reduction_dims(op_name, dim, len(input_shape))
     reduce_all = dim is None
     return reduction_dims, keepdim, reduce_all, p_value
@@ -712,9 +712,9 @@ def _parse_argminmax_args(
     op_name: str, node: torch.fx.Node, input_shape: Sequence[int]
 ) -> Tuple[Tuple[int, ...], bool, bool]:
     if not node.args:
-        raise RefBackendError(f"codegen {op_name} expects one input")
+        raise CodegenBackendError(f"codegen {op_name} expects one input")
     if len(node.args) > 3:
-        raise RefBackendError(f"codegen {op_name} expects at most three inputs")
+        raise CodegenBackendError(f"codegen {op_name} expects at most three inputs")
     dim = node.args[1] if len(node.args) > 1 else None
     keepdim = node.args[2] if len(node.args) > 2 else False
     if node.kwargs:
@@ -728,69 +728,69 @@ def _parse_argminmax_args(
             keepdim = node.kwargs["keepdim"]
         extra = set(node.kwargs) - {"dim", "keepdim"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
             )
     if isinstance(keepdim, torch.fx.Node):
-        raise RefBackendError(f"codegen {op_name} expects keepdim to be a bool")
+        raise CodegenBackendError(f"codegen {op_name} expects keepdim to be a bool")
     if not isinstance(keepdim, bool):
-        raise RefBackendError(f"codegen {op_name} expects keepdim to be a bool")
+        raise CodegenBackendError(f"codegen {op_name} expects keepdim to be a bool")
     if dim is None:
         reduction_dims = tuple(range(len(input_shape)))
         reduce_all = True
         return reduction_dims, keepdim, reduce_all
     if isinstance(dim, (tuple, list)):
-        raise RefBackendError(f"codegen {op_name} expects dim to be an int")
+        raise CodegenBackendError(f"codegen {op_name} expects dim to be an int")
     dim_value = _parse_constant_int(op_name, "dim", dim)
     rank = len(input_shape)
     if rank == 0:
         if dim_value not in (-1, 0):
-            raise RefBackendError(f"codegen {op_name} dim is out of range")
+            raise CodegenBackendError(f"codegen {op_name} dim is out of range")
         return (), keepdim, True
     if dim_value < 0:
         dim_value += rank
     if dim_value < 0 or dim_value >= rank:
-        raise RefBackendError(f"codegen {op_name} dim is out of range")
+        raise CodegenBackendError(f"codegen {op_name} dim is out of range")
     return (dim_value,), keepdim, False
 
 
 def _parse_constant_float(op_name: str, name: str, value: object) -> float:
     if isinstance(value, torch.fx.Node):
-        raise RefBackendError(f"codegen {op_name} expects {name} to be constant")
+        raise CodegenBackendError(f"codegen {op_name} expects {name} to be constant")
     if isinstance(value, bool):
         return float(value)
     if isinstance(value, (int, float)):
         return float(value)
-    raise RefBackendError(f"codegen {op_name} expects {name} to be numeric")
+    raise CodegenBackendError(f"codegen {op_name} expects {name} to be numeric")
 
 
 def _parse_constant_int(op_name: str, name: str, value: object) -> int:
     if isinstance(value, torch.fx.Node):
         meta_value = value.meta.get("val") or value.meta.get("example_value")
         if meta_value is None:
-            raise RefBackendError(f"codegen {op_name} expects {name} to be an int")
+            raise CodegenBackendError(f"codegen {op_name} expects {name} to be an int")
         return _parse_constant_int(op_name, name, meta_value)
     if isinstance(value, bool):
-        raise RefBackendError(f"codegen {op_name} expects {name} to be an int")
+        raise CodegenBackendError(f"codegen {op_name} expects {name} to be an int")
     if isinstance(value, torch.Tensor):
         if value.numel() != 1:
-            raise RefBackendError(f"codegen {op_name} expects {name} to be an int")
+            raise CodegenBackendError(f"codegen {op_name} expects {name} to be an int")
         return _parse_constant_int(op_name, name, value.item())
     if isinstance(value, str):
         try:
             return int(value)
         except ValueError as exc:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects {name} to be an int"
             ) from exc
     if isinstance(value, float):
         if value.is_integer():
             return int(value)
-        raise RefBackendError(f"codegen {op_name} expects {name} to be an int")
+        raise CodegenBackendError(f"codegen {op_name} expects {name} to be an int")
     try:
         return operator.index(value)
     except TypeError as exc:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} expects {name} to be an int"
         ) from exc
 
@@ -799,13 +799,13 @@ def _parse_constant_bool(op_name: str, name: str, value: object) -> bool:
     if isinstance(value, torch.fx.Node):
         meta_value = value.meta.get("val") or value.meta.get("example_value")
         if meta_value is None:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects {name} to be a bool"
             )
         return _parse_constant_bool(op_name, name, meta_value)
     if isinstance(value, torch.Tensor):
         if value.numel() != 1:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects {name} to be a bool"
             )
         return _parse_constant_bool(op_name, name, value.item())
@@ -813,7 +813,7 @@ def _parse_constant_bool(op_name: str, name: str, value: object) -> bool:
         return value
     if isinstance(value, numbers.Integral) and value in (0, 1):
         return bool(value)
-    raise RefBackendError(f"codegen {op_name} expects {name} to be a bool")
+    raise CodegenBackendError(f"codegen {op_name} expects {name} to be a bool")
 
 
 def _parse_bitwise_scalar(
@@ -822,13 +822,13 @@ def _parse_bitwise_scalar(
     if isinstance(value, torch.fx.Node):
         meta_value = value.meta.get("val") or value.meta.get("example_value")
         if meta_value is None:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects scalar to be constant"
             )
         return _parse_bitwise_scalar(op_name, meta_value, dtype)
     if isinstance(value, torch.Tensor):
         if value.numel() != 1:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects scalar to be a single value"
             )
         return _parse_bitwise_scalar(op_name, value.item(), dtype)
@@ -837,14 +837,14 @@ def _parse_bitwise_scalar(
             return value
         if isinstance(value, float):
             if not value.is_integer():
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_name} expects scalar to be a boolean value"
                 )
             return bool(int(value))
         try:
             return bool(operator.index(value))
         except TypeError as exc:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects scalar to be a boolean value"
             ) from exc
     if isinstance(value, bool):
@@ -856,49 +856,49 @@ def _parse_parametric_unary_args(
     op_name: str, node: torch.fx.Node
 ) -> Tuple[torch.fx.Node, Dict[str, object]]:
     if not node.args:
-        raise RefBackendError(f"codegen {op_name} expects one input")
+        raise CodegenBackendError(f"codegen {op_name} expects one input")
     input_node = node.args[0]
     params: Dict[str, object] = {}
     if op_name == "gelu":
         if len(node.args) > 2:
-            raise RefBackendError("codegen gelu expects one input")
+            raise CodegenBackendError("codegen gelu expects one input")
         if len(node.args) > 1:
             params["approximate"] = node.args[1]
         if "approximate" in node.kwargs:
             if len(node.args) > 1:
-                raise RefBackendError("codegen gelu expects approximate as a keyword")
+                raise CodegenBackendError("codegen gelu expects approximate as a keyword")
             params["approximate"] = node.kwargs["approximate"]
         extra = set(node.kwargs) - {"approximate"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen gelu got unexpected kwargs: {sorted(extra)}"
             )
         approximate = params.get("approximate", "none")
         if isinstance(approximate, torch.fx.Node):
-            raise RefBackendError("codegen gelu expects approximate to be constant")
+            raise CodegenBackendError("codegen gelu expects approximate to be constant")
         if approximate is None:
             approximate = "none"
         if approximate not in {"none", "tanh"}:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen gelu expects approximate to be 'none' or 'tanh'"
             )
         params["approximate"] = approximate
         return input_node, params
     if op_name == "elu":
         if len(node.args) > 4:
-            raise RefBackendError("codegen elu expects one input")
+            raise CodegenBackendError("codegen elu expects one input")
         args = list(node.args[1:])
         kwargs = dict(node.kwargs)
         for name in ("alpha", "scale", "input_scale"):
             if name in kwargs and args:
-                raise RefBackendError(f"codegen elu got multiple values for {name}")
+                raise CodegenBackendError(f"codegen elu got multiple values for {name}")
             if args:
                 params[name] = args.pop(0)
             elif name in kwargs:
                 params[name] = kwargs[name]
         extra = set(kwargs) - {"alpha", "scale", "input_scale"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen elu got unexpected kwargs: {sorted(extra)}"
             )
         params["alpha"] = _parse_constant_float(
@@ -913,18 +913,18 @@ def _parse_parametric_unary_args(
         return input_node, params
     if op_name == "leaky_relu":
         if len(node.args) > 2:
-            raise RefBackendError("codegen leaky_relu expects one input")
+            raise CodegenBackendError("codegen leaky_relu expects one input")
         if len(node.args) > 1:
             params["negative_slope"] = node.args[1]
         if "negative_slope" in node.kwargs:
             if len(node.args) > 1:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen leaky_relu expects negative_slope as a keyword"
                 )
             params["negative_slope"] = node.kwargs["negative_slope"]
         extra = set(node.kwargs) - {"negative_slope"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen leaky_relu got unexpected kwargs: {sorted(extra)}"
             )
         params["negative_slope"] = _parse_constant_float(
@@ -933,24 +933,24 @@ def _parse_parametric_unary_args(
         return input_node, params
     if op_name == "softplus":
         if len(node.args) > 3:
-            raise RefBackendError("codegen softplus expects one input")
+            raise CodegenBackendError("codegen softplus expects one input")
         if len(node.args) > 1:
             params["beta"] = node.args[1]
         if len(node.args) > 2:
             params["threshold"] = node.args[2]
         if "beta" in node.kwargs:
             if len(node.args) > 1:
-                raise RefBackendError("codegen softplus expects beta as a keyword")
+                raise CodegenBackendError("codegen softplus expects beta as a keyword")
             params["beta"] = node.kwargs["beta"]
         if "threshold" in node.kwargs:
             if len(node.args) > 2:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen softplus expects threshold as a keyword"
                 )
             params["threshold"] = node.kwargs["threshold"]
         extra = set(node.kwargs) - {"beta", "threshold"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen softplus got unexpected kwargs: {sorted(extra)}"
             )
         params["beta"] = _parse_constant_float(
@@ -962,22 +962,22 @@ def _parse_parametric_unary_args(
         return input_node, params
     if op_name == "clamp":
         if len(node.args) > 3:
-            raise RefBackendError("codegen clamp expects one input")
+            raise CodegenBackendError("codegen clamp expects one input")
         if len(node.args) > 1:
             params["min_val"] = node.args[1]
         if len(node.args) > 2:
             params["max_val"] = node.args[2]
         if "min" in node.kwargs:
             if len(node.args) > 1:
-                raise RefBackendError("codegen clamp expects min as a keyword")
+                raise CodegenBackendError("codegen clamp expects min as a keyword")
             params["min_val"] = node.kwargs["min"]
         if "max" in node.kwargs:
             if len(node.args) > 2:
-                raise RefBackendError("codegen clamp expects max as a keyword")
+                raise CodegenBackendError("codegen clamp expects max as a keyword")
             params["max_val"] = node.kwargs["max"]
         extra = set(node.kwargs) - {"min", "max"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen clamp got unexpected kwargs: {sorted(extra)}"
             )
         if params.get("min_val") is not None:
@@ -991,22 +991,22 @@ def _parse_parametric_unary_args(
         return input_node, params
     if op_name == "hardtanh":
         if len(node.args) > 3:
-            raise RefBackendError("codegen hardtanh expects one input")
+            raise CodegenBackendError("codegen hardtanh expects one input")
         if len(node.args) > 1:
             params["min_val"] = node.args[1]
         if len(node.args) > 2:
             params["max_val"] = node.args[2]
         if "min_val" in node.kwargs:
             if len(node.args) > 1:
-                raise RefBackendError("codegen hardtanh expects min_val as a keyword")
+                raise CodegenBackendError("codegen hardtanh expects min_val as a keyword")
             params["min_val"] = node.kwargs["min_val"]
         if "max_val" in node.kwargs:
             if len(node.args) > 2:
-                raise RefBackendError("codegen hardtanh expects max_val as a keyword")
+                raise CodegenBackendError("codegen hardtanh expects max_val as a keyword")
             params["max_val"] = node.kwargs["max_val"]
         extra = set(node.kwargs) - {"min_val", "max_val"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen hardtanh got unexpected kwargs: {sorted(extra)}"
             )
         params["min_val"] = _parse_constant_float(
@@ -1016,17 +1016,17 @@ def _parse_parametric_unary_args(
             op_name, "max_val", params.get("max_val", 1.0)
         )
         return input_node, params
-    raise RefBackendError(f"Unsupported parametric op: {op_name}")
+    raise CodegenBackendError(f"Unsupported parametric op: {op_name}")
 
 
 def _parse_softmax_args(
     op_name: str, node: torch.fx.Node, input_shape: Sequence[int]
 ) -> Tuple[int, object | None]:
     if not node.args:
-        raise RefBackendError(f"codegen {op_name} expects one input")
+        raise CodegenBackendError(f"codegen {op_name} expects one input")
     is_internal = op_name in {"_softmax", "_log_softmax"}
     if len(node.args) > 3:
-        raise RefBackendError(f"codegen {op_name} expects at most three inputs")
+        raise CodegenBackendError(f"codegen {op_name} expects at most three inputs")
     dim = node.args[1] if len(node.args) > 1 else None
     dtype = None
     half_to_float = None
@@ -1053,43 +1053,43 @@ def _parse_softmax_args(
                 dtype = node.kwargs["dtype"]
             extra = set(node.kwargs) - {"dim", "dtype"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
             )
     if dim is None:
-        raise RefBackendError(f"codegen {op_name} expects dim to be an int")
+        raise CodegenBackendError(f"codegen {op_name} expects dim to be an int")
     if isinstance(dim, torch.fx.Node):
-        raise RefBackendError(f"codegen {op_name} expects dim to be an int")
+        raise CodegenBackendError(f"codegen {op_name} expects dim to be an int")
     if isinstance(dim, (tuple, list)):
-        raise RefBackendError(f"codegen {op_name} expects dim to be an int")
+        raise CodegenBackendError(f"codegen {op_name} expects dim to be an int")
     try:
         dim_value = operator.index(dim)
     except TypeError as exc:
-        raise RefBackendError(f"codegen {op_name} expects dim to be an int") from exc
+        raise CodegenBackendError(f"codegen {op_name} expects dim to be an int") from exc
     rank = len(input_shape)
     if dim_value < 0:
         dim_value += rank
     if dim_value < 0 or dim_value >= rank:
-        raise RefBackendError(f"codegen {op_name} dim is out of range")
+        raise CodegenBackendError(f"codegen {op_name} dim is out of range")
     if is_internal:
         if half_to_float is None:
             half_to_float = False
         if isinstance(half_to_float, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects half_to_float to be a bool"
             )
         if half_to_float not in (False, 0):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects half_to_float to be False"
             )
     else:
         if dtype is not None:
             if isinstance(dtype, torch.fx.Node):
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_name} expects dtype to be torch.float32 or None"
                 )
             if dtype is not torch.float32:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_name} expects dtype to be torch.float32 or None"
                 )
     return dim_value, dtype
@@ -1099,9 +1099,9 @@ def _parse_diagonal_args(
     op_name: str, node: torch.fx.Node, input_shape: Sequence[int]
 ) -> Tuple[int, int, int]:
     if not node.args:
-        raise RefBackendError(f"codegen {op_name} expects one input")
+        raise CodegenBackendError(f"codegen {op_name} expects one input")
     if len(node.args) > 4:
-        raise RefBackendError(f"codegen {op_name} expects at most four inputs")
+        raise CodegenBackendError(f"codegen {op_name} expects at most four inputs")
     offset = node.args[1] if len(node.args) > 1 else 0
     dim1 = node.args[2] if len(node.args) > 2 else 0
     dim2 = node.args[3] if len(node.args) > 3 else 1
@@ -1120,7 +1120,7 @@ def _parse_diagonal_args(
             dim2 = node.kwargs["dim2"]
         extra = set(node.kwargs) - {"offset", "dim1", "dim2"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
             )
     offset_value = _parse_constant_int(op_name, "offset", offset)
@@ -1128,17 +1128,17 @@ def _parse_diagonal_args(
     dim2_value = _parse_constant_int(op_name, "dim2", dim2)
     rank = len(input_shape)
     if rank < 2:
-        raise RefBackendError(f"codegen {op_name} expects input rank >= 2")
+        raise CodegenBackendError(f"codegen {op_name} expects input rank >= 2")
     if dim1_value < 0:
         dim1_value += rank
     if dim2_value < 0:
         dim2_value += rank
     if dim1_value < 0 or dim1_value >= rank:
-        raise RefBackendError(f"codegen {op_name} dim1 is out of range")
+        raise CodegenBackendError(f"codegen {op_name} dim1 is out of range")
     if dim2_value < 0 or dim2_value >= rank:
-        raise RefBackendError(f"codegen {op_name} dim2 is out of range")
+        raise CodegenBackendError(f"codegen {op_name} dim2 is out of range")
     if dim1_value == dim2_value:
-        raise RefBackendError(f"codegen {op_name} expects dim1 != dim2")
+        raise CodegenBackendError(f"codegen {op_name} expects dim1 != dim2")
     return offset_value, dim1_value, dim2_value
 
 
@@ -1146,9 +1146,9 @@ def _parse_cumsum_args(
     op_name: str, node: torch.fx.Node, input_shape: Sequence[int]
 ) -> Tuple[int, torch.dtype | None]:
     if not node.args:
-        raise RefBackendError(f"codegen {op_name} expects one input")
+        raise CodegenBackendError(f"codegen {op_name} expects one input")
     if len(node.args) > 3:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} expects at most three inputs (self, dim, dtype)"
         )
     dim = node.args[1] if len(node.args) > 1 else None
@@ -1164,34 +1164,34 @@ def _parse_cumsum_args(
             dtype = node.kwargs["dtype"]
         extra = set(node.kwargs) - {"dim", "dtype"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
             )
     if dim is None:
-        raise RefBackendError(f"codegen {op_name} expects dim to be an int")
+        raise CodegenBackendError(f"codegen {op_name} expects dim to be an int")
     if isinstance(dim, (tuple, list)):
-        raise RefBackendError(f"codegen {op_name} expects dim to be an int")
+        raise CodegenBackendError(f"codegen {op_name} expects dim to be an int")
     dim_value = _parse_constant_int(op_name, "dim", dim)
     rank = len(input_shape)
     if rank == 0:
         if dim_value not in (-1, 0):
-            raise RefBackendError(f"codegen {op_name} dim is out of range")
+            raise CodegenBackendError(f"codegen {op_name} dim is out of range")
         dim_value = 0
     else:
         if dim_value < 0:
             dim_value += rank
         if dim_value < 0 or dim_value >= rank:
-            raise RefBackendError(f"codegen {op_name} dim is out of range")
+            raise CodegenBackendError(f"codegen {op_name} dim is out of range")
     if dtype is not None:
         if isinstance(dtype, torch.fx.Node):
             meta_value = dtype.meta.get("val") or dtype.meta.get("example_value")
             if meta_value is None:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_name} expects dtype to be torch.float32, torch.int8, or torch.int32"
                 )
             dtype = meta_value
         if dtype not in (torch.float32, torch.int8, torch.int32):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects dtype to be torch.float32, torch.int8, or torch.int32"
             )
     return dim_value, dtype
@@ -1201,9 +1201,9 @@ def _parse_gather_args(
     node: torch.fx.Node,
 ) -> Tuple[object, object, object, object]:
     if len(node.args) > 4:
-        raise RefBackendError("codegen gather expects at most four inputs")
+        raise CodegenBackendError("codegen gather expects at most four inputs")
     if not node.args:
-        raise RefBackendError("codegen gather expects input, dim, and index")
+        raise CodegenBackendError("codegen gather expects input, dim, and index")
     input_arg = node.args[0]
     dim = node.args[1] if len(node.args) > 1 else None
     index = node.args[2] if len(node.args) > 2 else None
@@ -1223,11 +1223,11 @@ def _parse_gather_args(
             sparse_grad = node.kwargs["sparse_grad"]
         extra = set(node.kwargs) - {"dim", "index", "sparse_grad"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen gather got unexpected kwargs: {sorted(extra)}"
             )
     if dim is None or index is None:
-        raise RefBackendError("codegen gather expects dim and index arguments")
+        raise CodegenBackendError("codegen gather expects dim and index arguments")
     if sparse_grad is None:
         sparse_grad = False
     return input_arg, dim, index, sparse_grad
@@ -1238,9 +1238,9 @@ def _parse_embedding_args(
 ) -> Tuple[object, object, int, bool, bool]:
     op_name = "embedding"
     if len(node.args) < 2:
-        raise RefBackendError(f"codegen {op_name} expects weight and indices")
+        raise CodegenBackendError(f"codegen {op_name} expects weight and indices")
     if len(node.args) > 5:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} expects at most five arguments"
         )
     weight = node.args[0]
@@ -1267,7 +1267,7 @@ def _parse_embedding_args(
             "sparse",
         }
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
             )
     padding_idx_value = _parse_constant_int(op_name, "padding_idx", padding_idx)
@@ -1283,11 +1283,11 @@ def _parse_embedding_bag_args(
 ) -> Tuple[object, object, object, bool, int, bool, object, bool, int]:
     op_name = "_embedding_bag"
     if len(node.args) < 3:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} expects weight, indices, and offsets"
         )
     if len(node.args) > 9:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} expects at most nine arguments"
         )
     weight = node.args[0]
@@ -1333,7 +1333,7 @@ def _parse_embedding_bag_args(
             "padding_idx",
         }
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
             )
     scale_grad_value = _parse_constant_bool(
@@ -1366,25 +1366,25 @@ def _parse_addmm_like_scalar(
     if isinstance(value, torch.fx.Node):
         meta_value = value.meta.get("val") or value.meta.get("example_value")
         if meta_value is None:
-            raise RefBackendError(f"codegen {op_name} expects {name} to be a number")
+            raise CodegenBackendError(f"codegen {op_name} expects {name} to be a number")
         return _parse_addmm_like_scalar(op_name, name, meta_value)
     if isinstance(value, bool):
-        raise RefBackendError(f"codegen {op_name} expects {name} to be a number")
+        raise CodegenBackendError(f"codegen {op_name} expects {name} to be a number")
     if isinstance(value, torch.Tensor):
         if value.numel() != 1:
-            raise RefBackendError(f"codegen {op_name} expects {name} to be a number")
+            raise CodegenBackendError(f"codegen {op_name} expects {name} to be a number")
         return float(value.item())
     if isinstance(value, str):
         try:
             return float(value)
         except ValueError as exc:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} expects {name} to be a number"
             ) from exc
     try:
         return float(value)
     except (TypeError, ValueError) as exc:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} expects {name} to be a number"
         ) from exc
 
@@ -1395,7 +1395,7 @@ def _validate_addmm_like_scalars(
     if dtype in _INTEGER_CODEGEN_DTYPES or dtype is torch.bool:
         for name, value in (("alpha", alpha), ("beta", beta)):
             if not float(value).is_integer():
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_name} expects {name} to be an integer for integral tensors"
                 )
 
@@ -1404,9 +1404,9 @@ def _parse_addmm_like_args(
     op_name: str, node: torch.fx.Node
 ) -> Tuple[Sequence[torch.fx.Node], float, float]:
     if len(node.args) < 3:
-        raise RefBackendError(f"codegen {op_name} expects at least three inputs")
+        raise CodegenBackendError(f"codegen {op_name} expects at least three inputs")
     if len(node.args) > 5:
-        raise RefBackendError(f"codegen {op_name} expects at most five inputs")
+        raise CodegenBackendError(f"codegen {op_name} expects at most five inputs")
     input_node, mat1_node, mat2_node = node.args[:3]
     beta = node.args[3] if len(node.args) > 3 else None
     alpha = node.args[4] if len(node.args) > 4 else None
@@ -1421,7 +1421,7 @@ def _parse_addmm_like_args(
             alpha = node.kwargs["alpha"]
         extra = set(node.kwargs) - {"beta", "alpha"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
             )
     return (
@@ -1435,9 +1435,9 @@ def _parse_concat_args(
     node: torch.fx.Node,
 ) -> Tuple[Sequence[torch.fx.Node], int]:
     if not node.args:
-        raise RefBackendError("codegen cat expects a tensor list input")
+        raise CodegenBackendError("codegen cat expects a tensor list input")
     if len(node.args) > 2:
-        raise RefBackendError("codegen cat expects at most two inputs")
+        raise CodegenBackendError("codegen cat expects at most two inputs")
     tensors_arg = node.args[0]
     dim = node.args[1] if len(node.args) > 1 else None
     if node.kwargs:
@@ -1447,20 +1447,20 @@ def _parse_concat_args(
             dim = node.kwargs["dim"]
         extra = set(node.kwargs) - {"dim"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen cat got unexpected kwargs: {sorted(extra)}"
             )
     if isinstance(dim, torch.fx.Node):
-        raise RefBackendError("codegen cat expects dim to be an int")
+        raise CodegenBackendError("codegen cat expects dim to be an int")
     if dim is None:
         dim_value = 0
     else:
         try:
             dim_value = operator.index(dim)
         except TypeError as exc:
-            raise RefBackendError("codegen cat expects dim to be an int") from exc
+            raise CodegenBackendError("codegen cat expects dim to be an int") from exc
     if not isinstance(tensors_arg, (list, tuple)) or not tensors_arg:
-        raise RefBackendError("codegen cat expects a non-empty tensor list input")
+        raise CodegenBackendError("codegen cat expects a non-empty tensor list input")
     for item in tensors_arg:
         if not isinstance(item, torch.fx.Node):
             raise _error_expected_tensor("cat")
@@ -1483,7 +1483,7 @@ def _parse_conv2d_args(
     args = list(node.args)
     kwargs = dict(node.kwargs)
     if len(args) < 2 or len(args) > 9:
-        raise RefBackendError("codegen conv2d expects convolution arguments")
+        raise CodegenBackendError("codegen conv2d expects convolution arguments")
     input_arg = args[0]
     weight_arg = args[1]
     bias = None
@@ -1537,7 +1537,7 @@ def _parse_conv2d_args(
             "output_padding",
         }
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen conv2d got unexpected kwargs: {sorted(extra)}"
             )
         if "bias" in kwargs:
@@ -1582,7 +1582,7 @@ def _parse_conv1d_args(
     args = list(node.args)
     kwargs = dict(node.kwargs)
     if len(args) < 2 or len(args) > 7:
-        raise RefBackendError("codegen conv1d expects convolution arguments")
+        raise CodegenBackendError("codegen conv1d expects convolution arguments")
     input_arg = args[0]
     weight_arg = args[1]
     bias = None
@@ -1605,7 +1605,7 @@ def _parse_conv1d_args(
     if kwargs:
         extra = set(kwargs) - {"bias", "stride", "padding", "dilation", "groups"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen conv1d got unexpected kwargs: {sorted(extra)}"
             )
         if "bias" in kwargs:
@@ -1628,7 +1628,7 @@ def _parse_col2im_args(
     args = list(node.args)
     kwargs = dict(node.kwargs)
     if len(args) < 1 or len(args) > 6:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen col2im expects input, output_size, kernel_size, dilation, padding, and stride"
         )
     input_arg = args[0] if len(args) >= 1 else None
@@ -1646,7 +1646,7 @@ def _parse_col2im_args(
             "stride",
         }
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen col2im got unexpected kwargs: {sorted(extra)}"
             )
         if "output_size" in kwargs:
@@ -1667,7 +1667,7 @@ def _parse_col2im_args(
         or padding is None
         or stride is None
     ):
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen col2im expects input, output_size, kernel_size, dilation, padding, and stride"
         )
     return input_arg, output_size, kernel_size, dilation, padding, stride
@@ -1679,7 +1679,7 @@ def _parse_max_pool1d_args(
     args = list(node.args)
     kwargs = dict(node.kwargs)
     if len(args) < 2 or len(args) > 6:
-        raise RefBackendError("codegen max_pool1d expects pooling arguments")
+        raise CodegenBackendError("codegen max_pool1d expects pooling arguments")
     input_arg = args[0]
     kernel_size = args[1]
     stride = None
@@ -1704,7 +1704,7 @@ def _parse_max_pool1d_args(
             "ceil_mode",
         }
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen max_pool1d got unexpected kwargs: {sorted(extra)}"
             )
         if "kernel_size" in kwargs:
@@ -1726,7 +1726,7 @@ def _parse_avg_pool1d_args(
     args = list(node.args)
     kwargs = dict(node.kwargs)
     if len(args) < 2 or len(args) > 7:
-        raise RefBackendError("codegen avg_pool1d expects pooling arguments")
+        raise CodegenBackendError("codegen avg_pool1d expects pooling arguments")
     input_arg = args[0]
     kernel_size = args[1]
     stride = None
@@ -1755,7 +1755,7 @@ def _parse_avg_pool1d_args(
             "divisor_override",
         }
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen avg_pool1d got unexpected kwargs: {sorted(extra)}"
             )
         if "kernel_size" in kwargs:
@@ -1787,7 +1787,7 @@ def _parse_adaptive_avg_pool1d_args(
     args = list(node.args)
     kwargs = dict(node.kwargs)
     if len(args) < 2 or len(args) > 2:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen adaptive_avg_pool1d expects input and output_size"
         )
     input_arg = args[0]
@@ -1801,7 +1801,7 @@ def _parse_adaptive_avg_pool1d_args(
             output_size = kwargs["output_size"]
         extra = set(kwargs) - {"output_size"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool1d got unexpected kwargs: "
                 f"{sorted(extra)}"
             )
@@ -1814,7 +1814,7 @@ def _parse_adaptive_avg_pool2d_args(
     args = list(node.args)
     kwargs = dict(node.kwargs)
     if len(args) < 2 or len(args) > 2:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen adaptive_avg_pool2d expects input and output_size"
         )
     input_arg = args[0]
@@ -1828,7 +1828,7 @@ def _parse_adaptive_avg_pool2d_args(
             output_size = kwargs["output_size"]
         extra = set(kwargs) - {"output_size"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool2d got unexpected kwargs: "
                 f"{sorted(extra)}"
             )
@@ -1841,7 +1841,7 @@ def _parse_adaptive_avg_pool3d_args(
     args = list(node.args)
     kwargs = dict(node.kwargs)
     if len(args) < 2 or len(args) > 2:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen adaptive_avg_pool3d expects input and output_size"
         )
     input_arg = args[0]
@@ -1855,7 +1855,7 @@ def _parse_adaptive_avg_pool3d_args(
             output_size = kwargs["output_size"]
         extra = set(kwargs) - {"output_size"}
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool3d got unexpected kwargs: "
                 f"{sorted(extra)}"
             )
@@ -1868,11 +1868,11 @@ def _parse_adaptive_avg_pool2d_backward_args(
     args = list(node.args)
     kwargs = dict(node.kwargs)
     if len(args) != 2:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen adaptive_avg_pool2d_backward expects grad_output and input"
         )
     if kwargs:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen adaptive_avg_pool2d_backward expects no keyword arguments"
         )
     grad_output = args[0]
@@ -1886,7 +1886,7 @@ def _parse_max_pool2d_args(
     args = list(node.args)
     kwargs = dict(node.kwargs)
     if len(args) > 6:
-        raise RefBackendError("codegen max_pool2d expects pooling arguments")
+        raise CodegenBackendError("codegen max_pool2d expects pooling arguments")
     input_arg = args[0] if len(args) > 0 else None
     kernel_size = None
     stride = None
@@ -1919,7 +1919,7 @@ def _parse_max_pool2d_args(
             "ceil_mode",
         }
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen max_pool2d got unexpected kwargs: {sorted(extra)}"
             )
         if "input" in kwargs:
@@ -1947,7 +1947,7 @@ def _parse_max_pool2d_args(
                 raise _error_kwarg_specified_once("max_pool2d", "ceil_mode")
             ceil_mode = kwargs["ceil_mode"]
     if input_arg is None or kernel_size is None:
-        raise RefBackendError("codegen max_pool2d expects pooling arguments")
+        raise CodegenBackendError("codegen max_pool2d expects pooling arguments")
     return input_arg, kernel_size, stride, padding, dilation, ceil_mode
 
 
@@ -1957,7 +1957,7 @@ def _parse_avg_pool2d_args(
     args = list(node.args)
     kwargs = dict(node.kwargs)
     if len(args) < 2 or len(args) > 7:
-        raise RefBackendError("codegen avg_pool2d expects pooling arguments")
+        raise CodegenBackendError("codegen avg_pool2d expects pooling arguments")
     input_arg = args[0]
     kernel_size = args[1]
     stride = None
@@ -1986,7 +1986,7 @@ def _parse_avg_pool2d_args(
             "divisor_override",
         }
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen avg_pool2d got unexpected kwargs: {sorted(extra)}"
             )
         if "kernel_size" in kwargs:
@@ -2021,7 +2021,7 @@ def _handle_flip_node(
     dtypes: Dict[torch.fx.Node, torch.dtype],
 ) -> _OpNode:
     if not node.args:
-        raise RefBackendError(f"codegen {op_spec.name} expects one input")
+        raise CodegenBackendError(f"codegen {op_spec.name} expects one input")
     input_node = node.args[0]
     if not isinstance(input_node, torch.fx.Node) or input_node not in shapes:
         raise _error_expected_tensor(op_spec.name)
@@ -2029,22 +2029,22 @@ def _handle_flip_node(
     if len(node.args) >= 2:
         dims = node.args[1]
         if len(node.args) > 2:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects one input and dims"
             )
     if "dims" in node.kwargs:
         if dims is not None:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects dims only once"
             )
         dims = node.kwargs["dims"]
     if node.kwargs and "dims" not in node.kwargs:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_spec.name} expects dims as the only keyword argument"
         )
     input_shape = shapes[input_node]
     if dtypes[input_node] is not dtype_info.torch_dtype:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_spec.name} expects inputs to share the graph dtype"
         )
     normalized_dims = _normalize_flip_dims(op_spec.name, dims, len(input_shape))
@@ -2076,11 +2076,11 @@ def _handle_batch_norm_node(
     has_training_flag = op_spec.name == "_native_batch_norm_legit"
     expected_inputs = 8 if has_training_flag else 7
     if len(node.args) < expected_inputs:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_spec.name} expects {expected_inputs} inputs"
         )
     if node.kwargs:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_spec.name} expects positional args only"
         )
     if has_training_flag:
@@ -2095,11 +2095,11 @@ def _handle_batch_norm_node(
             eps,
         ) = node.args[:8]
         if isinstance(training, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects constant training flag"
             )
         if training not in (False, 0):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only training=False"
             )
     else:
@@ -2129,16 +2129,16 @@ def _handle_batch_norm_node(
             raise _error_expected_tensor(op_spec.name)
         bias_node = bias
     if dtype_info.torch_dtype is not torch.float32:
-        raise RefBackendError(f"codegen {op_spec.name} supports only torch.float32")
+        raise CodegenBackendError(f"codegen {op_spec.name} supports only torch.float32")
     if dtypes[input_arg] is not torch.float32:
-        raise RefBackendError(f"codegen {op_spec.name} supports only torch.float32")
+        raise CodegenBackendError(f"codegen {op_spec.name} supports only torch.float32")
     input_shape = shapes[input_arg]
     if len(input_shape) < 2:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_spec.name} expects at least 2D inputs"
         )
     if not _is_contiguous(input_shape, strides[input_arg]):
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_spec.name} requires contiguous input"
         )
     channels = input_shape[1]
@@ -2148,40 +2148,40 @@ def _handle_batch_norm_node(
     ):
         stat_shape = shapes[stat_arg]
         if stat_shape != (channels,):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects {name} shape to match channels"
             )
         if not _is_contiguous(stat_shape, strides[stat_arg]):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} requires contiguous stats"
             )
         if dtypes[stat_arg] is not torch.float32:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32"
             )
     if weight_node is not None:
         if shapes[weight_node] != (channels,):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects weight shape to match channels"
             )
         if dtypes[weight_node] is not torch.float32:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32"
             )
     if bias_node is not None:
         if shapes[bias_node] != (channels,):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects bias shape to match channels"
             )
         if dtypes[bias_node] is not torch.float32:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32"
             )
     try:
         _ = float(_resolve_scalar_arg(op_spec.name, momentum, scalar_values))
         eps_value = float(_resolve_scalar_arg(op_spec.name, eps, scalar_values))
     except (TypeError, ValueError) as exc:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_spec.name} expects eps to be a float"
         ) from exc
     inputs = [input_arg, running_mean, running_var]
@@ -2219,32 +2219,32 @@ def _handle_pdist_node(
     dtypes: Dict[torch.fx.Node, torch.dtype],
 ) -> _OpNode:
     if not node.args:
-        raise RefBackendError("codegen _pdist_forward expects one input")
+        raise CodegenBackendError("codegen _pdist_forward expects one input")
     if len(node.args) > 2:
-        raise RefBackendError("codegen _pdist_forward expects at most two inputs")
+        raise CodegenBackendError("codegen _pdist_forward expects at most two inputs")
     if node.kwargs:
-        raise RefBackendError("codegen _pdist_forward expects positional args only")
+        raise CodegenBackendError("codegen _pdist_forward expects positional args only")
     input_arg = node.args[0]
     p_value = node.args[1] if len(node.args) > 1 else 2.0
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
         raise _error_expected_tensor(op_spec.name)
     if dtype_info.torch_dtype is not torch.float32:
-        raise RefBackendError("codegen _pdist_forward supports only torch.float32")
+        raise CodegenBackendError("codegen _pdist_forward supports only torch.float32")
     if dtypes[input_arg] is not torch.float32:
-        raise RefBackendError("codegen _pdist_forward supports only torch.float32")
+        raise CodegenBackendError("codegen _pdist_forward supports only torch.float32")
     if isinstance(p_value, torch.fx.Node):
-        raise RefBackendError("codegen _pdist_forward expects constant p value")
+        raise CodegenBackendError("codegen _pdist_forward expects constant p value")
     try:
         p_value = float(p_value)
     except (TypeError, ValueError) as exc:
-        raise RefBackendError("codegen _pdist_forward expects p to be a float") from exc
+        raise CodegenBackendError("codegen _pdist_forward expects p to be a float") from exc
     if p_value != 2.0:
-        raise RefBackendError("codegen _pdist_forward supports only p=2")
+        raise CodegenBackendError("codegen _pdist_forward supports only p=2")
     input_shape = shapes[input_arg]
     if len(input_shape) != 2:
-        raise RefBackendError("codegen _pdist_forward expects a 2D input tensor")
+        raise CodegenBackendError("codegen _pdist_forward expects a 2D input tensor")
     if not _is_contiguous(input_shape, strides[input_arg]):
-        raise RefBackendError("codegen _pdist_forward requires contiguous input")
+        raise CodegenBackendError("codegen _pdist_forward requires contiguous input")
     op_node = _OpNode(
         node=node,
         spec=op_spec,
@@ -2271,15 +2271,15 @@ def _handle_cdist_node(
     dtypes: Dict[torch.fx.Node, torch.dtype],
 ) -> _OpNode:
     if len(node.args) < 3:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen _cdist_forward expects two inputs and a p value"
         )
     if len(node.args) > 4:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen _cdist_forward expects at most four inputs"
         )
     if node.kwargs:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen _cdist_forward expects positional args only"
         )
     x1_arg = node.args[0]
@@ -2291,41 +2291,41 @@ def _handle_cdist_node(
     if not isinstance(x2_arg, torch.fx.Node) or x2_arg not in shapes:
         raise _error_expected_tensor(op_spec.name)
     if dtype_info.torch_dtype is not torch.float32:
-        raise RefBackendError("codegen _cdist_forward supports only torch.float32")
+        raise CodegenBackendError("codegen _cdist_forward supports only torch.float32")
     if dtypes[x1_arg] is not torch.float32 or dtypes[x2_arg] is not torch.float32:
-        raise RefBackendError("codegen _cdist_forward supports only torch.float32")
+        raise CodegenBackendError("codegen _cdist_forward supports only torch.float32")
     if isinstance(p_value, torch.fx.Node):
-        raise RefBackendError("codegen _cdist_forward expects constant p value")
+        raise CodegenBackendError("codegen _cdist_forward expects constant p value")
     try:
         p_value = float(p_value)
     except (TypeError, ValueError) as exc:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen _cdist_forward expects p to be a float"
         ) from exc
     if p_value != 2.0:
-        raise RefBackendError("codegen _cdist_forward supports only p=2")
+        raise CodegenBackendError("codegen _cdist_forward supports only p=2")
     if isinstance(compute_mode, torch.fx.Node):
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen _cdist_forward expects constant compute_mode value"
         )
     if compute_mode not in (None, 0):
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen _cdist_forward supports only compute_mode=None or 0"
         )
     x1_shape = shapes[x1_arg]
     x2_shape = shapes[x2_arg]
     if len(x1_shape) != 2 or len(x2_shape) != 2:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen _cdist_forward expects 2D input tensors"
         )
     if x1_shape[1] != x2_shape[1]:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen _cdist_forward expects matching feature dimensions"
         )
     if not _is_contiguous(x1_shape, strides[x1_arg]) or not _is_contiguous(
         x2_shape, strides[x2_arg]
     ):
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen _cdist_forward requires contiguous inputs"
         )
     op_node = _OpNode(
@@ -2365,7 +2365,7 @@ def _handle_addmm_like_node(
         input_shapes.append(shapes[arg])
     input_dtypes = [dtypes[arg] for arg in input_nodes]
     if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} expects inputs to share the graph dtype"
         )
     _validate_addmm_like_scalars(op_name, dtype_info.torch_dtype, alpha, beta)
@@ -2398,12 +2398,12 @@ def _handle_diagonal_node(
     dtypes: Dict[torch.fx.Node, torch.dtype],
 ) -> _OpNode:
     if not node.args:
-        raise RefBackendError(f"codegen {op_spec.name} expects one input")
+        raise CodegenBackendError(f"codegen {op_spec.name} expects one input")
     input_arg = node.args[0]
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
         raise _error_expected_tensor(op_spec.name)
     if dtypes[input_arg] is not dtype_info.torch_dtype:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_spec.name} expects inputs to share the graph dtype"
         )
     offset, dim1, dim2 = _parse_diagonal_args(
@@ -2432,14 +2432,14 @@ def _handle_cumsum_node(
     dtypes: Dict[torch.fx.Node, torch.dtype],
 ) -> _OpNode:
     if not node.args:
-        raise RefBackendError(f"codegen {op_spec.name} expects one input")
+        raise CodegenBackendError(f"codegen {op_spec.name} expects one input")
     input_arg = node.args[0]
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
         raise _error_expected_tensor(op_spec.name)
     if dtype_info.torch_dtype is torch.bool:
-        raise RefBackendError("codegen cumsum does not support torch.bool tensors")
+        raise CodegenBackendError("codegen cumsum does not support torch.bool tensors")
     if dtypes[input_arg] is not dtype_info.torch_dtype:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_spec.name} expects inputs to share the graph dtype"
         )
     dim, dtype_override = _parse_cumsum_args(
@@ -2447,7 +2447,7 @@ def _handle_cumsum_node(
     )
     output_dtype = dtype_override or dtype_info.torch_dtype
     if output_dtype not in _CODEGEN_DTYPES:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_spec.name} expects dtype to be torch.float32, torch.int8, or torch.int32"
         )
     op_node = _OpNode(
@@ -2475,14 +2475,14 @@ def _handle_constant_pad_node(
     dtypes: Dict[torch.fx.Node, torch.dtype],
 ) -> _OpNode:
     if not node.args:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen constant_pad_nd expects at least one argument"
         )
     input_arg = node.args[0]
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
         raise _error_expected_tensor(op_spec.name)
     if dtypes[input_arg] is not dtype_info.torch_dtype:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen constant_pad_nd expects inputs to share the graph dtype"
         )
     pad = None
@@ -2492,12 +2492,12 @@ def _handle_constant_pad_node(
     if len(node.args) > 2:
         value = node.args[2]
     if len(node.args) > 3:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen constant_pad_nd expects at most three positional arguments"
         )
     extra_kwargs = set(node.kwargs) - {"pad", "value"}
     if extra_kwargs:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen constant_pad_nd expects only pad and value kwargs"
         )
     if "pad" in node.kwargs:
@@ -2509,23 +2509,23 @@ def _handle_constant_pad_node(
             raise _error_kwarg_specified_once(op_spec.name, "value")
         value = node.kwargs["value"]
     if pad is None:
-        raise RefBackendError("codegen constant_pad_nd expects a pad argument")
+        raise CodegenBackendError("codegen constant_pad_nd expects a pad argument")
     if isinstance(pad, torch.fx.Node):
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen constant_pad_nd expects pad to be a constant list"
         )
     if not isinstance(pad, (tuple, list)):
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen constant_pad_nd expects pad to be a list or tuple"
         )
     if len(pad) % 2 != 0:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen constant_pad_nd expects pad to have an even number of values"
         )
     pad_values = []
     for item in pad:
         if isinstance(item, numbers.Real) and not float(item).is_integer():
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen constant_pad_nd expects pad values to be integers"
             )
         try:
@@ -2534,13 +2534,13 @@ def _handle_constant_pad_node(
             try:
                 pad_values.append(int(item))
             except (TypeError, ValueError) as exc:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen constant_pad_nd expects pad values to be integers"
                 ) from exc
     input_shape = shapes[input_arg]
     rank = len(input_shape)
     if len(pad_values) > 2 * rank:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen constant_pad_nd expects pad to have at most 2 * input rank values"
         )
     pad_before = [0] * rank
@@ -2550,7 +2550,7 @@ def _handle_constant_pad_node(
         pad_before[dim] = pad_values[2 * idx]
         pad_after[dim] = pad_values[2 * idx + 1]
     if isinstance(value, torch.fx.Node):
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen constant_pad_nd expects a constant padding value"
         )
     value = _normalize_scalar_value(op_spec.name, value)
@@ -2587,37 +2587,37 @@ def _handle_gather_node(
     if not isinstance(index, torch.fx.Node) or index not in shapes:
         raise _error_expected_tensor(op_spec.name)
     if dtypes[input_arg] is not dtype_info.torch_dtype:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen gather expects input to match the graph dtype"
         )
     if dtypes[index] not in _EMBEDDING_INDEX_DTYPES:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen gather expects index dtype to be torch.int32 or torch.int64"
         )
     if isinstance(sparse_grad, torch.fx.Node):
-        raise RefBackendError("codegen gather expects sparse_grad to be False")
+        raise CodegenBackendError("codegen gather expects sparse_grad to be False")
     if sparse_grad not in (False, 0, None):
-        raise RefBackendError("codegen gather supports only sparse_grad=False")
+        raise CodegenBackendError("codegen gather supports only sparse_grad=False")
     input_shape = shapes[input_arg]
     index_shape = shapes[index]
     if not input_shape:
-        raise RefBackendError("codegen gather expects input to have at least 1 dimension")
+        raise CodegenBackendError("codegen gather expects input to have at least 1 dimension")
     if len(index_shape) != len(input_shape):
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen gather expects index to have the same rank as input"
         )
     dim_value = _parse_constant_int(op_spec.name, "dim", dim)
     if dim_value < 0:
         dim_value += len(input_shape)
     if dim_value < 0 or dim_value >= len(input_shape):
-        raise RefBackendError("codegen gather dim is out of range")
+        raise CodegenBackendError("codegen gather dim is out of range")
     for idx, (input_dim, index_dim) in enumerate(
         zip(input_shape, index_shape)
     ):
         if idx == dim_value:
             continue
         if input_dim != index_dim:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen gather expects index shape to match input shape"
             )
     op_node = _OpNode(
@@ -2646,20 +2646,20 @@ def _handle_fill_node(
     inplace_input: int | None,
 ) -> _OpNode:
     if not node.args:
-        raise RefBackendError(f"codegen {op_spec.name} expects inputs")
+        raise CodegenBackendError(f"codegen {op_spec.name} expects inputs")
     input_arg = node.args[0]
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
         raise _error_expected_tensor(op_spec.name)
     value = None
     if len(node.args) > 2:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_spec.name} expects a tensor and scalar value"
         )
     if len(node.args) > 1:
         value = node.args[1]
     if "value" in node.kwargs:
         if value is not None:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects a single scalar value"
             )
         value = node.kwargs["value"]
@@ -2675,60 +2675,60 @@ def _handle_fill_node(
         }
         extra = set(node.kwargs) - allowed
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
             )
         if "fill_value" in node.kwargs:
             if value is not None:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} expects a single scalar value"
                 )
             value = node.kwargs["fill_value"]
         if "value" in node.kwargs:
             if value is not None:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} expects a single scalar value"
                 )
             value = node.kwargs["value"]
         dtype = node.kwargs.get("dtype")
         if isinstance(dtype, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects dtype to be a constant"
             )
         if dtype is not None and dtype is not dtype_info.torch_dtype:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects dtype to match the graph dtype"
             )
         layout = node.kwargs.get("layout")
         if isinstance(layout, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects layout to be a constant"
             )
         if layout is not None and layout is not torch.strided:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects layout to be None or torch.strided"
             )
         device = node.kwargs.get("device")
         if isinstance(device, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects device to be a constant"
             )
         if device is not None and device != "cpu" and device != torch.device("cpu"):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects device to be None or cpu"
             )
         pin_memory = node.kwargs.get("pin_memory")
         if isinstance(pin_memory, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects pin_memory to be a constant"
             )
         if pin_memory not in (None, False):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects pin_memory to be False"
             )
         memory_format = node.kwargs.get("memory_format")
         if isinstance(memory_format, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects memory_format to be a constant"
             )
         if memory_format not in (
@@ -2736,25 +2736,25 @@ def _handle_fill_node(
             torch.contiguous_format,
             torch.preserve_format,
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects memory_format to be None, "
                 "torch.contiguous_format, or torch.preserve_format"
             )
         if memory_format in (None, torch.preserve_format):
             if strides[input_arg] != _contiguous_strides(shapes[input_arg]):
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} expects contiguous input when memory_format preserves format"
                 )
     elif node.kwargs and set(node.kwargs) != {"value"}:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_spec.name} expects only 'value' as a keyword argument"
         )
     if value is None:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_spec.name} expects a scalar value"
         )
     if dtypes[input_arg] is not dtype_info.torch_dtype:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_spec.name} expects inputs to share the graph dtype"
         )
     scalar_value = _normalize_scalar_value(op_spec.name, value)
@@ -2794,7 +2794,7 @@ def _parse_arange_dtype(
         else:
             dtype = torch.int32
     if dtype is torch.bool:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} supports only numeric dtypes"
         )
     dtype_spec = _CODEGEN_DTYPES.get(dtype)
@@ -2804,14 +2804,14 @@ def _parse_arange_dtype(
             for supported_dtype in _CODEGEN_DTYPES
             if supported_dtype is not torch.bool
         )
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} supports only {supported}"
         )
     if (
         dtype_info is not None
         and dtype_spec.torch_dtype is not dtype_info.torch_dtype
     ):
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_name} expects dtype to match the graph dtype"
         )
     return dtype_spec
@@ -2826,17 +2826,17 @@ def _handle_view_node(
     dtypes: Dict[torch.fx.Node, torch.dtype],
 ) -> _OpNode:
     if not node.args:
-        raise RefBackendError(f"codegen {op_spec.name} expects one input")
+        raise CodegenBackendError(f"codegen {op_spec.name} expects one input")
     input_arg = node.args[0]
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
         raise _error_expected_tensor(op_spec.name)
     if dtypes[input_arg] is not dtype_info.torch_dtype:
-        raise RefBackendError(
+        raise CodegenBackendError(
             f"codegen {op_spec.name} expects inputs to share the graph dtype"
         )
     if op_spec.name == "as_strided":
         if len(node.args) > 4:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen as_strided expects at most four inputs"
             )
         size = node.args[1] if len(node.args) > 1 else None
@@ -2859,19 +2859,19 @@ def _handle_view_node(
                 storage_offset = node.kwargs["storage_offset"]
             extra = set(node.kwargs) - {"size", "stride", "storage_offset"}
             if extra:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
                 )
         if size is None or stride is None:
-            raise RefBackendError("codegen as_strided expects size and stride")
+            raise CodegenBackendError("codegen as_strided expects size and stride")
         if isinstance(size, torch.fx.Node) or isinstance(stride, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen as_strided expects size/stride to be constants"
             )
         if storage_offset is None:
             storage_offset = 0
         if isinstance(storage_offset, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen as_strided expects storage_offset to be an int"
             )
         size_tuple = _normalize_as_strided_sequence(op_spec.name, size, "size")
@@ -2879,12 +2879,12 @@ def _handle_view_node(
             op_spec.name, stride, "stride"
         )
         if len(size_tuple) != len(stride_tuple):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen as_strided expects size and stride to match length"
             )
         storage_offset_value = int(operator.index(storage_offset))
         if storage_offset_value < 0:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen as_strided expects storage_offset to be non-negative"
             )
         op_node = _OpNode(
@@ -2909,7 +2909,7 @@ def _handle_view_node(
         input_strides = strides[input_arg]
         if node.target is torch.ops.aten.squeeze.dim:
             if len(node.args) > 2:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen squeeze expects at most two inputs"
                 )
             dim = node.args[1] if len(node.args) > 1 else None
@@ -2920,22 +2920,22 @@ def _handle_view_node(
                     dim = node.kwargs["dim"]
                 extra = set(node.kwargs) - {"dim"}
                 if extra:
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
                     )
             if dim is None:
-                raise RefBackendError("codegen squeeze expects dim to be an int")
+                raise CodegenBackendError("codegen squeeze expects dim to be an int")
             dim_value = _parse_constant_int(op_spec.name, "dim", dim)
             if dim_value < 0:
                 dim_value += len(input_shape)
             if dim_value < 0 or dim_value >= len(input_shape):
-                raise RefBackendError("codegen squeeze dim is out of range")
+                raise CodegenBackendError("codegen squeeze dim is out of range")
             remove_dims = {
                 dim_value
             } if input_shape[dim_value] == 1 else set()
         else:
             if len(node.args) > 2:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen squeeze expects at most two inputs"
                 )
             dims = node.args[1] if len(node.args) > 1 else None
@@ -2946,20 +2946,20 @@ def _handle_view_node(
                     dims = node.kwargs["dim"]
                 extra = set(node.kwargs) - {"dim"}
                 if extra:
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
                     )
             if dims is None:
-                raise RefBackendError("codegen squeeze expects dim to be a list")
+                raise CodegenBackendError("codegen squeeze expects dim to be a list")
             if isinstance(dims, torch.fx.Node) or not isinstance(dims, (tuple, list)):
-                raise RefBackendError("codegen squeeze expects dim to be a list")
+                raise CodegenBackendError("codegen squeeze expects dim to be a list")
             dim_values = []
             for dim in dims:
                 dim_value = _parse_constant_int(op_spec.name, "dim", dim)
                 if dim_value < 0:
                     dim_value += len(input_shape)
                 if dim_value < 0 or dim_value >= len(input_shape):
-                    raise RefBackendError("codegen squeeze dim is out of range")
+                    raise CodegenBackendError("codegen squeeze dim is out of range")
                 dim_values.append(dim_value)
             remove_dims = {
                 dim for dim in set(dim_values) if input_shape[dim] == 1
@@ -2986,7 +2986,7 @@ def _handle_view_node(
         dtypes[node] = dtype_info.torch_dtype
         strides[node] = _contiguous_strides(output_shape)
         return op_node
-    raise RefBackendError(f"Unsupported view op: {op_spec.name}")
+    raise CodegenBackendError(f"Unsupported view op: {op_spec.name}")
 
 
 def _parse_resize_size(op_name: str, size_value: object) -> Tuple[int, ...]:
@@ -2999,10 +2999,10 @@ def _parse_resize_size(op_name: str, size_value: object) -> Tuple[int, ...]:
             try:
                 return tuple(int(item) for item in size_value)
             except TypeError as exc:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_name} expects size values to be integers"
                 ) from exc
-    raise RefBackendError(f"codegen {op_name} expects size to be a sequence")
+    raise CodegenBackendError(f"codegen {op_name} expects size to be a sequence")
 
 
 def _parse_empty_strided_stride(
@@ -3017,10 +3017,10 @@ def _parse_empty_strided_stride(
             try:
                 return tuple(int(item) for item in stride_value)
             except TypeError as exc:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_name} expects stride values to be integers"
                 ) from exc
-    raise RefBackendError(f"codegen {op_name} expects stride to be a sequence")
+    raise CodegenBackendError(f"codegen {op_name} expects stride to be a sequence")
 
 
 def _handle_resize_node(
@@ -3035,29 +3035,29 @@ def _handle_resize_node(
     memory_format = None
     if node.kwargs:
         if set(node.kwargs) != {"memory_format"}:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen resize_ expects only memory_format as a keyword argument"
             )
         memory_format = node.kwargs.get("memory_format")
     if len(node.args) != 2:
-        raise RefBackendError("codegen resize_ expects input and size arguments")
+        raise CodegenBackendError("codegen resize_ expects input and size arguments")
     input_arg, size_arg = node.args
     if not isinstance(input_arg, torch.fx.Node):
         raise _error_expected_tensor(op_spec.name)
     if input_arg not in shapes:
         raise _error_expected_tensor(op_spec.name)
     if dtypes[input_arg] is not dtype_info.torch_dtype:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen resize_ expects inputs to share the graph dtype"
         )
     size = _parse_resize_size(op_spec.name, size_arg)
     if any(dim < 0 for dim in size):
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen resize_ expects size values to be non-negative"
         )
     input_shape = shapes[input_arg]
     if math.prod(size) != math.prod(input_shape):
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen resize_ expects size to match the input numel"
         )
     op_node = _OpNode(
@@ -3079,7 +3079,7 @@ def _handle_resize_node(
     elif memory_format is torch.channels_last_3d:
         output_strides = _channels_last_3d_strides(output_shape)
     else:
-        raise RefBackendError("Unsupported memory formatPreserve")
+        raise CodegenBackendError("Unsupported memory formatPreserve")
     strides[node] = output_strides
     return op_node
 
@@ -3091,7 +3091,7 @@ def _parse_where_inputs(
     scalar_values: Dict[torch.fx.Node, object],
 ) -> Tuple[List[torch.fx.Node], List[Tuple[int, ...]], Dict[str, object]]:
     if len(node.args) < 3:
-        raise RefBackendError(f"codegen {op_spec.name} expects three inputs")
+        raise CodegenBackendError(f"codegen {op_spec.name} expects three inputs")
     cond_arg, a_arg, b_arg = node.args[:3]
     input_nodes: List[torch.fx.Node] = []
     input_shapes: List[Tuple[int, ...]] = []
@@ -3150,7 +3150,7 @@ def _analyze_generic_graph(
             try:
                 example = next(input_iter)
             except StopIteration as exc:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen backend expects example inputs to match placeholder count"
                 ) from exc
             placeholders.append(node)
@@ -3180,28 +3180,28 @@ def _analyze_generic_graph(
         if node.op in {"call_function", "call_method"}:
             if node.op == "call_function" and node.target is operator.getitem:
                 if node.kwargs:
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         "codegen backend expects getitem to use positional args"
                     )
                 if len(node.args) != 2:
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         "codegen backend expects getitem to have two inputs"
                     )
                 source, index = node.args
                 if not isinstance(source, torch.fx.Node):
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         "codegen backend expects getitem source to be a tensor op"
                     )
                 if isinstance(index, torch.fx.Node):
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         "codegen backend supports only constant getitem indices"
                     )
                 if index not in (0, 0.0, 1, 1.0, 2, 2.0):
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         "codegen backend supports only getitem[0], getitem[1], or getitem[2]"
                     )
                 if source not in shapes:
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         "codegen backend expects getitem source to be analyzed"
                     )
                 if source.target not in {
@@ -3212,7 +3212,7 @@ def _analyze_generic_graph(
                     torch.ops.aten._embedding_bag,
                     torch.ops.aten._embedding_bag.default,
                 }:
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         "codegen backend supports getitem only for _native_batch_norm_legit* ops"
                     )
                 if index in (0, 0.0):
@@ -3244,18 +3244,18 @@ def _analyze_generic_graph(
                     "cumsum",
                     "clone",
                 }:
-                    raise RefBackendError(f"Unsupported call_method: {node.target}")
+                    raise CodegenBackendError(f"Unsupported call_method: {node.target}")
                 op_spec = SUPPORTED_OPS[node.target]
                 inplace_input = None
             else:
                 target_info = TARGET_REGISTRY.get(node.target)
                 if target_info is None:
-                    raise RefBackendError(f"Unsupported call_function: {node.target}")
+                    raise CodegenBackendError(f"Unsupported call_function: {node.target}")
                 op_spec = target_info.op_spec
                 inplace_input = target_info.inplace_arg_index
             handler = _KIND_HANDLERS.get(op_spec.kind)
             if handler is None:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen backend does not support kind "
                     f"'{op_spec.kind.value}'"
                 )
@@ -3271,10 +3271,10 @@ def _analyze_generic_graph(
             )
             if build_result is None:
                 if dtype_info is None:
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         "codegen backend requires at least one tensor input or a factory op dtype"
                     )
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen backend does not support building kind "
                     f"'{op_spec.kind.value}'"
                 )
@@ -3285,34 +3285,34 @@ def _analyze_generic_graph(
         if node.op == "output":
             output_node = node
             continue
-        raise RefBackendError(f"Unsupported node op: {node.op}")
+        raise CodegenBackendError(f"Unsupported node op: {node.op}")
 
     try:
         next(input_iter)
     except StopIteration:
         pass
     else:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen backend expects example inputs to match placeholder count"
         )
 
     if not op_nodes:
-        raise RefBackendError("codegen backend requires at least one operation")
+        raise CodegenBackendError("codegen backend requires at least one operation")
     if output_node is None:
-        raise RefBackendError("codegen backend requires an output node")
+        raise CodegenBackendError("codegen backend requires an output node")
     if not tensor_placeholders and dtype_info is None:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen backend requires at least one tensor input or a factory op dtype"
         )
     if dtype_info is None:
-        raise RefBackendError("codegen backend could not infer a graph dtype")
+        raise CodegenBackendError("codegen backend could not infer a graph dtype")
     output_value, output_structure = _unwrap_output_node(output_node)
     while output_value in alias_map:
         output_value = alias_map[output_value]
     if output_value not in shapes:
-        raise RefBackendError("codegen backend expects a single output node")
+        raise CodegenBackendError("codegen backend expects a single output node")
     if output_value not in {op.node for op in op_nodes}:
-        raise RefBackendError("codegen backend output must be an operator result")
+        raise CodegenBackendError("codegen backend output must be an operator result")
 
     output_op = next(op for op in op_nodes if op.node is output_value)
     for op_node in op_nodes:
@@ -3321,7 +3321,7 @@ def _analyze_generic_graph(
             and op_node.node is not output_value
             and not _is_contiguous(op_node.output_shape, strides[op_node.node])
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen empty_strided supports non-contiguous strides only for outputs"
             )
 
@@ -3377,20 +3377,20 @@ def _validate_runtime_inputs(
     for tensor, expected_dtype in zip(inputs, expected_dtypes):
         if expected_dtype is torch.bool:
             if tensor.dtype is not torch.bool:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen backend expects boolean condition tensors"
                 )
         elif expected_dtype in _EMBEDDING_INDEX_DTYPES:
             if tensor.dtype is not expected_dtype:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen backend expects int32 or int64 index tensors"
                 )
         elif tensor.dtype is not graph_dtype.torch_dtype:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen backend supports only {graph_dtype.torch_dtype} tensors"
             )
         if tensor.device.type != "cpu":
-            raise RefBackendError("codegen backend supports only CPU tensors")
+            raise CodegenBackendError("codegen backend supports only CPU tensors")
 
 
 def _compile_graph(
@@ -3464,7 +3464,7 @@ def _compile_graph(
         else:
             normalized_args = list(args)
         if len(normalized_args) != len(graph.placeholders):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen backend expects {len(graph.placeholders)} inputs, got {len(normalized_args)}"
             )
         env: Dict[torch.fx.Node, object] = {}
@@ -3473,7 +3473,7 @@ def _compile_graph(
             env[node] = value
             if node in graph.tensor_placeholders:
                 if not isinstance(value, torch.Tensor):
-                    raise RefBackendError("codegen backend expects tensor inputs only")
+                    raise CodegenBackendError("codegen backend expects tensor inputs only")
                 input_tensors.append(value)
         expected_dtypes = [graph.dtypes[node] for node in graph.tensor_placeholders]
         _validate_runtime_inputs(input_tensors, expected_dtypes, graph.dtype)
@@ -3506,7 +3506,7 @@ def _compile_graph(
         if output_inplace_input is not None:
             original_input = env[output_inplace_input]
             if not isinstance(original_input, torch.Tensor):
-                raise RefBackendError("codegen backend expects tensor inputs only")
+                raise CodegenBackendError("codegen backend expects tensor inputs only")
             inplace_index = graph.tensor_placeholders.index(output_inplace_input)
             inplace_out = contiguous_inputs[inplace_index]
             lib.run(contiguous_inputs, inplace_out)
@@ -3602,7 +3602,7 @@ class _BackendElementwiseHandler(ElementwiseHandler):
             )
             return OpNodeBuildResult(op_node)
         if dtype_info is None:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen backend requires at least one tensor input or a factory op dtype"
             )
         param_values: Dict[str, object] = {}
@@ -3614,7 +3614,7 @@ class _BackendElementwiseHandler(ElementwiseHandler):
             lhs, rhs = node.args
             if isinstance(lhs, torch.fx.Node) ^ isinstance(rhs, torch.fx.Node):
                 if node.kwargs:
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         f"codegen {op_spec.name} expects positional args only"
                     )
                 input_arg = lhs if isinstance(lhs, torch.fx.Node) else rhs
@@ -3631,6 +3631,26 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                     param_values["scalar"] = _normalize_scalar_value(
                         op_spec.name, scalar_arg
                     )
+            elif isinstance(lhs, torch.fx.Node) and isinstance(rhs, torch.fx.Node):
+                lhs_in_shapes = lhs in shapes
+                rhs_in_shapes = rhs in shapes
+                if lhs_in_shapes ^ rhs_in_shapes:
+                    if node.kwargs:
+                        raise CodegenBackendError(
+                            f"codegen {op_spec.name} expects positional args only"
+                        )
+                    input_arg = lhs if lhs_in_shapes else rhs
+                    scalar_arg = rhs if lhs_in_shapes else lhs
+                    input_nodes = [input_arg]
+                    input_shapes = [shapes[input_arg]]
+                    if op_spec.name in _BITWISE_OPS:
+                        param_values["scalar"] = _parse_bitwise_scalar(
+                            op_spec.name, scalar_arg, dtype_info.torch_dtype
+                        )
+                    else:
+                        param_values["scalar"] = _resolve_scalar_arg(
+                            op_spec.name, scalar_arg, scalar_values
+                        )
 
         if not input_nodes:
             if (
@@ -3651,13 +3671,13 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                 elif op_spec.name == "relu":
                     allowed_kwargs = {"inplace"}
                     if node.kwargs.get("inplace"):
-                        raise RefBackendError(
+                        raise CodegenBackendError(
                             "codegen relu expects inplace to be False"
                         )
                 if is_out_overload:
                     allowed_kwargs.add("out")
                 if node.kwargs and set(node.kwargs) - allowed_kwargs:
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         "codegen backend expects positional args only"
                     )
                 if op_spec.kind == OpKind.UNARY:
@@ -3670,7 +3690,7 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                     expected_arity = 2
                 if is_out_overload:
                     if inplace_input is None:
-                        raise RefBackendError(
+                        raise CodegenBackendError(
                             f"codegen {op_spec.name} expects out to be provided"
                         )
                     if "out" in node.kwargs:
@@ -3683,41 +3703,41 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                         out_arg = node.args[inplace_input]
                     elif len(node.args) != expected_arity:
                         if expected_arity == 1:
-                            raise RefBackendError(
+                            raise CodegenBackendError(
                                 f"codegen {op_spec.name} expects one input"
                             )
                         if expected_arity == 2:
-                            raise RefBackendError(
+                            raise CodegenBackendError(
                                 f"codegen {op_spec.name} expects exactly two inputs"
                             )
-                        raise RefBackendError(
+                        raise CodegenBackendError(
                             f"codegen {op_spec.name} expects exactly three inputs"
                         )
                     if out_arg is None:
-                        raise RefBackendError(
+                        raise CodegenBackendError(
                             f"codegen {op_spec.name} expects out to be provided"
                         )
                 elif op_spec.name == "copy":
                     if len(node.args) not in {2, 3}:
-                        raise RefBackendError(
+                        raise CodegenBackendError(
                             "codegen copy expects two inputs and optional non_blocking"
                         )
                 elif len(node.args) != expected_arity:
                     if expected_arity == 1:
-                        raise RefBackendError(
+                        raise CodegenBackendError(
                             f"codegen {op_spec.name} expects one input"
                         )
                     if expected_arity == 2:
-                        raise RefBackendError(
+                        raise CodegenBackendError(
                             f"codegen {op_spec.name} expects exactly two inputs"
                         )
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         f"codegen {op_spec.name} expects exactly three inputs"
                     )
                 if op_spec.name == "div":
                     rounding_mode = node.kwargs.get("rounding_mode")
                     if rounding_mode is not None:
-                        raise RefBackendError(
+                        raise CodegenBackendError(
                             "codegen div expects rounding_mode to be None"
                         )
                 if op_spec.name == "copy":
@@ -3731,7 +3751,7 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                             )
                         non_blocking = node.kwargs["non_blocking"]
                     if non_blocking not in (None, False, 0):
-                        raise RefBackendError(
+                        raise CodegenBackendError(
                             "codegen copy expects non_blocking to be False"
                         )
                 if op_spec.name == "copy":
@@ -3781,20 +3801,20 @@ class _BackendElementwiseHandler(ElementwiseHandler):
             ):
                 pass
             else:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} expects integer tensors"
                 )
         if op_spec.name in _FLOAT_ONLY_UNARY_OPS:
             if dtype_info.torch_dtype is not torch.float32:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} supports only torch.float32 tensors"
                 )
             if any(dtype is not torch.float32 for dtype in input_dtypes):
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} supports only torch.float32 tensors"
                 )
         if op_spec.name == "clamp" and dtype_info.torch_dtype is torch.bool:
-            raise RefBackendError("codegen clamp supports only numeric tensors")
+            raise CodegenBackendError("codegen clamp supports only numeric tensors")
         if (
             op_spec.name == "clamp"
             and dtype_info.torch_dtype in _INTEGER_CODEGEN_DTYPES
@@ -3804,22 +3824,22 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                 if value is None:
                     continue
                 if not float(value).is_integer():
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         "codegen clamp expects integer min/max for integer tensors"
                     )
         if op_spec.kind == OpKind.WHERE:
             if input_dtypes[0] is not torch.bool:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen where expects condition to be a boolean tensor"
                 )
             if any(
                 dtype is not dtype_info.torch_dtype for dtype in input_dtypes[1:]
             ):
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen where expects self and other to match the graph dtype"
                 )
         elif any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects inputs to share the graph dtype"
             )
         op_node = _OpNode(
@@ -3834,7 +3854,7 @@ class _BackendElementwiseHandler(ElementwiseHandler):
         output_shape = _infer_output_shape(op_node, shape_input_shapes)
         op_node.output_shape = output_shape
         if out_arg is not None and shapes[out_arg] != output_shape:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects out to match output shape"
             )
         shapes[node] = output_shape
@@ -3859,11 +3879,11 @@ class _BackendReductionHandler(ReductionHandler):
         inplace_input: int | None,
     ) -> OpNodeBuildResult | None:
         if dtype_info is None:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen backend requires at least one tensor input or a factory op dtype"
             )
         if len(node.args) < 1:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects one input"
             )
         args_to_check = node.args[:1]
@@ -3878,13 +3898,13 @@ class _BackendReductionHandler(ReductionHandler):
             input_shapes.append(shapes[arg])
         input_dtypes = [dtypes[arg] for arg in input_nodes]
         if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects inputs to share the graph dtype"
             )
         param_values: Dict[str, object] = {}
         if op_spec.name == "norm":
             if dtype_info.torch_dtype is not torch.float32:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen norm supports only torch.float32 tensors"
                 )
             reduction_dims, keepdim, reduce_all, norm_p = _parse_norm_args(
@@ -3901,7 +3921,7 @@ class _BackendReductionHandler(ReductionHandler):
                 op_spec.name == "var"
                 and dtype_info.torch_dtype is not torch.float32
             ):
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen var supports only torch.float32 tensors"
                 )
         param_values["reduce_all"] = reduce_all
@@ -3940,11 +3960,11 @@ class _BackendArgReductionHandler(ArgReductionHandler):
         inplace_input: int | None,
     ) -> OpNodeBuildResult | None:
         if dtype_info is None:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen backend requires at least one tensor input or a factory op dtype"
             )
         if len(node.args) < 1:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects one input"
             )
         args_to_check = node.args[:1]
@@ -3959,7 +3979,7 @@ class _BackendArgReductionHandler(ArgReductionHandler):
             input_shapes.append(shapes[arg])
         input_dtypes = [dtypes[arg] for arg in input_nodes]
         if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects inputs to share the graph dtype"
             )
         reduction_dims, keepdim, reduce_all = _parse_argminmax_args(
@@ -3973,7 +3993,7 @@ class _BackendArgReductionHandler(ArgReductionHandler):
             for dim in reduction_dims:
                 reduction_count *= input_shapes[0][dim]
         if reduction_count == 0:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects a non-empty reduction dimension"
             )
         op_node = _OpNode(
@@ -4011,7 +4031,7 @@ class _BackendMatmulHandler(MatmulHandler):
         inplace_input: int | None,
     ) -> OpNodeBuildResult | None:
         if dtype_info is None:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen backend requires at least one tensor input or a factory op dtype"
             )
         allowed_kwargs = set()
@@ -4019,14 +4039,14 @@ class _BackendMatmulHandler(MatmulHandler):
         if is_out_overload:
             allowed_kwargs.add("out")
         if node.kwargs and set(node.kwargs) - allowed_kwargs:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen backend expects positional args only"
             )
         expected_arity = 2
         out_arg: torch.fx.Node | None = None
         if is_out_overload:
             if inplace_input is None:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} expects out to be provided"
                 )
             if "out" in node.kwargs:
@@ -4036,15 +4056,15 @@ class _BackendMatmulHandler(MatmulHandler):
             elif len(node.args) == expected_arity + 1:
                 out_arg = node.args[inplace_input]
             elif len(node.args) != expected_arity:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} expects exactly two inputs"
                 )
             if out_arg is None:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} expects out to be provided"
                 )
         elif len(node.args) != expected_arity:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects exactly two inputs"
             )
         input_nodes: List[torch.fx.Node] = []
@@ -4065,7 +4085,7 @@ class _BackendMatmulHandler(MatmulHandler):
             input_shapes.append(shapes[out_arg])
         input_dtypes = [dtypes[arg] for arg in input_nodes]
         if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects inputs to share the graph dtype"
             )
         op_node = _OpNode(
@@ -4079,7 +4099,7 @@ class _BackendMatmulHandler(MatmulHandler):
         output_shape = _infer_output_shape(op_node, input_shapes)
         op_node.output_shape = output_shape
         if out_arg is not None and shapes[out_arg] != output_shape:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects out to match output shape"
             )
         shapes[node] = output_shape
@@ -4115,11 +4135,11 @@ class _BackendAddrHandler(AddrHandler):
             input_shape = shapes[op_node.inputs[inplace_input]]
             output_shape = op_node.output_shape
             if len(input_shape) != 2:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen addr expects 2D input and 1D vectors"
                 )
             if tuple(output_shape) != tuple(input_shape):
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen addr expects input shape to match outer product output"
                 )
         return OpNodeBuildResult(op_node)
@@ -4147,21 +4167,21 @@ class _BackendArangeHandler(ArangeHandler):
         }
         extra = set(node.kwargs) - allowed_kwargs
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
             )
         if node.kwargs.get("layout") is not None:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects layout to be None"
             )
         device = node.kwargs.get("device")
         if device is not None and device != "cpu" and device != torch.device("cpu"):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects device to be None or cpu"
             )
         pin_memory = node.kwargs.get("pin_memory")
         if pin_memory not in (None, False):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects pin_memory to be False"
             )
         start_arg = None
@@ -4169,7 +4189,7 @@ class _BackendArangeHandler(ArangeHandler):
         step_arg = None
         if node.args:
             if len(node.args) > 3:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} expects start and end arguments"
                 )
             start_arg = node.args[0]
@@ -4190,7 +4210,7 @@ class _BackendArangeHandler(ArangeHandler):
                 raise _error_kwarg_specified_once(op_spec.name, "step")
             step_arg = node.kwargs["step"]
         if start_arg is None or end_arg is None:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects start and end arguments"
             )
         if step_arg is None:
@@ -4200,7 +4220,7 @@ class _BackendArangeHandler(ArangeHandler):
         step = _resolve_scalar_arg(op_spec.name, step_arg, scalar_values)
         for name, value in (("start", start), ("end", end), ("step", step)):
             if not isinstance(value, numbers.Real):
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} expects {name} to be an int or float"
                 )
         dtype_spec = _parse_arange_dtype(
@@ -4242,31 +4262,31 @@ class _BackendConcatHandler(ConcatHandler):
                 raise _error_expected_tensor("cat")
             input_shapes.append(shapes[arg])
         if not input_shapes:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen cat expects a non-empty tensor list input"
             )
         rank = len(input_shapes[0])
         if rank == 0:
-            raise RefBackendError("codegen cat expects inputs with rank >= 1")
+            raise CodegenBackendError("codegen cat expects inputs with rank >= 1")
         if concat_dim < 0:
             concat_dim += rank
         if concat_dim < 0 or concat_dim >= rank:
-            raise RefBackendError("codegen cat dim is out of range")
+            raise CodegenBackendError("codegen cat dim is out of range")
         for shape in input_shapes:
             if len(shape) != rank:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen cat expects inputs with the same rank"
                 )
             for dim, size in enumerate(shape):
                 if dim == concat_dim:
                     continue
                 if size != input_shapes[0][dim]:
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         "codegen cat expects input shapes to match except in the concat dimension"
                     )
         input_dtypes = [dtypes[arg] for arg in input_nodes]
         if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen cat expects inputs to share the graph dtype"
             )
         op_node = _OpNode(
@@ -4297,11 +4317,11 @@ class _BackendEmptyStridedHandler(EmptyStridedHandler):
                 raise _error_kwarg_specified_once(op_spec.name, "dtype")
             node_dtype = node.kwargs["dtype"]
         if isinstance(node_dtype, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen empty_strided expects dtype to be a constant"
             )
         if node_dtype is None:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen empty_strided requires dtype when no tensor inputs are provided"
             )
         return node_dtype
@@ -4320,18 +4340,18 @@ class _BackendEmptyStridedHandler(EmptyStridedHandler):
         if dtype_info is None:
             return None
         if len(node.args) < 2:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects size and stride arguments"
             )
         if len(node.args) > 7:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects at most seven arguments"
             )
         size_arg, stride_arg = node.args[:2]
         if isinstance(size_arg, torch.fx.Node) or isinstance(
             stride_arg, torch.fx.Node
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects size and stride to be constants"
             )
         kwargs = dict(node.kwargs)
@@ -4355,28 +4375,28 @@ class _BackendEmptyStridedHandler(EmptyStridedHandler):
             "requires_grad",
         }
         if extra:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
             )
         dtype_value = kwargs.get("dtype")
         if dtype_value is not None and dtype_value is not dtype_info.torch_dtype:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects dtype to match the graph dtype"
             )
         for name in ("layout", "device"):
             if kwargs.get(name) is not None:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} expects {name} to be None"
                 )
         for name in ("pin_memory", "requires_grad"):
             if kwargs.get(name) not in (None, False):
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} expects {name} to be False"
                 )
         output_shape = _parse_resize_size(op_spec.name, size_arg)
         output_strides = _parse_empty_strided_stride(op_spec.name, stride_arg)
         if len(output_shape) != len(output_strides):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects size and stride to match length"
             )
         op_node = _OpNode(
@@ -4444,64 +4464,64 @@ class _BackendPool1dHandler(Pool1dHandler):
         if input_arg not in shapes:
             raise _error_expected_tensor(op_spec.name)
         if dtype_info.torch_dtype is not torch.float32:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32 tensors"
             )
         if dtypes[input_arg] is not torch.float32:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32 tensors"
             )
         if isinstance(kernel_size, torch.fx.Node) or isinstance(
             padding, torch.fx.Node
         ) or isinstance(ceil_mode, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects constant kernel, padding, and ceil_mode"
             )
         if stride is not None and isinstance(stride, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects constant stride values"
             )
         if isinstance(dilation, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects constant dilation values"
             )
         if isinstance(count_include_pad, torch.fx.Node) or isinstance(
             divisor_override, torch.fx.Node
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects constant pooling options"
             )
         input_shape = shapes[input_arg]
         if len(input_shape) != 3:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} requires 3D input tensors"
             )
         if not _is_contiguous(input_shape, strides[input_arg]):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} requires contiguous input tensors"
             )
         if op_spec.name == "adaptive_avg_pool1d":
             if isinstance(output_size, torch.fx.Node):
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen adaptive_avg_pool1d expects output_size to be an int"
                 )
             if isinstance(output_size, (tuple, list)):
                 if len(output_size) != 1:
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         "codegen adaptive_avg_pool1d expects a single output size"
                     )
                 output_size = output_size[0]
             if not isinstance(output_size, int):
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen adaptive_avg_pool1d expects output_size to be an int"
                 )
             if output_size <= 0:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen adaptive_avg_pool1d expects output_size to be positive"
                 )
             in_l = input_shape[2]
             if in_l % output_size != 0:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen adaptive_avg_pool1d requires input length divisible by output_size"
                 )
             kernel_value = in_l // output_size
@@ -4530,11 +4550,11 @@ class _BackendPool1dHandler(Pool1dHandler):
             or dilation_value <= 0
             or padding_value < 0
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects positive kernel, stride, and dilation with non-negative padding"
             )
         if ceil_mode and op_spec.name != "max_pool1d":
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} does not support ceil_mode"
             )
         if isinstance(count_include_pad, bool):
@@ -4542,7 +4562,7 @@ class _BackendPool1dHandler(Pool1dHandler):
         elif isinstance(count_include_pad, numbers.Integral):
             count_include_pad_value = bool(count_include_pad)
         else:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects count_include_pad to be a bool"
             )
         divisor_override_value = divisor_override
@@ -4550,12 +4570,12 @@ class _BackendPool1dHandler(Pool1dHandler):
             if isinstance(divisor_override, bool) or not isinstance(
                 divisor_override, numbers.Integral
             ):
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} expects divisor_override to be a positive int"
                 )
             divisor_override_value = int(divisor_override)
             if divisor_override_value <= 0:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} expects divisor_override to be a positive int"
                 )
         op_node = _OpNode(
@@ -4632,45 +4652,45 @@ class _BackendPool2dHandler(Pool2dHandler):
         if input_arg not in shapes:
             raise _error_expected_tensor(op_spec.name)
         if dtype_info.torch_dtype is not torch.float32:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32 tensors"
             )
         if dtypes[input_arg] is not torch.float32:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32 tensors"
             )
         if isinstance(kernel_size, torch.fx.Node) or isinstance(
             padding, torch.fx.Node
         ) or isinstance(ceil_mode, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects constant kernel, padding, and ceil_mode"
             )
         if stride is not None and isinstance(stride, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects constant stride values"
             )
         if isinstance(dilation, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects constant dilation values"
             )
         if isinstance(count_include_pad, torch.fx.Node) or isinstance(
             divisor_override, torch.fx.Node
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects constant pooling options"
             )
         input_shape = shapes[input_arg]
         if len(input_shape) != 4:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} requires 4D input tensors"
             )
         if not _is_contiguous(input_shape, strides[input_arg]):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} requires contiguous input tensors"
             )
         if op_spec.name == "adaptive_avg_pool2d":
             if isinstance(output_size, torch.fx.Node):
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen adaptive_avg_pool2d expects output_size to be a tuple of ints"
                 )
             if isinstance(output_size, torch.Size):
@@ -4679,25 +4699,25 @@ class _BackendPool2dHandler(Pool2dHandler):
                 output_pair = (output_size, output_size)
             elif isinstance(output_size, (tuple, list)):
                 if len(output_size) != 2:
-                    raise RefBackendError(
+                    raise CodegenBackendError(
                         "codegen adaptive_avg_pool2d expects output_size to have two values"
                     )
                 output_pair = tuple(output_size)
             else:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen adaptive_avg_pool2d expects output_size to be a tuple of ints"
                 )
             if not all(isinstance(item, int) for item in output_pair):
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen adaptive_avg_pool2d expects output_size to be a tuple of ints"
                 )
             if output_pair[0] <= 0 or output_pair[1] <= 0:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen adaptive_avg_pool2d expects output_size to be positive"
                 )
             in_h, in_w = input_shape[2], input_shape[3]
             if in_h % output_pair[0] != 0 or in_w % output_pair[1] != 0:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen adaptive_avg_pool2d requires input sizes divisible by output_size"
                 )
             kernel_pair = (in_h // output_pair[0], in_w // output_pair[1])
@@ -4730,20 +4750,20 @@ class _BackendPool2dHandler(Pool2dHandler):
             or padding_pair[0] < 0
             or padding_pair[1] < 0
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects positive kernel, stride, and dilation with non-negative padding"
             )
         if not isinstance(ceil_mode, bool):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects ceil_mode to be a bool"
             )
         if not isinstance(count_include_pad, bool):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects count_include_pad to be a bool"
             )
         if divisor_override is not None:
             if not isinstance(divisor_override, int) or divisor_override <= 0:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} expects divisor_override to be a positive int"
                 )
         op_node = _OpNode(
@@ -4797,44 +4817,44 @@ class _BackendPool3dHandler(Pool3dHandler):
         if input_arg not in shapes:
             raise _error_expected_tensor(op_spec.name)
         if dtype_info.torch_dtype is not torch.float32:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32 tensors"
             )
         if dtypes[input_arg] is not torch.float32:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32 tensors"
             )
         if isinstance(kernel_size, torch.fx.Node) or isinstance(
             padding, torch.fx.Node
         ) or isinstance(ceil_mode, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects constant kernel, padding, and ceil_mode"
             )
         if stride is not None and isinstance(stride, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects constant stride values"
             )
         if isinstance(dilation, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects constant dilation values"
             )
         if isinstance(count_include_pad, torch.fx.Node) or isinstance(
             divisor_override, torch.fx.Node
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects constant pooling options"
             )
         input_shape = shapes[input_arg]
         if len(input_shape) != 5:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} requires 5D input tensors"
             )
         if not _is_contiguous(input_shape, strides[input_arg]):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} requires contiguous input tensors"
             )
         if isinstance(output_size, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool3d expects output_size to be a tuple of ints"
             )
         if isinstance(output_size, torch.Size):
@@ -4843,16 +4863,16 @@ class _BackendPool3dHandler(Pool3dHandler):
             output_triplet = (output_size, output_size, output_size)
         elif isinstance(output_size, (tuple, list)):
             if len(output_size) != 3:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen adaptive_avg_pool3d expects output_size to have three values"
                 )
             output_triplet = tuple(output_size)
         else:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool3d expects output_size to be a tuple of ints"
             )
         if not all(isinstance(item, int) for item in output_triplet):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool3d expects output_size to be a tuple of ints"
             )
         if (
@@ -4860,7 +4880,7 @@ class _BackendPool3dHandler(Pool3dHandler):
             or output_triplet[1] <= 0
             or output_triplet[2] <= 0
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool3d expects output_size to be positive"
             )
         in_d, in_h, in_w = input_shape[2], input_shape[3], input_shape[4]
@@ -4869,7 +4889,7 @@ class _BackendPool3dHandler(Pool3dHandler):
             or in_h % output_triplet[1] != 0
             or in_w % output_triplet[2] != 0
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool3d requires input sizes divisible by output_size"
             )
         kernel_triplet = (
@@ -4894,20 +4914,20 @@ class _BackendPool3dHandler(Pool3dHandler):
             or padding_triplet[1] < 0
             or padding_triplet[2] < 0
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects positive kernel, stride, and dilation with non-negative padding"
             )
         if ceil_mode:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} does not support ceil_mode"
             )
         if not isinstance(count_include_pad, bool):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects count_include_pad to be a bool"
             )
         if divisor_override is not None:
             if not isinstance(divisor_override, int) or divisor_override <= 0:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     f"codegen {op_spec.name} expects divisor_override to be a positive int"
                 )
         op_node = _OpNode(
@@ -4956,50 +4976,50 @@ class _BackendPool2dBackwardHandler(Pool2dBackwardHandler):
         if grad_output not in shapes or input_arg not in shapes:
             raise _error_expected_tensor(op_spec.name)
         if dtype_info.torch_dtype is not torch.float32:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool2d_backward supports only torch.float32 tensors"
             )
         if (
             dtypes[grad_output] is not torch.float32
             or dtypes[input_arg] is not torch.float32
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool2d_backward supports only torch.float32 tensors"
             )
         grad_output_shape = shapes[grad_output]
         input_shape = shapes[input_arg]
         if len(grad_output_shape) != 4 or len(input_shape) != 4:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool2d_backward requires 4D input tensors"
             )
         if not _is_contiguous(grad_output_shape, strides[grad_output]):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool2d_backward requires contiguous grad_output tensors"
             )
         if not _is_contiguous(input_shape, strides[input_arg]):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool2d_backward requires contiguous input tensors"
             )
         if (
             grad_output_shape[0] != input_shape[0]
             or grad_output_shape[1] != input_shape[1]
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool2d_backward requires matching batch and channel sizes"
             )
         out_h, out_w = grad_output_shape[2], grad_output_shape[3]
         in_h, in_w = input_shape[2], input_shape[3]
         if out_h <= 0 or out_w <= 0:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool2d_backward expects output size to be positive"
             )
         if in_h % out_h != 0 or in_w % out_w != 0:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool2d_backward requires input sizes divisible by output_size"
             )
         kernel_pair = (in_h // out_h, in_w // out_w)
         if kernel_pair[0] <= 0 or kernel_pair[1] <= 0:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen adaptive_avg_pool2d_backward expects positive kernel size"
             )
         stride_pair = kernel_pair
@@ -5037,21 +5057,21 @@ class _BackendSoftmaxHandler(SoftmaxHandler):
         if dtype_info is None:
             return None
         if not node.args:
-            raise RefBackendError(f"codegen {op_spec.name} expects one input")
+            raise CodegenBackendError(f"codegen {op_spec.name} expects one input")
         input_arg = node.args[0]
         if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
             raise _error_expected_tensor(op_spec.name)
         if dtype_info.torch_dtype is not torch.float32:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32 tensors"
             )
         if dtypes[input_arg] is not torch.float32:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32 tensors"
             )
         dim, dtype = _parse_softmax_args(op_spec.name, node, shapes[input_arg])
         if dtype is not None and dtype is not torch.float32:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_spec.name} expects dtype to be torch.float32 or None"
             )
         output_shape = shapes[input_arg]
@@ -5087,7 +5107,7 @@ class _BackendEmbeddingHandler(EmbeddingHandler):
             _parse_embedding_args(node)
         )
         if scale_grad_by_freq or sparse:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen embedding supports only scale_grad_by_freq=False and sparse=False"
             )
         if not isinstance(weight, torch.fx.Node) or weight not in shapes:
@@ -5095,19 +5115,19 @@ class _BackendEmbeddingHandler(EmbeddingHandler):
         if not isinstance(indices, torch.fx.Node) or indices not in shapes:
             raise _error_expected_tensor(op_spec.name)
         if dtypes[weight] is not dtype_info.torch_dtype:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen embedding expects weight to match the graph dtype"
             )
         if dtypes[indices] not in _EMBEDDING_INDEX_DTYPES:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen embedding expects indices to have dtype torch.int32 or torch.int64"
             )
         weight_shape = shapes[weight]
         if len(weight_shape) != 2:
-            raise RefBackendError("codegen embedding expects 2D weight tensor")
+            raise CodegenBackendError("codegen embedding expects 2D weight tensor")
         if padding_idx != -1:
             if padding_idx < 0 or padding_idx >= weight_shape[0]:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen embedding expects padding_idx to be -1 or within num_embeddings"
                 )
         indices_shape = shapes[indices]
@@ -5155,11 +5175,11 @@ class _BackendEmbeddingBagHandler(EmbeddingBagHandler):
             padding_idx,
         ) = _parse_embedding_bag_args(node)
         if scale_grad_by_freq or sparse:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen _embedding_bag supports only scale_grad_by_freq=False and sparse=False"
             )
         if per_sample_weights is not None:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen _embedding_bag does not support per_sample_weights"
             )
         if not isinstance(weight, torch.fx.Node) or weight not in shapes:
@@ -5169,48 +5189,48 @@ class _BackendEmbeddingBagHandler(EmbeddingBagHandler):
         if not isinstance(offsets, torch.fx.Node) or offsets not in shapes:
             raise _error_expected_tensor(op_spec.name)
         if dtype_info.torch_dtype is not torch.float32:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen _embedding_bag supports only torch.float32 tensors"
             )
         if dtypes[weight] is not dtype_info.torch_dtype:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen _embedding_bag expects weight to match the graph dtype"
             )
         if dtypes[indices] not in _EMBEDDING_INDEX_DTYPES:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen _embedding_bag expects indices to have dtype torch.int32 or torch.int64"
             )
         if dtypes[offsets] not in _EMBEDDING_INDEX_DTYPES:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen _embedding_bag expects offsets to have dtype torch.int32 or torch.int64"
             )
         weight_shape = shapes[weight]
         if len(weight_shape) != 2:
-            raise RefBackendError("codegen _embedding_bag expects 2D weight tensor")
+            raise CodegenBackendError("codegen _embedding_bag expects 2D weight tensor")
         if padding_idx != -1:
             if padding_idx < 0 or padding_idx >= weight_shape[0]:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen _embedding_bag expects padding_idx to be -1 or within num_embeddings"
                 )
         indices_shape = shapes[indices]
         if len(indices_shape) != 1:
-            raise RefBackendError("codegen _embedding_bag expects 1D indices tensor")
+            raise CodegenBackendError("codegen _embedding_bag expects 1D indices tensor")
         offsets_shape = shapes[offsets]
         if len(offsets_shape) != 1:
-            raise RefBackendError("codegen _embedding_bag expects 1D offsets tensor")
+            raise CodegenBackendError("codegen _embedding_bag expects 1D offsets tensor")
         if include_last_offset and offsets_shape[0] == 0:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen _embedding_bag expects non-empty offsets when include_last_offset is True"
             )
         if mode not in (0, 1):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen _embedding_bag supports only mode=0 (sum) or mode=1 (mean)"
             )
         bag_count = (
             offsets_shape[0] - 1 if include_last_offset else offsets_shape[0]
         )
         if bag_count < 0:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen _embedding_bag expects offsets to contain at least one entry"
             )
         op_node = _OpNode(
@@ -5267,17 +5287,17 @@ class _BackendConv1dHandler(Conv1dHandler):
             if isinstance(bias, torch.fx.Node):
                 bias_node = bias
             else:
-                raise RefBackendError("codegen conv1d expects bias to be a tensor")
+                raise CodegenBackendError("codegen conv1d expects bias to be a tensor")
         if isinstance(stride, torch.fx.Node) or isinstance(
             padding, torch.fx.Node
         ) or isinstance(dilation, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen conv1d expects constant stride, padding, and dilation"
             )
         if isinstance(groups, torch.fx.Node):
-            raise RefBackendError("codegen conv1d expects constant groups")
+            raise CodegenBackendError("codegen conv1d expects constant groups")
         if dtype_info.torch_dtype is not torch.float32:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen conv1d supports only torch.float32 tensors"
             )
         if input_arg not in shapes or weight_arg not in shapes:
@@ -5286,14 +5306,14 @@ class _BackendConv1dHandler(Conv1dHandler):
             dtypes[input_arg] is not torch.float32
             or dtypes[weight_arg] is not torch.float32
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen conv1d supports only torch.float32 tensors"
             )
         if bias_node is not None:
             if bias_node not in shapes:
                 raise _error_expected_tensor("conv1d")
             if dtypes[bias_node] is not torch.float32:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen conv1d supports only torch.float32 tensors"
                 )
         input_shape = shapes[input_arg]
@@ -5301,11 +5321,11 @@ class _BackendConv1dHandler(Conv1dHandler):
         if bias_node is not None:
             bias_shape = shapes[bias_node]
             if len(bias_shape) != 1 or bias_shape[0] != weight_shape[0]:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen conv1d expects bias shape to match output channels"
                 )
         if len(input_shape) != 3 or len(weight_shape) != 3:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen conv1d requires 3D input and weight tensors"
             )
         stride_value = _normalize_param(
@@ -5322,11 +5342,11 @@ class _BackendConv1dHandler(Conv1dHandler):
         if stride_value <= 0 or dilation_value <= 0 or (
             not isinstance(padding_value, str) and padding_value < 0
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen conv1d expects stride and dilation to be positive and padding to be non-negative"
             )
         if not isinstance(groups, int) or groups <= 0:
-            raise RefBackendError("codegen conv1d requires positive groups")
+            raise CodegenBackendError("codegen conv1d requires positive groups")
         inputs = (input_arg, weight_arg)
         if bias_node is not None:
             inputs = (*inputs, bias_node)
@@ -5386,21 +5406,21 @@ class _BackendConv2dHandler(Conv2dHandler):
             if isinstance(bias, torch.fx.Node):
                 bias_node = bias
             else:
-                raise RefBackendError("codegen conv2d expects bias to be a tensor")
+                raise CodegenBackendError("codegen conv2d expects bias to be a tensor")
         if isinstance(stride, torch.fx.Node) or isinstance(
             padding, torch.fx.Node
         ) or isinstance(dilation, torch.fx.Node):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen conv2d expects constant stride, padding, and dilation"
             )
         if isinstance(transposed, torch.fx.Node):
-            raise RefBackendError("codegen conv2d expects constant transposed value")
+            raise CodegenBackendError("codegen conv2d expects constant transposed value")
         if isinstance(output_padding, torch.fx.Node):
-            raise RefBackendError("codegen conv2d expects constant output_padding")
+            raise CodegenBackendError("codegen conv2d expects constant output_padding")
         if isinstance(groups, torch.fx.Node):
-            raise RefBackendError("codegen conv2d expects constant groups")
+            raise CodegenBackendError("codegen conv2d expects constant groups")
         if dtype_info.torch_dtype is not torch.float32:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen conv2d supports only torch.float32 tensors"
             )
         if input_arg not in shapes or weight_arg not in shapes:
@@ -5409,28 +5429,28 @@ class _BackendConv2dHandler(Conv2dHandler):
             dtypes[input_arg] is not torch.float32
             or dtypes[weight_arg] is not torch.float32
         ):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen conv2d supports only torch.float32 tensors"
             )
         if bias_node is not None:
             if bias_node not in shapes:
                 raise _error_expected_tensor("conv2d")
             if dtypes[bias_node] is not torch.float32:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen conv2d supports only torch.float32 tensors"
                 )
         input_shape = shapes[input_arg]
         weight_shape = shapes[weight_arg]
         if len(weight_shape) != 4:
-            raise RefBackendError("codegen conv2d requires 4D weight tensors")
+            raise CodegenBackendError("codegen conv2d requires 4D weight tensors")
         if bias_node is not None:
             bias_shape = shapes[bias_node]
             if len(bias_shape) != 1 or bias_shape[0] != weight_shape[0]:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen conv2d expects bias shape to match output channels"
                 )
         if len(input_shape) != 4:
-            raise RefBackendError("codegen conv2d requires 4D input tensors")
+            raise CodegenBackendError("codegen conv2d requires 4D input tensors")
         stride_pair = _normalize_param(
             normalize_int_or_pair, "stride", stride
         )
@@ -5445,7 +5465,7 @@ class _BackendConv2dHandler(Conv2dHandler):
         elif isinstance(transposed, numbers.Integral):
             transposed_value = bool(transposed)
         else:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen conv2d expects transposed to be a bool"
             )
         output_padding_pair = _normalize_param(
@@ -5453,24 +5473,24 @@ class _BackendConv2dHandler(Conv2dHandler):
         )
         if isinstance(padding_pair, str):
             if padding_pair not in ("same", "valid"):
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen conv2d expects padding to be 'same', 'valid', or an int tuple"
                 )
         else:
             if padding_pair[0] < 0 or padding_pair[1] < 0:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen conv2d expects padding to be non-negative"
                 )
         if stride_pair[0] <= 0 or stride_pair[1] <= 0:
-            raise RefBackendError("codegen conv2d expects stride to be positive")
+            raise CodegenBackendError("codegen conv2d expects stride to be positive")
         if dilation_pair[0] <= 0 or dilation_pair[1] <= 0:
-            raise RefBackendError("codegen conv2d expects dilation to be positive")
+            raise CodegenBackendError("codegen conv2d expects dilation to be positive")
         if output_padding_pair[0] < 0 or output_padding_pair[1] < 0:
-            raise RefBackendError(
+            raise CodegenBackendError(
                 "codegen conv2d expects output_padding to be non-negative"
             )
         if groups <= 0:
-            raise RefBackendError("codegen conv2d requires positive groups")
+            raise CodegenBackendError("codegen conv2d requires positive groups")
         inputs = (input_arg, weight_arg)
         if bias_node is not None:
             inputs = (*inputs, bias_node)
@@ -5499,7 +5519,7 @@ class _BackendConv2dHandler(Conv2dHandler):
             else:
                 out_channels = output_shape[0]
             if len(bias_shape) != 1 or bias_shape[0] != out_channels:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen conv2d expects bias shape to match output channels"
                 )
         shapes[node] = output_shape

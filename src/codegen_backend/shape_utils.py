@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Sequence, Tuple
 
-from c_ref_backend.cffi_bindings import RefBackendError
+from codegen_backend.errors import CodegenBackendError
 
 
 def broadcast_output_shape(
@@ -18,7 +18,7 @@ def broadcast_output_shape(
         ]
         max_size = max(sizes)
         if any(size not in (1, max_size) for size in sizes):
-            raise RefBackendError(
+            raise CodegenBackendError(
                 f"codegen {op_name} requires inputs to be broadcastable"
             )
         output_shape.append(max_size)

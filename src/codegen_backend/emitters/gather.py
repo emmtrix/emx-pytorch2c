@@ -4,7 +4,7 @@ from typing import List, Sequence
 
 import torch
 
-from c_ref_backend.cffi_bindings import RefBackendError
+from codegen_backend.errors import CodegenBackendError
 from codegen_backend.c_types import _dtype_to_c_type
 from codegen_backend.dtypes import _CodegenDType
 from codegen_backend.emitters.base import (
@@ -93,7 +93,7 @@ class GatherEmitter(KindEmitterBase):
         op_spec = req.op_spec
         dtype = req.dtype
         if op_spec is None or dtype is None:
-            raise RefBackendError("gather requires op spec and dtype")
+            raise CodegenBackendError("gather requires op spec and dtype")
         return _write_gather_kernel(
             req.node_index,
             op_spec,

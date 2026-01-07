@@ -4,7 +4,7 @@ from typing import List, Sequence
 
 import torch
 
-from c_ref_backend.cffi_bindings import RefBackendError
+from codegen_backend.errors import CodegenBackendError
 from codegen_backend.c_types import _input_c_type
 from codegen_backend.dtypes import _CODEGEN_DTYPES, _CodegenDType, _INTEGER_CODEGEN_DTYPES
 from codegen_backend.emitters.base import (
@@ -31,7 +31,7 @@ def _write_cumsum_kernel(
 ) -> List[str]:
     output_dtype_info = _CODEGEN_DTYPES.get(output_dtype)
     if output_dtype_info is None:
-        raise RefBackendError(
+        raise CodegenBackendError(
             "codegen cumsum supports only torch.float32, torch.int8, or torch.int32"
         )
     output_c_type = output_dtype_info.c_type
@@ -87,7 +87,7 @@ class CumsumEmitter(KindEmitterBase):
         dtype = req.dtype
         output_dtype = req.params.get("output_dtype")
         if op_spec is None or dtype is None or output_dtype is None:
-            raise RefBackendError("cumsum requires op spec, dtype, and output dtype")
+            raise CodegenBackendError("cumsum requires op spec, dtype, and output dtype")
         return _write_cumsum_kernel(
             req.node_index,
             op_spec,

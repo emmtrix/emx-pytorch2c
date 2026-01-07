@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List
 
-from c_ref_backend.cffi_bindings import RefBackendError
+from codegen_backend.errors import CodegenBackendError
 from codegen_backend.c_types import _format_scalar_literal, _input_c_type
 from codegen_backend.emitters.base import (
     KindEmitterBase,
@@ -19,7 +19,7 @@ class PadEmitter(KindEmitterBase):
     def emit(self, req: KernelEmitRequest) -> List[str]:
         op_spec = req.op_spec
         if op_spec is None:
-            raise RefBackendError("pad requires op spec")
+            raise CodegenBackendError("pad requires op spec")
         input_shape = req.input_shapes[0]
         input_strides = req.input_strides[0]
         input_dtype = req.input_dtypes[0]

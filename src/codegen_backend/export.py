@@ -7,7 +7,7 @@ from typing import Dict, List, Sequence, Tuple
 import torch
 import torch.fx
 
-from c_ref_backend.cffi_bindings import RefBackendError
+from codegen_backend.errors import CodegenBackendError
 from codegen_backend.backend import (
     _analyze_generic_graph,
     _dtype_to_c_type,
@@ -50,7 +50,7 @@ def _lift_get_attr_to_placeholders(
             try:
                 example = next(input_iter)
             except StopIteration as exc:
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen backend expects example inputs to match placeholder count"
                 ) from exc
             placeholder = graph.placeholder(node.target)
@@ -60,7 +60,7 @@ def _lift_get_attr_to_placeholders(
         if node.op == "get_attr":
             weight = _resolve_attr(gm, node.target)
             if not isinstance(weight, torch.Tensor):
-                raise RefBackendError(
+                raise CodegenBackendError(
                     "codegen backend export expects get_attr tensors only"
                 )
             base_name = f"weight_{_sanitize_weight_name(node.target)}"

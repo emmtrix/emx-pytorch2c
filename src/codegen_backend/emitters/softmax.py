@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List, Sequence
 
-from c_ref_backend.cffi_bindings import RefBackendError
+from codegen_backend.errors import CodegenBackendError
 from codegen_backend.dtypes import _CodegenDType
 from codegen_backend.emitters.base import (
     KindEmitterBase,
@@ -25,7 +25,7 @@ def _write_softmax_kernel(
     dtype: _CodegenDType,
 ) -> List[str]:
     if softmax_dim is None:
-        raise RefBackendError("codegen softmax expects a reduction dimension")
+        raise CodegenBackendError("codegen softmax expects a reduction dimension")
     softmax_template = get_template_env().get_template("softmax_kernel.c.j2")
     rank = len(input_shape)
     input_suffix = _format_array_suffix(input_shape)
@@ -91,7 +91,7 @@ class SoftmaxEmitter(KindEmitterBase):
         op_spec = req.op_spec
         dtype = req.dtype
         if op_spec is None or dtype is None:
-            raise RefBackendError("softmax requires op spec and dtype")
+            raise CodegenBackendError("softmax requires op spec and dtype")
         return _write_softmax_kernel(
             req.node_index,
             op_spec,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List
 
-from c_ref_backend.cffi_bindings import RefBackendError
+from codegen_backend.errors import CodegenBackendError
 from codegen_backend.c_types import _format_scalar_literal
 from codegen_backend.emitters.base import (
     KindEmitterBase,
@@ -18,7 +18,7 @@ class ArangeEmitter(KindEmitterBase):
     def emit(self, req: KernelEmitRequest) -> List[str]:
         op_spec = req.op_spec
         if op_spec is None:
-            raise RefBackendError("arange requires op spec")
+            raise CodegenBackendError("arange requires op spec")
         out_suffix = _format_array_suffix(req.output_shape)
         signature = (
             f"void node{req.node_index}_{op_spec.name}_{req.dtype.suffix}("

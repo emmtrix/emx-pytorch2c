@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List, Sequence, Tuple
 
-from c_ref_backend.cffi_bindings import RefBackendError
+from codegen_backend.errors import CodegenBackendError
 from codegen_backend.dtypes import _CodegenDType
 from codegen_backend.emitters.base import KindEmitterBase, _format_array_suffix
 from codegen_backend.kinds import KernelEmitRequest
@@ -69,7 +69,7 @@ class Pool2dEmitter(KindEmitterBase):
         op_spec = req.op_spec
         dtype = req.dtype
         if op_spec is None or dtype is None:
-            raise RefBackendError("pool2d requires op spec and dtype")
+            raise CodegenBackendError("pool2d requires op spec and dtype")
         return _write_pool2d_kernel(
             req.node_index,
             op_spec,
