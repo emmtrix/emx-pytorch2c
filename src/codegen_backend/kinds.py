@@ -279,6 +279,11 @@ class OpKindHandler(ABC):
             inplace_input,
         )
 
+    def infer_graph_dtype(
+        self, node: "torch.fx.Node", op_spec: "_OpSpec"
+    ) -> "torch.dtype | None":
+        return None
+
     def validate(
         self,
         op_node: _OpNode,

@@ -27,6 +27,7 @@ from codegen_backend.dtypes import (
 from codegen_backend.graph import _GenericGraph, _GenericLibrary, _OpNode
 from codegen_backend.emitters.base import _format_array_suffix, _is_contiguous
 from codegen_backend.emitters.arange import ArangeEmitter
+from codegen_backend.emitters.addr import AddrEmitter
 from codegen_backend.emitters.concat import ConcatEmitter
 from codegen_backend.emitters.conv1d import Conv1dEmitter
 from codegen_backend.emitters.conv2d import Conv2dEmitter
@@ -37,10 +38,14 @@ from codegen_backend.emitters.elementwise import (
     _FLOAT_ONLY_UNARY_OPS,
     _PARAMETRIC_UNARY_OPS,
 )
+from codegen_backend.emitters.elementwise import ElementwiseEmitter
+from codegen_backend.emitters.matmul import MatmulEmitter
 from codegen_backend.emitters.pool1d import Pool1dEmitter
 from codegen_backend.emitters.pool2d import Pool2dEmitter
 from codegen_backend.emitters.pool2d_backward import Pool2dBackwardEmitter
 from codegen_backend.emitters.pool3d import Pool3dEmitter
+from codegen_backend.emitters.reduction import ReductionEmitter
+from codegen_backend.emitters.argreduction import ArgReductionEmitter
 from codegen_backend.emitters.softmax import SoftmaxEmitter
 from codegen_backend.indexing import (
     _contiguous_strides,
@@ -55,8 +60,13 @@ from codegen_backend.kinds import (
     EmbeddingBagHandler,
     EmbeddingHandler,
     EmptyStridedHandler,
+    ElementwiseHandler,
     HandlerContext,
     OpNodeBuildResult,
+    ArgReductionHandler,
+    AddrHandler,
+    MatmulHandler,
+    ReductionHandler,
     Pool1dHandler,
     Pool2dBackwardHandler,
     Pool2dHandler,
@@ -360,36 +370,25 @@ def _infer_empty_strided_dtype(
     gm: torch.fx.GraphModule,
 ) -> _CodegenDType | None:
     dtype_value = None
-    found_empty_strided = False
     for node in gm.graph.nodes:
         if node.op != "call_function":
             continue
         target_info = TARGET_REGISTRY.get(node.target)
-        if target_info is None or target_info.op_spec.kind != OpKind.EMPTY_STRIDED:
+        if target_info is None:
             continue
-        found_empty_strided = True
-        node_dtype = None
-        if len(node.args) > 2:
-            node_dtype = node.args[2]
-        if "dtype" in node.kwargs:
-            if node_dtype is not None:
-                raise _error_kwarg_specified_once("empty_strided", "dtype")
-            node_dtype = node.kwargs["dtype"]
-        if isinstance(node_dtype, torch.fx.Node):
-            raise RefBackendError(
-                "codegen empty_strided expects dtype to be a constant"
-            )
+        handler = _KIND_HANDLERS.get(target_info.op_spec.kind)
+        if handler is None:
+            continue
+        node_dtype = handler.infer_graph_dtype(node, target_info.op_spec)
         if node_dtype is None:
-            raise RefBackendError(
-                "codegen empty_strided requires dtype when no tensor inputs are provided"
-            )
+            continue
         if dtype_value is None:
             dtype_value = node_dtype
         elif dtype_value is not node_dtype:
             raise RefBackendError(
                 "codegen empty_strided requires a consistent dtype"
             )
-    if not found_empty_strided:
+    if dtype_value is None:
         return None
     dtype_info = _CODEGEN_DTYPES.get(dtype_value)
     if dtype_info is None:
@@ -2380,16 +2379,6 @@ def _handle_addmm_like_node(
     )
     output_shape = _infer_output_shape(op_node, input_shapes)
     op_node.output_shape = output_shape
-    if op_spec.kind == OpKind.ADDR and inplace_input is not None:
-        input_shape = input_shapes[inplace_input]
-        if len(input_shape) != 2:
-            raise RefBackendError(
-                "codegen addr expects 2D input and 1D vectors"
-            )
-        if input_shape != output_shape:
-            raise RefBackendError(
-                "codegen addr expects input shape to match outer product output"
-            )
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
     if inplace_input is not None:
@@ -3280,449 +3269,18 @@ def _analyze_generic_graph(
                 scalar_values,
                 inplace_input,
             )
-            if build_result is not None:
-                op_nodes.append(build_result.op_node)
-                if build_result.dtype_info is not None:
-                    dtype_info = build_result.dtype_info
-                continue
-            if dtype_info is None:
+            if build_result is None:
+                if dtype_info is None:
+                    raise RefBackendError(
+                        "codegen backend requires at least one tensor input or a factory op dtype"
+                    )
                 raise RefBackendError(
-                    "codegen backend requires at least one tensor input or a factory op dtype"
+                    "codegen backend does not support building kind "
+                    f"'{op_spec.kind.value}'"
                 )
-            reduction_dims: Tuple[int, ...] | None = None
-            keepdim = False
-            reduce_all = False
-            param_values: Dict[str, object] = {}
-            input_nodes: List[torch.fx.Node] = []
-            input_shapes: List[Tuple[int, ...]] = []
-            out_arg: torch.fx.Node | None = None
-            if op_spec.kind == OpKind.BINARY and len(node.args) == 2:
-                lhs, rhs = node.args
-                if isinstance(lhs, torch.fx.Node) ^ isinstance(rhs, torch.fx.Node):
-                    if node.kwargs:
-                        raise RefBackendError(
-                            f"codegen {op_spec.name} expects positional args only"
-                        )
-                    input_arg = lhs if isinstance(lhs, torch.fx.Node) else rhs
-                    scalar_arg = rhs if isinstance(lhs, torch.fx.Node) else lhs
-                    if input_arg not in shapes:
-                        raise _error_expected_tensor(op_spec.name)
-                    input_nodes = [input_arg]
-                    input_shapes = [shapes[input_arg]]
-                    if op_spec.name in _BITWISE_OPS:
-                        param_values["scalar"] = _parse_bitwise_scalar(
-                            op_spec.name, scalar_arg, dtype_info.torch_dtype
-                        )
-                    else:
-                        param_values["scalar"] = _normalize_scalar_value(
-                            op_spec.name, scalar_arg
-                        )
-                else:
-                    if op_spec.kind in {
-                        OpKind.REDUCTION,
-                        OpKind.ARG_REDUCTION,
-                    }:
-                        if len(node.args) < 1:
-                            raise RefBackendError(
-                                f"codegen {op_spec.name} expects one input"
-                            )
-                        args_to_check = node.args[:1]
-                    elif (
-                        op_spec.kind == OpKind.UNARY
-                        and op_spec.name in _PARAMETRIC_UNARY_OPS
-                    ):
-                        input_node, param_values = _parse_parametric_unary_args(
-                            op_spec.name, node
-                        )
-                        args_to_check = (input_node,)
-                    else:
-                        allowed_kwargs = set()
-                        is_out_overload = _is_out_overload(node.target)
-                        if op_spec.name == "div":
-                            allowed_kwargs = {"rounding_mode"}
-                        elif op_spec.name == "copy":
-                            allowed_kwargs = {"non_blocking"}
-                        if is_out_overload:
-                            allowed_kwargs.add("out")
-                        if node.kwargs and set(node.kwargs) - allowed_kwargs:
-                            raise RefBackendError(
-                                "codegen backend expects positional args only"
-                            )
-                        if op_spec.kind == OpKind.UNARY:
-                            expected_arity = 1
-                        elif op_spec.kind == OpKind.BINARY:
-                            expected_arity = 2
-                        elif op_spec.kind == OpKind.WHERE:
-                            expected_arity = 3
-                        else:
-                            expected_arity = 2
-                        if is_out_overload:
-                            if inplace_input is None:
-                                raise RefBackendError(
-                                    f"codegen {op_spec.name} expects out to be provided"
-                                )
-                            if "out" in node.kwargs:
-                                if len(node.args) > expected_arity:
-                                    raise _error_kwarg_specified_once(
-                                        op_spec.name, "out"
-                                    )
-                                out_arg = node.kwargs["out"]
-                            elif len(node.args) == expected_arity + 1:
-                                out_arg = node.args[inplace_input]
-                            elif len(node.args) != expected_arity:
-                                if expected_arity == 1:
-                                    raise RefBackendError(
-                                        f"codegen {op_spec.name} expects one input"
-                                    )
-                                if expected_arity == 2:
-                                    raise RefBackendError(
-                                        f"codegen {op_spec.name} expects exactly two inputs"
-                                    )
-                                raise RefBackendError(
-                                    f"codegen {op_spec.name} expects exactly three inputs"
-                                )
-                            if out_arg is None:
-                                raise RefBackendError(
-                                    f"codegen {op_spec.name} expects out to be provided"
-                                )
-                        elif op_spec.name == "copy":
-                            if len(node.args) not in {2, 3}:
-                                raise RefBackendError(
-                                    "codegen copy expects two inputs and optional non_blocking"
-                                )
-                        elif len(node.args) != expected_arity:
-                            if expected_arity == 1:
-                                raise RefBackendError(
-                                    f"codegen {op_spec.name} expects one input"
-                                )
-                            if expected_arity == 2:
-                                raise RefBackendError(
-                                    f"codegen {op_spec.name} expects exactly two inputs"
-                                )
-                            raise RefBackendError(
-                                f"codegen {op_spec.name} expects exactly three inputs"
-                            )
-                        if op_spec.name == "div":
-                            rounding_mode = node.kwargs.get("rounding_mode")
-                            if rounding_mode is not None:
-                                raise RefBackendError(
-                                    "codegen div expects rounding_mode to be None"
-                                )
-                        if op_spec.name == "copy":
-                            non_blocking = None
-                            if len(node.args) > 2:
-                                non_blocking = node.args[2]
-                            if "non_blocking" in node.kwargs:
-                                if len(node.args) > 2:
-                                    raise _error_kwarg_specified_once(
-                                        op_spec.name, "non_blocking"
-                                    )
-                                non_blocking = node.kwargs["non_blocking"]
-                            if non_blocking not in (None, False, 0):
-                                raise RefBackendError(
-                                    "codegen copy expects non_blocking to be False"
-                                )
-                        if op_spec.name == "copy":
-                            args_to_check = node.args[:2]
-                        else:
-                            args_to_check = node.args
-                    for arg in args_to_check:
-                        if not isinstance(arg, torch.fx.Node):
-                            raise _error_expected_tensor(op_spec.name)
-                        if arg not in shapes:
-                            raise _error_expected_tensor(op_spec.name)
-                        input_nodes.append(arg)
-                        input_shapes.append(shapes[arg])
-                    if out_arg is not None and out_arg not in input_nodes:
-                        if not isinstance(out_arg, torch.fx.Node):
-                            raise _error_expected_tensor(op_spec.name)
-                        if out_arg not in shapes:
-                            raise _error_expected_tensor(op_spec.name)
-                        input_nodes.append(out_arg)
-                        input_shapes.append(shapes[out_arg])
-            else:
-                if op_spec.kind in {
-                    OpKind.REDUCTION,
-                    OpKind.ARG_REDUCTION,
-                }:
-                    if len(node.args) < 1:
-                        raise RefBackendError(
-                            f"codegen {op_spec.name} expects one input"
-                        )
-                    args_to_check = node.args[:1]
-                elif (
-                    op_spec.kind == OpKind.UNARY
-                    and op_spec.name in _PARAMETRIC_UNARY_OPS
-                ):
-                    input_node, param_values = _parse_parametric_unary_args(
-                        op_spec.name, node
-                    )
-                    args_to_check = (input_node,)
-                else:
-                    allowed_kwargs = set()
-                    is_out_overload = _is_out_overload(node.target)
-                    if op_spec.name == "div":
-                        allowed_kwargs = {"rounding_mode"}
-                    elif op_spec.name == "copy":
-                        allowed_kwargs = {"non_blocking"}
-                    elif op_spec.name == "relu":
-                        allowed_kwargs = {"inplace"}
-                        if node.kwargs.get("inplace"):
-                            raise RefBackendError(
-                                "codegen relu expects inplace to be False"
-                            )
-                    if is_out_overload:
-                        allowed_kwargs.add("out")
-                    if node.kwargs and set(node.kwargs) - allowed_kwargs:
-                        raise RefBackendError(
-                            "codegen backend expects positional args only"
-                        )
-                    if op_spec.kind == OpKind.UNARY:
-                        expected_arity = 1
-                    elif op_spec.kind == OpKind.BINARY:
-                        expected_arity = 2
-                    elif op_spec.kind == OpKind.WHERE:
-                        expected_arity = 3
-                    else:
-                        expected_arity = 2
-                    if is_out_overload:
-                        if inplace_input is None:
-                            raise RefBackendError(
-                                f"codegen {op_spec.name} expects out to be provided"
-                            )
-                        if "out" in node.kwargs:
-                            if len(node.args) > expected_arity:
-                                raise _error_kwarg_specified_once(
-                                    op_spec.name, "out"
-                                )
-                            out_arg = node.kwargs["out"]
-                        elif len(node.args) == expected_arity + 1:
-                            out_arg = node.args[inplace_input]
-                        elif len(node.args) != expected_arity:
-                            if expected_arity == 1:
-                                raise RefBackendError(
-                                    f"codegen {op_spec.name} expects one input"
-                                )
-                            if expected_arity == 2:
-                                raise RefBackendError(
-                                    f"codegen {op_spec.name} expects exactly two inputs"
-                                )
-                            raise RefBackendError(
-                                f"codegen {op_spec.name} expects exactly three inputs"
-                            )
-                        if out_arg is None:
-                            raise RefBackendError(
-                                f"codegen {op_spec.name} expects out to be provided"
-                            )
-                    elif op_spec.name == "copy":
-                        if len(node.args) not in {2, 3}:
-                            raise RefBackendError(
-                                "codegen copy expects two inputs and optional non_blocking"
-                            )
-                    elif len(node.args) != expected_arity:
-                        if expected_arity == 1:
-                            raise RefBackendError(
-                                f"codegen {op_spec.name} expects one input"
-                            )
-                        if expected_arity == 2:
-                            raise RefBackendError(
-                                f"codegen {op_spec.name} expects exactly two inputs"
-                            )
-                        raise RefBackendError(
-                            f"codegen {op_spec.name} expects exactly three inputs"
-                        )
-                    if op_spec.name == "div":
-                        rounding_mode = node.kwargs.get("rounding_mode")
-                        if rounding_mode is not None:
-                            raise RefBackendError(
-                                "codegen div expects rounding_mode to be None"
-                            )
-                    if op_spec.name == "copy":
-                        non_blocking = None
-                        if len(node.args) > 2:
-                            non_blocking = node.args[2]
-                        if "non_blocking" in node.kwargs:
-                            if len(node.args) > 2:
-                                raise _error_kwarg_specified_once(
-                                    op_spec.name, "non_blocking"
-                                )
-                            non_blocking = node.kwargs["non_blocking"]
-                        if non_blocking not in (None, False, 0):
-                            raise RefBackendError(
-                                "codegen copy expects non_blocking to be False"
-                            )
-                    if op_spec.name == "copy":
-                        args_to_check = node.args[:2]
-                    else:
-                        args_to_check = node.args
-                if op_spec.kind == OpKind.WHERE:
-                    (
-                        input_nodes,
-                        input_shapes,
-                        where_params,
-                    ) = _parse_where_inputs(
-                        op_spec, node, shapes, scalar_values
-                    )
-                    param_values.update(where_params)
-                else:
-                    for arg in args_to_check:
-                        if not isinstance(arg, torch.fx.Node):
-                            raise _error_expected_tensor(op_spec.name)
-                        if arg not in shapes:
-                            raise _error_expected_tensor(op_spec.name)
-                        input_nodes.append(arg)
-                        input_shapes.append(shapes[arg])
-                if out_arg is not None and out_arg not in input_nodes:
-                    if not isinstance(out_arg, torch.fx.Node):
-                        raise _error_expected_tensor(op_spec.name)
-                    if out_arg not in shapes:
-                        raise _error_expected_tensor(op_spec.name)
-                    input_nodes.append(out_arg)
-                    input_shapes.append(shapes[out_arg])
-            shape_input_shapes = [
-                shape
-                for arg, shape in zip(input_nodes, input_shapes)
-                if out_arg is None or arg is not out_arg
-            ]
-            if op_spec.kind == OpKind.WHERE:
-                if "a_scalar" in param_values:
-                    shape_input_shapes.append(())
-                if "b_scalar" in param_values:
-                    shape_input_shapes.append(())
-            input_dtypes = [dtypes[arg] for arg in input_nodes]
-            if op_spec.name in _BITWISE_OPS:
-                if dtype_info.torch_dtype in _INTEGER_CODEGEN_DTYPES:
-                    pass
-                elif (
-                    dtype_info.torch_dtype is torch.bool
-                    and op_spec.name in _BITWISE_BOOL_OPS
-                ):
-                    pass
-                else:
-                    raise RefBackendError(
-                        f"codegen {op_spec.name} expects integer tensors"
-                    )
-            if op_spec.name in _FLOAT_ONLY_UNARY_OPS:
-                if dtype_info.torch_dtype is not torch.float32:
-                    raise RefBackendError(
-                        f"codegen {op_spec.name} supports only torch.float32 tensors"
-                    )
-                if any(dtype is not torch.float32 for dtype in input_dtypes):
-                    raise RefBackendError(
-                        f"codegen {op_spec.name} supports only torch.float32 tensors"
-                    )
-            if op_spec.name == "clamp" and dtype_info.torch_dtype is torch.bool:
-                raise RefBackendError(
-                    "codegen clamp supports only numeric tensors"
-                )
-            if (
-                op_spec.name == "clamp"
-                and dtype_info.torch_dtype in _INTEGER_CODEGEN_DTYPES
-            ):
-                for name in ("min_val", "max_val"):
-                    value = param_values.get(name)
-                    if value is None:
-                        continue
-                    if not float(value).is_integer():
-                        raise RefBackendError(
-                            "codegen clamp expects integer min/max for integer tensors"
-                        )
-            if op_spec.kind == OpKind.WHERE:
-                if input_dtypes[0] is not torch.bool:
-                    raise RefBackendError(
-                        "codegen where expects condition to be a boolean tensor"
-                    )
-                if any(
-                    dtype is not dtype_info.torch_dtype for dtype in input_dtypes[1:]
-                ):
-                    raise RefBackendError(
-                        "codegen where expects self and other to match the graph dtype"
-                    )
-            elif any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
-                raise RefBackendError(
-                    f"codegen {op_spec.name} expects inputs to share the graph dtype"
-                )
-            if op_spec.kind == OpKind.REDUCTION:
-                if op_spec.name == "norm":
-                    if dtype_info.torch_dtype is not torch.float32:
-                        raise RefBackendError(
-                            "codegen norm supports only torch.float32 tensors"
-                        )
-                    (
-                        reduction_dims,
-                        keepdim,
-                        reduce_all,
-                        norm_p,
-                    ) = _parse_norm_args(
-                        op_spec.name, node, shape_input_shapes[0]
-                    )
-                    param_values["norm_p"] = norm_p
-                else:
-                    (
-                        reduction_dims,
-                        keepdim,
-                        reduce_all,
-                        unbiased,
-                    ) = _parse_reduction_args(
-                        op_spec.name, node, shape_input_shapes[0]
-                    )
-                    if unbiased is not None:
-                        param_values["unbiased"] = unbiased
-                    if (
-                        op_spec.name == "var"
-                        and dtype_info.torch_dtype is not torch.float32
-                    ):
-                        raise RefBackendError(
-                            "codegen var supports only torch.float32 tensors"
-                        )
-            elif op_spec.kind == OpKind.ARG_REDUCTION:
-                (
-                    reduction_dims,
-                    keepdim,
-                    reduce_all,
-                ) = _parse_argminmax_args(
-                    op_spec.name, node, shape_input_shapes[0]
-                )
-                reduction_count = 1
-                if reduce_all:
-                    for size in shape_input_shapes[0]:
-                        reduction_count *= size
-                else:
-                    for dim in reduction_dims:
-                        reduction_count *= shape_input_shapes[0][dim]
-                if reduction_count == 0:
-                    raise RefBackendError(
-                        f"codegen {op_spec.name} expects a non-empty reduction dimension"
-                    )
-            if op_spec.kind in {OpKind.REDUCTION, OpKind.ARG_REDUCTION}:
-                param_values["reduce_all"] = reduce_all
-            op_node = _OpNode(
-                node=node,
-                spec=op_spec,
-                inputs=list(input_nodes),
-                output_shape=(),
-                inplace_input=inplace_input,
-                reduction_dims=reduction_dims,
-                keepdim=keepdim,
-                params=param_values,
-            )
-            handler.validate(op_node, shape_input_shapes, input_dtypes, dtype_info)
-            output_shape = _infer_output_shape(op_node, shape_input_shapes)
-            op_node.output_shape = output_shape
-            if out_arg is not None and shapes[out_arg] != output_shape:
-                raise RefBackendError(
-                    f"codegen {op_spec.name} expects out to match output shape"
-                )
-            shapes[node] = output_shape
-            if op_spec.kind == OpKind.ARG_REDUCTION:
-                dtypes[node] = torch.int64
-            else:
-                dtypes[node] = dtype_info.torch_dtype
-            if inplace_input is not None:
-                strides[node] = strides[input_nodes[inplace_input]]
-            else:
-                strides[node] = _contiguous_strides(output_shape)
-            op_nodes.append(op_node)
+            op_nodes.append(build_result.op_node)
+            if build_result.dtype_info is not None:
+                dtype_info = build_result.dtype_info
             continue
         if node.op == "output":
             output_node = node
@@ -4007,6 +3565,565 @@ def get_generic_source(
     return _write_generic_source(graph)
 
 
+class _BackendElementwiseHandler(ElementwiseHandler):
+    def build_op_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType | None,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if op_spec.name == "_to_copy":
+            if dtype_info is None:
+                return None
+            handler = getattr(self._ctx, "handle_to_copy_node", None)
+            if handler is None:
+                return None
+            op_node = handler(node, op_spec, dtype_info, shapes, strides, dtypes)
+            return OpNodeBuildResult(op_node)
+        if op_spec.kind == OpKind.FILL:
+            if dtype_info is None:
+                return None
+            handler = getattr(self._ctx, "handle_fill_node", None)
+            if handler is None:
+                return None
+            op_node = handler(
+                node,
+                op_spec,
+                dtype_info,
+                shapes,
+                strides,
+                dtypes,
+                inplace_input,
+            )
+            return OpNodeBuildResult(op_node)
+        if dtype_info is None:
+            raise RefBackendError(
+                "codegen backend requires at least one tensor input or a factory op dtype"
+            )
+        param_values: Dict[str, object] = {}
+        input_nodes: List[torch.fx.Node] = []
+        input_shapes: List[Tuple[int, ...]] = []
+        out_arg: torch.fx.Node | None = None
+
+        if op_spec.kind == OpKind.BINARY and len(node.args) == 2:
+            lhs, rhs = node.args
+            if isinstance(lhs, torch.fx.Node) ^ isinstance(rhs, torch.fx.Node):
+                if node.kwargs:
+                    raise RefBackendError(
+                        f"codegen {op_spec.name} expects positional args only"
+                    )
+                input_arg = lhs if isinstance(lhs, torch.fx.Node) else rhs
+                scalar_arg = rhs if isinstance(lhs, torch.fx.Node) else lhs
+                if input_arg not in shapes:
+                    raise _error_expected_tensor(op_spec.name)
+                input_nodes = [input_arg]
+                input_shapes = [shapes[input_arg]]
+                if op_spec.name in _BITWISE_OPS:
+                    param_values["scalar"] = _parse_bitwise_scalar(
+                        op_spec.name, scalar_arg, dtype_info.torch_dtype
+                    )
+                else:
+                    param_values["scalar"] = _normalize_scalar_value(
+                        op_spec.name, scalar_arg
+                    )
+
+        if not input_nodes:
+            if (
+                op_spec.kind == OpKind.UNARY
+                and op_spec.name in _PARAMETRIC_UNARY_OPS
+            ):
+                input_node, param_values = _parse_parametric_unary_args(
+                    op_spec.name, node
+                )
+                args_to_check = (input_node,)
+            else:
+                allowed_kwargs = set()
+                is_out_overload = _is_out_overload(node.target)
+                if op_spec.name == "div":
+                    allowed_kwargs = {"rounding_mode"}
+                elif op_spec.name == "copy":
+                    allowed_kwargs = {"non_blocking"}
+                elif op_spec.name == "relu":
+                    allowed_kwargs = {"inplace"}
+                    if node.kwargs.get("inplace"):
+                        raise RefBackendError(
+                            "codegen relu expects inplace to be False"
+                        )
+                if is_out_overload:
+                    allowed_kwargs.add("out")
+                if node.kwargs and set(node.kwargs) - allowed_kwargs:
+                    raise RefBackendError(
+                        "codegen backend expects positional args only"
+                    )
+                if op_spec.kind == OpKind.UNARY:
+                    expected_arity = 1
+                elif op_spec.kind == OpKind.BINARY:
+                    expected_arity = 2
+                elif op_spec.kind == OpKind.WHERE:
+                    expected_arity = 3
+                else:
+                    expected_arity = 2
+                if is_out_overload:
+                    if inplace_input is None:
+                        raise RefBackendError(
+                            f"codegen {op_spec.name} expects out to be provided"
+                        )
+                    if "out" in node.kwargs:
+                        if len(node.args) > expected_arity:
+                            raise _error_kwarg_specified_once(
+                                op_spec.name, "out"
+                            )
+                        out_arg = node.kwargs["out"]
+                    elif len(node.args) == expected_arity + 1:
+                        out_arg = node.args[inplace_input]
+                    elif len(node.args) != expected_arity:
+                        if expected_arity == 1:
+                            raise RefBackendError(
+                                f"codegen {op_spec.name} expects one input"
+                            )
+                        if expected_arity == 2:
+                            raise RefBackendError(
+                                f"codegen {op_spec.name} expects exactly two inputs"
+                            )
+                        raise RefBackendError(
+                            f"codegen {op_spec.name} expects exactly three inputs"
+                        )
+                    if out_arg is None:
+                        raise RefBackendError(
+                            f"codegen {op_spec.name} expects out to be provided"
+                        )
+                elif op_spec.name == "copy":
+                    if len(node.args) not in {2, 3}:
+                        raise RefBackendError(
+                            "codegen copy expects two inputs and optional non_blocking"
+                        )
+                elif len(node.args) != expected_arity:
+                    if expected_arity == 1:
+                        raise RefBackendError(
+                            f"codegen {op_spec.name} expects one input"
+                        )
+                    if expected_arity == 2:
+                        raise RefBackendError(
+                            f"codegen {op_spec.name} expects exactly two inputs"
+                        )
+                    raise RefBackendError(
+                        f"codegen {op_spec.name} expects exactly three inputs"
+                    )
+                if op_spec.name == "div":
+                    rounding_mode = node.kwargs.get("rounding_mode")
+                    if rounding_mode is not None:
+                        raise RefBackendError(
+                            "codegen div expects rounding_mode to be None"
+                        )
+                if op_spec.name == "copy":
+                    non_blocking = None
+                    if len(node.args) > 2:
+                        non_blocking = node.args[2]
+                    if "non_blocking" in node.kwargs:
+                        if len(node.args) > 2:
+                            raise _error_kwarg_specified_once(
+                                op_spec.name, "non_blocking"
+                            )
+                        non_blocking = node.kwargs["non_blocking"]
+                    if non_blocking not in (None, False, 0):
+                        raise RefBackendError(
+                            "codegen copy expects non_blocking to be False"
+                        )
+                if op_spec.name == "copy":
+                    args_to_check = node.args[:2]
+                else:
+                    args_to_check = node.args
+            if op_spec.kind == OpKind.WHERE:
+                (
+                    input_nodes,
+                    input_shapes,
+                    where_params,
+                ) = _parse_where_inputs(op_spec, node, shapes, scalar_values)
+                param_values.update(where_params)
+            else:
+                for arg in args_to_check:
+                    if not isinstance(arg, torch.fx.Node):
+                        raise _error_expected_tensor(op_spec.name)
+                    if arg not in shapes:
+                        raise _error_expected_tensor(op_spec.name)
+                    input_nodes.append(arg)
+                    input_shapes.append(shapes[arg])
+            if out_arg is not None and out_arg not in input_nodes:
+                if not isinstance(out_arg, torch.fx.Node):
+                    raise _error_expected_tensor(op_spec.name)
+                if out_arg not in shapes:
+                    raise _error_expected_tensor(op_spec.name)
+                input_nodes.append(out_arg)
+                input_shapes.append(shapes[out_arg])
+
+        shape_input_shapes = [
+            shape
+            for arg, shape in zip(input_nodes, input_shapes)
+            if out_arg is None or arg is not out_arg
+        ]
+        if op_spec.kind == OpKind.WHERE:
+            if "a_scalar" in param_values:
+                shape_input_shapes.append(())
+            if "b_scalar" in param_values:
+                shape_input_shapes.append(())
+        input_dtypes = [dtypes[arg] for arg in input_nodes]
+        if op_spec.name in _BITWISE_OPS:
+            if dtype_info.torch_dtype in _INTEGER_CODEGEN_DTYPES:
+                pass
+            elif (
+                dtype_info.torch_dtype is torch.bool
+                and op_spec.name in _BITWISE_BOOL_OPS
+            ):
+                pass
+            else:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects integer tensors"
+                )
+        if op_spec.name in _FLOAT_ONLY_UNARY_OPS:
+            if dtype_info.torch_dtype is not torch.float32:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} supports only torch.float32 tensors"
+                )
+            if any(dtype is not torch.float32 for dtype in input_dtypes):
+                raise RefBackendError(
+                    f"codegen {op_spec.name} supports only torch.float32 tensors"
+                )
+        if op_spec.name == "clamp" and dtype_info.torch_dtype is torch.bool:
+            raise RefBackendError("codegen clamp supports only numeric tensors")
+        if (
+            op_spec.name == "clamp"
+            and dtype_info.torch_dtype in _INTEGER_CODEGEN_DTYPES
+        ):
+            for name in ("min_val", "max_val"):
+                value = param_values.get(name)
+                if value is None:
+                    continue
+                if not float(value).is_integer():
+                    raise RefBackendError(
+                        "codegen clamp expects integer min/max for integer tensors"
+                    )
+        if op_spec.kind == OpKind.WHERE:
+            if input_dtypes[0] is not torch.bool:
+                raise RefBackendError(
+                    "codegen where expects condition to be a boolean tensor"
+                )
+            if any(
+                dtype is not dtype_info.torch_dtype for dtype in input_dtypes[1:]
+            ):
+                raise RefBackendError(
+                    "codegen where expects self and other to match the graph dtype"
+                )
+        elif any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects inputs to share the graph dtype"
+            )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=list(input_nodes),
+            output_shape=(),
+            inplace_input=inplace_input,
+            params=param_values,
+        )
+        self.validate(op_node, shape_input_shapes, input_dtypes, dtype_info)
+        output_shape = _infer_output_shape(op_node, shape_input_shapes)
+        op_node.output_shape = output_shape
+        if out_arg is not None and shapes[out_arg] != output_shape:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects out to match output shape"
+            )
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        if inplace_input is not None:
+            strides[node] = strides[input_nodes[inplace_input]]
+        else:
+            strides[node] = _contiguous_strides(output_shape)
+        return OpNodeBuildResult(op_node)
+
+
+class _BackendReductionHandler(ReductionHandler):
+    def build_op_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType | None,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if dtype_info is None:
+            raise RefBackendError(
+                "codegen backend requires at least one tensor input or a factory op dtype"
+            )
+        if len(node.args) < 1:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects one input"
+            )
+        args_to_check = node.args[:1]
+        input_nodes: List[torch.fx.Node] = []
+        input_shapes: List[Tuple[int, ...]] = []
+        for arg in args_to_check:
+            if not isinstance(arg, torch.fx.Node):
+                raise _error_expected_tensor(op_spec.name)
+            if arg not in shapes:
+                raise _error_expected_tensor(op_spec.name)
+            input_nodes.append(arg)
+            input_shapes.append(shapes[arg])
+        input_dtypes = [dtypes[arg] for arg in input_nodes]
+        if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects inputs to share the graph dtype"
+            )
+        param_values: Dict[str, object] = {}
+        if op_spec.name == "norm":
+            if dtype_info.torch_dtype is not torch.float32:
+                raise RefBackendError(
+                    "codegen norm supports only torch.float32 tensors"
+                )
+            reduction_dims, keepdim, reduce_all, norm_p = _parse_norm_args(
+                op_spec.name, node, input_shapes[0]
+            )
+            param_values["norm_p"] = norm_p
+        else:
+            reduction_dims, keepdim, reduce_all, unbiased = _parse_reduction_args(
+                op_spec.name, node, input_shapes[0]
+            )
+            if unbiased is not None:
+                param_values["unbiased"] = unbiased
+            if (
+                op_spec.name == "var"
+                and dtype_info.torch_dtype is not torch.float32
+            ):
+                raise RefBackendError(
+                    "codegen var supports only torch.float32 tensors"
+                )
+        param_values["reduce_all"] = reduce_all
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=list(input_nodes),
+            output_shape=(),
+            inplace_input=inplace_input,
+            reduction_dims=reduction_dims,
+            keepdim=keepdim,
+            params=param_values,
+        )
+        self.validate(op_node, input_shapes, input_dtypes, dtype_info)
+        output_shape = _infer_output_shape(op_node, input_shapes)
+        op_node.output_shape = output_shape
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        if inplace_input is not None:
+            strides[node] = strides[input_nodes[inplace_input]]
+        else:
+            strides[node] = _contiguous_strides(output_shape)
+        return OpNodeBuildResult(op_node)
+
+
+class _BackendArgReductionHandler(ArgReductionHandler):
+    def build_op_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType | None,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if dtype_info is None:
+            raise RefBackendError(
+                "codegen backend requires at least one tensor input or a factory op dtype"
+            )
+        if len(node.args) < 1:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects one input"
+            )
+        args_to_check = node.args[:1]
+        input_nodes: List[torch.fx.Node] = []
+        input_shapes: List[Tuple[int, ...]] = []
+        for arg in args_to_check:
+            if not isinstance(arg, torch.fx.Node):
+                raise _error_expected_tensor(op_spec.name)
+            if arg not in shapes:
+                raise _error_expected_tensor(op_spec.name)
+            input_nodes.append(arg)
+            input_shapes.append(shapes[arg])
+        input_dtypes = [dtypes[arg] for arg in input_nodes]
+        if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects inputs to share the graph dtype"
+            )
+        reduction_dims, keepdim, reduce_all = _parse_argminmax_args(
+            op_spec.name, node, input_shapes[0]
+        )
+        reduction_count = 1
+        if reduce_all:
+            for size in input_shapes[0]:
+                reduction_count *= size
+        else:
+            for dim in reduction_dims:
+                reduction_count *= input_shapes[0][dim]
+        if reduction_count == 0:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects a non-empty reduction dimension"
+            )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=list(input_nodes),
+            output_shape=(),
+            inplace_input=inplace_input,
+            reduction_dims=reduction_dims,
+            keepdim=keepdim,
+            params={"reduce_all": reduce_all},
+        )
+        self.validate(op_node, input_shapes, input_dtypes, dtype_info)
+        output_shape = _infer_output_shape(op_node, input_shapes)
+        op_node.output_shape = output_shape
+        shapes[node] = output_shape
+        dtypes[node] = torch.int64
+        if inplace_input is not None:
+            strides[node] = strides[input_nodes[inplace_input]]
+        else:
+            strides[node] = _contiguous_strides(output_shape)
+        return OpNodeBuildResult(op_node)
+
+
+class _BackendMatmulHandler(MatmulHandler):
+    def build_op_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType | None,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if dtype_info is None:
+            raise RefBackendError(
+                "codegen backend requires at least one tensor input or a factory op dtype"
+            )
+        allowed_kwargs = set()
+        is_out_overload = _is_out_overload(node.target)
+        if is_out_overload:
+            allowed_kwargs.add("out")
+        if node.kwargs and set(node.kwargs) - allowed_kwargs:
+            raise RefBackendError(
+                "codegen backend expects positional args only"
+            )
+        expected_arity = 2
+        out_arg: torch.fx.Node | None = None
+        if is_out_overload:
+            if inplace_input is None:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects out to be provided"
+                )
+            if "out" in node.kwargs:
+                if len(node.args) > expected_arity:
+                    raise _error_kwarg_specified_once(op_spec.name, "out")
+                out_arg = node.kwargs["out"]
+            elif len(node.args) == expected_arity + 1:
+                out_arg = node.args[inplace_input]
+            elif len(node.args) != expected_arity:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects exactly two inputs"
+                )
+            if out_arg is None:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects out to be provided"
+                )
+        elif len(node.args) != expected_arity:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects exactly two inputs"
+            )
+        input_nodes: List[torch.fx.Node] = []
+        input_shapes: List[Tuple[int, ...]] = []
+        for arg in node.args[:expected_arity]:
+            if not isinstance(arg, torch.fx.Node):
+                raise _error_expected_tensor(op_spec.name)
+            if arg not in shapes:
+                raise _error_expected_tensor(op_spec.name)
+            input_nodes.append(arg)
+            input_shapes.append(shapes[arg])
+        if out_arg is not None and out_arg not in input_nodes:
+            if not isinstance(out_arg, torch.fx.Node):
+                raise _error_expected_tensor(op_spec.name)
+            if out_arg not in shapes:
+                raise _error_expected_tensor(op_spec.name)
+            input_nodes.append(out_arg)
+            input_shapes.append(shapes[out_arg])
+        input_dtypes = [dtypes[arg] for arg in input_nodes]
+        if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects inputs to share the graph dtype"
+            )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=list(input_nodes),
+            output_shape=(),
+            inplace_input=inplace_input,
+        )
+        self.validate(op_node, input_shapes, input_dtypes, dtype_info)
+        output_shape = _infer_output_shape(op_node, input_shapes)
+        op_node.output_shape = output_shape
+        if out_arg is not None and shapes[out_arg] != output_shape:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects out to match output shape"
+            )
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        if inplace_input is not None:
+            strides[node] = strides[input_nodes[inplace_input]]
+        else:
+            strides[node] = _contiguous_strides(output_shape)
+        return OpNodeBuildResult(op_node)
+
+
+class _BackendAddrHandler(AddrHandler):
+    def build_op_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType | None,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if dtype_info is None:
+            return None
+        handler = getattr(self._ctx, "handle_addmm_like_node", None)
+        if handler is None:
+            return None
+        op_node = handler(
+            node, op_spec, dtype_info, shapes, strides, dtypes, inplace_input
+        )
+        if inplace_input is not None:
+            input_shape = shapes[op_node.inputs[inplace_input]]
+            output_shape = op_node.output_shape
+            if len(input_shape) != 2:
+                raise RefBackendError(
+                    "codegen addr expects 2D input and 1D vectors"
+                )
+            if tuple(output_shape) != tuple(input_shape):
+                raise RefBackendError(
+                    "codegen addr expects input shape to match outer product output"
+                )
+        return OpNodeBuildResult(op_node)
+
 class _BackendArangeHandler(ArangeHandler):
     def build_op_node(
         self,
@@ -4169,6 +4286,26 @@ class _BackendConcatHandler(ConcatHandler):
 
 
 class _BackendEmptyStridedHandler(EmptyStridedHandler):
+    def infer_graph_dtype(
+        self, node: torch.fx.Node, op_spec: _OpSpec
+    ) -> torch.dtype | None:
+        node_dtype = None
+        if len(node.args) > 2:
+            node_dtype = node.args[2]
+        if "dtype" in node.kwargs:
+            if node_dtype is not None:
+                raise _error_kwarg_specified_once(op_spec.name, "dtype")
+            node_dtype = node.kwargs["dtype"]
+        if isinstance(node_dtype, torch.fx.Node):
+            raise RefBackendError(
+                "codegen empty_strided expects dtype to be a constant"
+            )
+        if node_dtype is None:
+            raise RefBackendError(
+                "codegen empty_strided requires dtype when no tensor inputs are provided"
+            )
+        return node_dtype
+
     def build_op_node(
         self,
         node: torch.fx.Node,
@@ -5588,12 +5725,31 @@ class _KindHandlerContext(HandlerContext):
 
 _HANDLER_CONTEXT = _KindHandlerContext()
 _KIND_HANDLERS = build_kind_handlers(_HANDLER_CONTEXT)
+_ELEMENTWISE_EMITTER = ElementwiseEmitter()
 _KIND_HANDLERS.update(
     {
+        OpKind.BINARY: _BackendElementwiseHandler(
+            _HANDLER_CONTEXT, _ELEMENTWISE_EMITTER, "binary"
+        ),
+        OpKind.UNARY: _BackendElementwiseHandler(
+            _HANDLER_CONTEXT, _ELEMENTWISE_EMITTER, "unary"
+        ),
+        OpKind.WHERE: _BackendElementwiseHandler(
+            _HANDLER_CONTEXT, _ELEMENTWISE_EMITTER, "where"
+        ),
+        OpKind.FILL: _BackendElementwiseHandler(
+            _HANDLER_CONTEXT, _ELEMENTWISE_EMITTER, "fill"
+        ),
         OpKind.ARANGE: _BackendArangeHandler(_HANDLER_CONTEXT, ArangeEmitter()),
         OpKind.CONCAT: _BackendConcatHandler(_HANDLER_CONTEXT, ConcatEmitter()),
         OpKind.EMPTY_STRIDED: _BackendEmptyStridedHandler(
             _HANDLER_CONTEXT, EmptyStridedEmitter()
+        ),
+        OpKind.REDUCTION: _BackendReductionHandler(
+            _HANDLER_CONTEXT, ReductionEmitter()
+        ),
+        OpKind.ARG_REDUCTION: _BackendArgReductionHandler(
+            _HANDLER_CONTEXT, ArgReductionEmitter()
         ),
         OpKind.POOL1D: _BackendPool1dHandler(_HANDLER_CONTEXT, Pool1dEmitter()),
         OpKind.POOL2D: _BackendPool2dHandler(_HANDLER_CONTEXT, Pool2dEmitter()),
@@ -5612,6 +5768,10 @@ _KIND_HANDLERS.update(
         ),
         OpKind.CONV1D: _BackendConv1dHandler(_HANDLER_CONTEXT, Conv1dEmitter()),
         OpKind.CONV2D: _BackendConv2dHandler(_HANDLER_CONTEXT, Conv2dEmitter()),
+        OpKind.MATMUL: _BackendMatmulHandler(
+            _HANDLER_CONTEXT, MatmulEmitter()
+        ),
+        OpKind.ADDR: _BackendAddrHandler(_HANDLER_CONTEXT, AddrEmitter()),
     }
 )
 

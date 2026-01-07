@@ -9,6 +9,11 @@ import torch.nn.functional as F
 
 from codegen_backend.specs import OpKind, _OpSpec, _binary_spec, _unary_spec
 
+# Dev note: when introducing a new OpKind with a centralized handler, wire the
+# handler/emitter in codegen_backend/emitters/registry.py and, if build-time
+# validation/parsing lives in the backend, add a backend OpKindHandler subclass
+# in codegen_backend/backend.py and register it in _KIND_HANDLERS.
+
 
 def _flatten_targets(targets: tuple[object, ...]) -> list[object]:
     if len(targets) == 1 and isinstance(targets[0], (list, tuple, set)):
