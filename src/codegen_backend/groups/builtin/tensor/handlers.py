@@ -12,6 +12,7 @@ from codegen_backend.emitters.arange import ArangeEmitter
 from codegen_backend.emitters.concat import ConcatEmitter
 from codegen_backend.emitters.empty_strided import EmptyStridedEmitter
 from codegen_backend.emitters.matmul import MatmulEmitter
+from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.graph import _OpNode
 from codegen_backend.indexing import _contiguous_strides
@@ -456,4 +457,22 @@ def build_handlers(context: HandlerContext) -> Dict[OpKind, OpKindHandler]:
     }
 
 
-__all__ = ["build_handlers"]
+def build_kind_handler_registrations() -> Dict[OpKind, KindHandlerRegistration]:
+    return {
+        OpKind.MATMUL: KindHandlerRegistration(
+            _BackendMatmulHandler, MatmulEmitter
+        ),
+        OpKind.ADDR: KindHandlerRegistration(_BackendAddrHandler, AddrEmitter),
+        OpKind.ARANGE: KindHandlerRegistration(
+            _BackendArangeHandler, ArangeEmitter
+        ),
+        OpKind.CONCAT: KindHandlerRegistration(
+            _BackendConcatHandler, ConcatEmitter
+        ),
+        OpKind.EMPTY_STRIDED: KindHandlerRegistration(
+            _BackendEmptyStridedHandler, EmptyStridedEmitter
+        ),
+    }
+
+
+__all__ = ["build_handlers", "build_kind_handler_registrations"]

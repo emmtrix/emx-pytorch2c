@@ -8,6 +8,7 @@ import torch.fx
 from codegen_backend.dtypes import _CodegenDType
 from codegen_backend.emitters.argreduction import ArgReductionEmitter
 from codegen_backend.emitters.reduction import ReductionEmitter
+from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.emitters.softmax import SoftmaxEmitter
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.graph import _OpNode
@@ -244,4 +245,18 @@ def build_handlers(context: HandlerContext) -> Dict[OpKind, OpKindHandler]:
     }
 
 
-__all__ = ["build_handlers"]
+def build_kind_handler_registrations() -> Dict[OpKind, KindHandlerRegistration]:
+    return {
+        OpKind.REDUCTION: KindHandlerRegistration(
+            _BackendReductionHandler, ReductionEmitter
+        ),
+        OpKind.ARG_REDUCTION: KindHandlerRegistration(
+            _BackendArgReductionHandler, ArgReductionEmitter
+        ),
+        OpKind.SOFTMAX: KindHandlerRegistration(
+            _BackendSoftmaxHandler, SoftmaxEmitter
+        ),
+    }
+
+
+__all__ = ["build_handlers", "build_kind_handler_registrations"]

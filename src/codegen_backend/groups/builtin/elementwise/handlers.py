@@ -12,6 +12,7 @@ from codegen_backend.emitters.elementwise import (
     _PARAMETRIC_UNARY_OPS,
     ElementwiseEmitter,
 )
+from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.graph import _OpNode
 from codegen_backend.indexing import _contiguous_strides
@@ -371,4 +372,21 @@ def build_handlers(context: HandlerContext) -> Dict[OpKind, OpKindHandler]:
     }
 
 
-__all__ = ["build_handlers"]
+def build_kind_handler_registrations() -> Dict[OpKind, KindHandlerRegistration]:
+    return {
+        OpKind.BINARY: KindHandlerRegistration(
+            _BackendElementwiseHandler, ElementwiseEmitter
+        ),
+        OpKind.UNARY: KindHandlerRegistration(
+            _BackendElementwiseHandler, ElementwiseEmitter
+        ),
+        OpKind.WHERE: KindHandlerRegistration(
+            _BackendElementwiseHandler, ElementwiseEmitter
+        ),
+        OpKind.FILL: KindHandlerRegistration(
+            _BackendElementwiseHandler, ElementwiseEmitter
+        ),
+    }
+
+
+__all__ = ["build_handlers", "build_kind_handler_registrations"]

@@ -5,7 +5,16 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 import math
 import numbers
-from typing import TYPE_CHECKING, Callable, Dict, List, Protocol, Sequence, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    Protocol,
+    Sequence,
+    Tuple,
+)
 
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend import shape_utils
@@ -15,6 +24,7 @@ if TYPE_CHECKING:
     import torch
     from codegen_backend.dtypes import _CodegenDType
     from codegen_backend.emitters.base import KindEmitter
+    from codegen_backend.emitters.registry import KindHandlerRegistration
     from codegen_backend.graph import _GenericGraph, _OpNode
     from codegen_backend.specs import _OpSpec
 
@@ -1807,7 +1817,10 @@ class MatmulHandler(OpKindHandler):
         return (a_shape[0], a_shape[1], b_shape[2])
 
 
-def build_kind_handlers(context: HandlerContext) -> Dict[OpKind, OpKindHandler]:
+def build_kind_handlers(
+    context: HandlerContext,
+    registry: Mapping[OpKind, "KindHandlerRegistration"] | None = None,
+) -> Dict[OpKind, OpKindHandler]:
     from codegen_backend.emitters.registry import build_kind_handler_registry
 
     def _build_with_dtype(func):
@@ -1930,7 +1943,9 @@ def build_kind_handlers(context: HandlerContext) -> Dict[OpKind, OpKindHandler]:
         op_node = handler(node, op_spec, dtype_info, shapes, strides, dtypes)
         return OpNodeBuildResult(op_node)
 
-    registry = build_kind_handler_registry()
+    registry = (
+        build_kind_handler_registry() if registry is None else dict(registry)
+    )
     elementwise_emitter = registry[OpKind.BINARY].emitter_cls()
     binary_handler = registry[OpKind.BINARY].handler_cls(
         context,

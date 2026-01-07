@@ -8,6 +8,7 @@ import torch.fx
 from codegen_backend.dtypes import _CodegenDType, _EMBEDDING_INDEX_DTYPES
 from codegen_backend.emitters.embedding import EmbeddingEmitter
 from codegen_backend.emitters.embedding_bag import EmbeddingBagEmitter
+from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.graph import _OpNode
 from codegen_backend.indexing import _contiguous_strides
@@ -206,4 +207,15 @@ def build_handlers(context: HandlerContext) -> Dict[OpKind, OpKindHandler]:
     }
 
 
-__all__ = ["build_handlers"]
+def build_kind_handler_registrations() -> Dict[OpKind, KindHandlerRegistration]:
+    return {
+        OpKind.EMBEDDING: KindHandlerRegistration(
+            _BackendEmbeddingHandler, EmbeddingEmitter
+        ),
+        OpKind.EMBEDDING_BAG: KindHandlerRegistration(
+            _BackendEmbeddingBagHandler, EmbeddingBagEmitter
+        ),
+    }
+
+
+__all__ = ["build_handlers", "build_kind_handler_registrations"]

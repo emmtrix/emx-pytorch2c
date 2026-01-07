@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Mapping
 
+from codegen_backend.emitters.registry import (
+    KindHandlerRegistration,
+    build_kind_handler_registry,
+)
 from codegen_backend.kinds import HandlerContext, OpKindHandler, build_kind_handlers
 from codegen_backend.ops_registry_conv import build_supported_ops as build_conv_ops
 from codegen_backend.ops_registry_elementwise import (
@@ -43,6 +47,11 @@ class LegacyBackendGroup:
     def kind_handlers(
         self, context: HandlerContext
     ) -> Dict[OpKind, OpKindHandler]:
+        registry = build_kind_handler_registry()
+        registry.update(self.kind_handler_registrations())
+        return build_kind_handlers(context, registry=registry)
+
+    def kind_handler_registrations(self) -> Mapping[OpKind, KindHandlerRegistration]:
         from codegen_backend.groups.builtin.conv import handlers as conv_handlers
         from codegen_backend.groups.builtin.elementwise import (
             handlers as elementwise_handlers,
@@ -56,14 +65,18 @@ class LegacyBackendGroup:
         )
         from codegen_backend.groups.builtin.tensor import handlers as tensor_handlers
 
-        kind_handlers = build_kind_handlers(context)
-        kind_handlers.update(elementwise_handlers.build_handlers(context))
-        kind_handlers.update(reductions_handlers.build_handlers(context))
-        kind_handlers.update(pooling_handlers.build_handlers(context))
-        kind_handlers.update(conv_handlers.build_handlers(context))
-        kind_handlers.update(embedding_handlers.build_handlers(context))
-        kind_handlers.update(tensor_handlers.build_handlers(context))
-        return kind_handlers
+        registrations: Dict[OpKind, KindHandlerRegistration] = {}
+        registrations.update(
+            elementwise_handlers.build_kind_handler_registrations()
+        )
+        registrations.update(
+            reductions_handlers.build_kind_handler_registrations()
+        )
+        registrations.update(pooling_handlers.build_kind_handler_registrations())
+        registrations.update(conv_handlers.build_kind_handler_registrations())
+        registrations.update(embedding_handlers.build_kind_handler_registrations())
+        registrations.update(tensor_handlers.build_kind_handler_registrations())
+        return registrations
 
     def supported_ops(self) -> Mapping[str, _OpSpec]:
         supported_ops: Dict[str, _OpSpec] = {}

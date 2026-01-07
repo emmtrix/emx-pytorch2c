@@ -9,6 +9,7 @@ import torch.fx
 from codegen_backend.dtypes import _CodegenDType
 from codegen_backend.emitters.conv1d import Conv1dEmitter
 from codegen_backend.emitters.conv2d import Conv2dEmitter
+from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.graph import _OpNode
 from codegen_backend.indexing import _contiguous_strides
@@ -318,4 +319,15 @@ def build_handlers(context: HandlerContext) -> Dict[OpKind, OpKindHandler]:
     }
 
 
-__all__ = ["build_handlers"]
+def build_kind_handler_registrations() -> Dict[OpKind, KindHandlerRegistration]:
+    return {
+        OpKind.CONV1D: KindHandlerRegistration(
+            _BackendConv1dHandler, Conv1dEmitter
+        ),
+        OpKind.CONV2D: KindHandlerRegistration(
+            _BackendConv2dHandler, Conv2dEmitter
+        ),
+    }
+
+
+__all__ = ["build_handlers", "build_kind_handler_registrations"]

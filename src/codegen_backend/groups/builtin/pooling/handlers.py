@@ -11,6 +11,7 @@ from codegen_backend.emitters.pool1d import Pool1dEmitter
 from codegen_backend.emitters.pool2d import Pool2dEmitter
 from codegen_backend.emitters.pool2d_backward import Pool2dBackwardEmitter
 from codegen_backend.emitters.pool3d import Pool3dEmitter
+from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.graph import _OpNode
 from codegen_backend.indexing import _contiguous_strides
@@ -709,4 +710,21 @@ def build_handlers(context: HandlerContext) -> Dict[OpKind, OpKindHandler]:
     }
 
 
-__all__ = ["build_handlers"]
+def build_kind_handler_registrations() -> Dict[OpKind, KindHandlerRegistration]:
+    return {
+        OpKind.POOL1D: KindHandlerRegistration(
+            _BackendPool1dHandler, Pool1dEmitter
+        ),
+        OpKind.POOL2D: KindHandlerRegistration(
+            _BackendPool2dHandler, Pool2dEmitter
+        ),
+        OpKind.POOL3D: KindHandlerRegistration(
+            _BackendPool3dHandler, Pool3dEmitter
+        ),
+        OpKind.POOL2D_BACKWARD: KindHandlerRegistration(
+            _BackendPool2dBackwardHandler, Pool2dBackwardEmitter
+        ),
+    }
+
+
+__all__ = ["build_handlers", "build_kind_handler_registrations"]

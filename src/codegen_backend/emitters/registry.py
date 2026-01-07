@@ -13,6 +13,14 @@ class KindHandlerRegistration:
 
 
 def build_kind_handler_registry() -> Dict[OpKind, KindHandlerRegistration]:
+    """Return the default kind handler registry.
+
+    Groups can extend or override registrations by updating the returned
+    mapping with their own KindHandlerRegistration entries, for example:
+
+    registry = build_kind_handler_registry()
+    registry.update(custom_group.build_kind_handler_registrations())
+    """
     from codegen_backend.emitters.addbmm import AddbmmEmitter
     from codegen_backend.emitters.addmm import AddmmEmitter
     from codegen_backend.emitters.addmv import AddmvEmitter
