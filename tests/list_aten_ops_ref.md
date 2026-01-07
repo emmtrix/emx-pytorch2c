@@ -1099,7 +1099,7 @@
 | `linalg_vander` | — |
 | `linalg_vecdot` | — |
 | `linalg_vector_norm` | — |
-| `linear` | — |
+| `linear` | ✅ |
 | `linear_backward` | — |
 | `linspace` | — |
 | `list` | — |
@@ -1719,5 +1719,5 @@
 
 ## Summary
 - total aten ops: 1714
-- supported by codegen: 266 / 1714 (15.5 %)
-- unsupported by codegen: 1448
+- supported by codegen: 267 / 1714 (15.6 %)
+- unsupported by codegen: 1447

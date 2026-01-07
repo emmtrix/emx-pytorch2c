@@ -2,7 +2,6 @@ import hashlib
 import math
 import numbers
 import operator
-from collections.abc import Sequence as ABCSequence
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -15,7 +14,6 @@ from codegen_backend.errors import CodegenBackendError
 from codegen_backend.c_types import (
     _dtype_to_c_type,
     _input_c_type,
-    _normalize_scalar_value,
 )
 from codegen_backend.compile import compile_or_load
 from codegen_backend.dtypes import (
@@ -34,13 +32,12 @@ from codegen_backend.indexing import (
 from codegen_backend.groups.registry import get_group_registry
 from codegen_backend.kinds import HandlerContext, OpNodeBuildResult
 from codegen_backend.param_normalize import normalize_int_or_tuple
+from codegen_backend.analysis_helpers import is_out_overload
+from codegen_backend.services import GraphAnalysisService
+from codegen_backend.groups.builtin.elementwise import analysis as elementwise_analysis
+from codegen_backend.groups.builtin.tensor import analysis as tensor_analysis
 from codegen_backend.specs import OpKind, _OpSpec
 from codegen_backend.templates import get_template_env
-
-
-def _is_out_overload(target: object) -> bool:
-    schema = getattr(target, "_schema", None)
-    return schema is not None and schema.overload_name == "out"
 
 
 _C_SRC_DIR = Path(__file__).resolve().parents[2] / "csrc"
@@ -147,7 +144,7 @@ def _resolve_alias(
 
 
 def _kernel_inputs(op_node: _OpNode) -> List[torch.fx.Node]:
-    if _is_out_overload(op_node.node.target) and op_node.inplace_input is not None:
+    if is_out_overload(op_node.node.target) and op_node.inplace_input is not None:
         return [
             arg
             for index, arg in enumerate(op_node.inputs)
@@ -3756,6 +3753,75 @@ def _compile_graph(
     return compiled
 
 
+class GraphAnalyzer:
+    def __init__(
+        self,
+        *,
+        supported_ops: Callable[[], Dict[str, _OpSpec]],
+        target_registry: Callable[[], Dict[object, "_TargetInfo"]],
+        kind_handlers: Callable[[], Dict[OpKind, "OpKindHandler"]],
+    ) -> None:
+        self._supported_ops = supported_ops
+        self._target_registry = target_registry
+        self._kind_handlers = kind_handlers
+
+    def analyze(
+        self, gm: torch.fx.GraphModule, example_inputs: Sequence[object]
+    ) -> _GenericGraph:
+        return _analyze_generic_graph(
+            gm,
+            example_inputs,
+            supported_ops=self._supported_ops(),
+            target_registry=self._target_registry(),
+            kind_handlers=self._kind_handlers(),
+        )
+
+
+class SourceWriter:
+    def __init__(
+        self,
+        *,
+        templates_env: Callable[[], object],
+        kind_handlers: Callable[[], Dict[OpKind, "OpKindHandler"]],
+    ) -> None:
+        self._templates_env = templates_env
+        self._kind_handlers = kind_handlers
+
+    def write(self, graph: _GenericGraph) -> str:
+        return _write_generic_source(
+            graph,
+            kind_handlers=self._kind_handlers(),
+            templates_env=self._templates_env(),
+        )
+
+
+class CompilePipeline:
+    def __init__(self, analyzer: GraphAnalyzer, writer: SourceWriter) -> None:
+        self._analyzer = analyzer
+        self._writer = writer
+
+    def get_source(
+        self, gm: torch.fx.GraphModule, example_inputs: Sequence[object]
+    ) -> str:
+        graph = self._analyzer.analyze(gm, example_inputs)
+        return self._writer.write(graph)
+
+    def compile_library(self, graph: _GenericGraph) -> _GenericLibrary:
+        return _compile_generic_library(
+            graph, write_generic_source=self._writer.write
+        )
+
+    def compile_graph(
+        self, gm: torch.fx.GraphModule, example_inputs: List[object]
+    ) -> Callable[..., torch.Tensor]:
+        return _compile_graph(
+            gm,
+            example_inputs,
+            analyze_generic_graph=self._analyzer.analyze,
+            compile_generic_library=self.compile_library,
+        )
+
+
 class BackendContext(HandlerContext):
     def __init__(self, backend: "CodegenBackend") -> None:
         self._backend = backend
@@ -3763,6 +3829,10 @@ class BackendContext(HandlerContext):
     @property
     def kind_handlers(self) -> Dict[OpKind, "OpKindHandler"]:
         return self._backend.kind_handlers
+
+    @property
+    def analysis_service(self) -> GraphAnalysisService:
+        return self._backend.analysis_service
 
     def handle_col2im_node(
         self,
@@ -3773,9 +3843,7 @@ class BackendContext(HandlerContext):
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
-        return _handle_col2im_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
-        )
+        raise CodegenBackendError("col2im handler is not available")
 
     def handle_batch_norm_node(
         self,
@@ -3787,7 +3855,7 @@ class BackendContext(HandlerContext):
         dtypes: Dict[torch.fx.Node, torch.dtype],
         scalar_values: Dict[torch.fx.Node, object],
     ) -> _OpNode:
-        return _handle_batch_norm_node(
+        return tensor_analysis.handle_batch_norm_node(
             node,
             op_spec,
             dtype_info,
@@ -3795,7 +3863,7 @@ class BackendContext(HandlerContext):
             strides,
             dtypes,
             scalar_values,
-            self._backend.kind_handlers,
+            infer_output_shape=self.analysis_service.infer_output_shape,
         )
 
     def handle_pdist_node(
@@ -3807,14 +3875,14 @@ class BackendContext(HandlerContext):
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
-        return _handle_pdist_node(
+        return tensor_analysis.handle_pdist_node(
             node,
             op_spec,
             dtype_info,
             shapes,
             strides,
             dtypes,
-            self._backend.kind_handlers,
+            infer_output_shape=self.analysis_service.infer_output_shape,
         )
 
     def handle_cdist_node(
@@ -3826,14 +3894,14 @@ class BackendContext(HandlerContext):
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
-        return _handle_cdist_node(
+        return tensor_analysis.handle_cdist_node(
             node,
             op_spec,
             dtype_info,
             shapes,
             strides,
             dtypes,
-            self._backend.kind_handlers,
+            infer_output_shape=self.analysis_service.infer_output_shape,
         )
 
     def handle_diagonal_node(
@@ -3845,14 +3913,14 @@ class BackendContext(HandlerContext):
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
-        return _handle_diagonal_node(
+        return tensor_analysis.handle_diagonal_node(
             node,
             op_spec,
             dtype_info,
             shapes,
             strides,
             dtypes,
-            self._backend.kind_handlers,
+            infer_output_shape=self.analysis_service.infer_output_shape,
         )
 
     def handle_addmm_like_node(
@@ -3865,7 +3933,7 @@ class BackendContext(HandlerContext):
         dtypes: Dict[torch.fx.Node, torch.dtype],
         inplace_input: int | None,
     ) -> _OpNode:
-        return _handle_addmm_like_node(
+        return tensor_analysis.handle_addmm_like_node(
             node,
             op_spec,
             dtype_info,
@@ -3873,7 +3941,7 @@ class BackendContext(HandlerContext):
             strides,
             dtypes,
             inplace_input,
-            self._backend.kind_handlers,
+            infer_output_shape=self.analysis_service.infer_output_shape,
         )
 
     def handle_linear_node(
@@ -3886,14 +3954,14 @@ class BackendContext(HandlerContext):
         dtypes: Dict[torch.fx.Node, torch.dtype],
         scalar_values: Dict[torch.fx.Node, object],
     ) -> _OpNode:
-        return _handle_linear_node(
+        return tensor_analysis.handle_linear_node(
             node,
             op_spec,
             dtype_info,
             shapes,
             strides,
             dtypes,
-            self._backend.kind_handlers,
+            infer_output_shape=self.analysis_service.infer_output_shape,
         )
 
     def handle_flip_node(
@@ -3905,14 +3973,14 @@ class BackendContext(HandlerContext):
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
-        return _handle_flip_node(
+        return tensor_analysis.handle_flip_node(
             node,
             op_spec,
             dtype_info,
             shapes,
             strides,
             dtypes,
-            self._backend.kind_handlers,
+            infer_output_shape=self.analysis_service.infer_output_shape,
         )
 
     def handle_cumsum_node(
@@ -3924,14 +3992,14 @@ class BackendContext(HandlerContext):
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
-        return _handle_cumsum_node(
+        return tensor_analysis.handle_cumsum_node(
             node,
             op_spec,
             dtype_info,
             shapes,
             strides,
             dtypes,
-            self._backend.kind_handlers,
+            infer_output_shape=self.analysis_service.infer_output_shape,
         )
 
     def handle_pad_node(
@@ -3943,14 +4011,14 @@ class BackendContext(HandlerContext):
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
-        return _handle_constant_pad_node(
+        return tensor_analysis.handle_constant_pad_node(
             node,
             op_spec,
             dtype_info,
             shapes,
             strides,
             dtypes,
-            self._backend.kind_handlers,
+            infer_output_shape=self.analysis_service.infer_output_shape,
         )
 
     def handle_gather_node(
@@ -3962,14 +4030,14 @@ class BackendContext(HandlerContext):
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
-        return _handle_gather_node(
+        return tensor_analysis.handle_gather_node(
             node,
             op_spec,
             dtype_info,
             shapes,
             strides,
             dtypes,
-            self._backend.kind_handlers,
+            infer_output_shape=self.analysis_service.infer_output_shape,
         )
 
     def handle_view_node(
@@ -3981,14 +4049,14 @@ class BackendContext(HandlerContext):
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
-        return _handle_view_node(
+        return tensor_analysis.handle_view_node(
             node,
             op_spec,
             dtype_info,
             shapes,
             strides,
             dtypes,
-            self._backend.kind_handlers,
+            infer_output_shape=self.analysis_service.infer_output_shape,
         )
 
     def handle_fill_node(
@@ -4001,7 +4069,7 @@ class BackendContext(HandlerContext):
         dtypes: Dict[torch.fx.Node, torch.dtype],
         inplace_input: int | None,
     ) -> _OpNode:
-        return _handle_fill_node(
+        return elementwise_analysis.handle_fill_node(
             node,
             op_spec,
             dtype_info,
@@ -4009,7 +4077,7 @@ class BackendContext(HandlerContext):
             strides,
             dtypes,
             inplace_input,
-            self._backend.kind_handlers,
+            infer_output_shape=self.analysis_service.infer_output_shape,
         )
 
     def handle_resize_node(
@@ -4022,7 +4090,7 @@ class BackendContext(HandlerContext):
         dtypes: Dict[torch.fx.Node, torch.dtype],
         inplace_input: int | None,
     ) -> _OpNode:
-        return _handle_resize_node(
+        return tensor_analysis.handle_resize_node(
             node,
             op_spec,
             dtype_info,
@@ -4030,7 +4098,7 @@ class BackendContext(HandlerContext):
             strides,
             dtypes,
             inplace_input,
-            self._backend.kind_handlers,
+            infer_output_shape=self.analysis_service.infer_output_shape,
         )
 
     def handle_to_copy_node(
@@ -4042,7 +4110,7 @@ class BackendContext(HandlerContext):
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
-        return _handle_to_copy_node(
+        return elementwise_analysis.handle_to_copy_node(
             node, op_spec, dtype_info, shapes, strides, dtypes
         )
 
@@ -4066,6 +4134,17 @@ class CodegenBackend:
         self._supported_ops: Dict[str, _OpSpec] | None = None
         self._target_registry: Dict[object, "_TargetInfo"] | None = None
         self._kind_handlers: Dict[OpKind, "OpKindHandler"] | None = None
+        self._analysis_service = GraphAnalysisService(lambda: self.kind_handlers)
+        self._graph_analyzer = GraphAnalyzer(
+            supported_ops=lambda: self.supported_ops,
+            target_registry=lambda: self.target_registry,
+            kind_handlers=lambda: self.kind_handlers,
+        )
+        self._source_writer = SourceWriter(
+            templates_env=lambda: self.templates_env,
+            kind_handlers=lambda: self.kind_handlers,
+        )
+        self._pipeline = CompilePipeline(self._graph_analyzer, self._source_writer)
         self._handler_context = BackendContext(self)
 
     @property
@@ -4088,49 +4167,27 @@ class CodegenBackend:
             )
         return self._kind_handlers
 
+    @property
+    def analysis_service(self) -> GraphAnalysisService:
+        return self._analysis_service
+
     def get_generic_source(
         self, gm: torch.fx.GraphModule, example_inputs: Sequence[object]
     ) -> str:
-        graph = self._analyze_generic_graph(gm, example_inputs)
-        return self._write_generic_source(graph)
+        return self._pipeline.get_source(gm, example_inputs)
 
     def codegen_generic_backend(
         self, gm: torch.fx.GraphModule, example_inputs: List[object]
     ) -> Callable[..., torch.Tensor]:
-        return self._compile_graph(gm, example_inputs)
-
-    def _write_generic_source(self, graph: _GenericGraph) -> str:
-        return _write_generic_source(
-            graph,
-            kind_handlers=self.kind_handlers,
-            templates_env=self.templates_env,
-        )
+        return self._pipeline.compile_graph(gm, example_inputs)
 
     def _analyze_generic_graph(
         self, gm: torch.fx.GraphModule, example_inputs: Sequence[object]
     ) -> _GenericGraph:
-        return _analyze_generic_graph(
-            gm,
-            example_inputs,
-            supported_ops=self.supported_ops,
-            target_registry=self.target_registry,
-            kind_handlers=self.kind_handlers,
-        )
+        return self._graph_analyzer.analyze(gm, example_inputs)
 
-    def _compile_generic_library(self, graph: _GenericGraph) -> _GenericLibrary:
-        return _compile_generic_library(
-            graph, write_generic_source=self._write_generic_source
-        )
-
-    def _compile_graph(
-        self, gm: torch.fx.GraphModule, example_inputs: List[object]
-    ) -> Callable[..., torch.Tensor]:
-        return _compile_graph(
-            gm,
-            example_inputs,
-            analyze_generic_graph=self._analyze_generic_graph,
-            compile_generic_library=self._compile_generic_library,
-        )
+    def _write_generic_source(self, graph: _GenericGraph) -> str:
+        return self._source_writer.write(graph)
 
 
 _DEFAULT_BACKEND = CodegenBackend()

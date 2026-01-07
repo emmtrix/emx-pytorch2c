@@ -27,16 +27,23 @@ from codegen_backend.kinds import (
     OpNodeBuildResult,
 )
 from codegen_backend.specs import OpKind, _OpSpec
-from codegen_backend.backend import (
-    _error_expected_tensor,
-    _error_kwarg_specified_once,
-    _infer_output_shape,
-    _is_out_overload,
-    _parse_arange_dtype,
-    _parse_concat_args,
-    _parse_empty_strided_stride,
-    _parse_resize_size,
-    _resolve_scalar_arg,
+from codegen_backend.groups.builtin.tensor.analysis import (
+    handle_addmm_like_node,
+    handle_batch_norm_node,
+    handle_cdist_node,
+    handle_constant_pad_node,
+    handle_cumsum_node,
+    handle_diagonal_node,
+    handle_flip_node,
+    handle_gather_node,
+    handle_linear_node,
+    handle_pdist_node,
+    handle_resize_node,
+    handle_view_node,
+    parse_arange_dtype,
+    parse_concat_args,
+    parse_empty_strided_stride,
+    parse_resize_size,
 )
 
 
@@ -57,7 +64,7 @@ class _BackendMatmulHandler(MatmulHandler):
                 "codegen backend requires at least one tensor input or a factory op dtype"
             )
         allowed_kwargs = set()
-        is_out_overload = _is_out_overload(node.target)
+        is_out_overload = self._ctx.analysis_service.is_out_overload(node.target)
         if is_out_overload:
             allowed_kwargs.add("out")
         if node.kwargs and set(node.kwargs) - allowed_kwargs:
@@ -73,7 +80,9 @@ class _BackendMatmulHandler(MatmulHandler):
                 )
             if "out" in node.kwargs:
                 if len(node.args) > expected_arity:
-                    raise _error_kwarg_specified_once(op_spec.name, "out")
+                    raise self._ctx.analysis_service.error_kwarg_specified_once(
+                        op_spec.name, "out"
+                    )
                 out_arg = node.kwargs["out"]
             elif len(node.args) == expected_arity + 1:
                 out_arg = node.args[inplace_input]
@@ -93,16 +102,16 @@ class _BackendMatmulHandler(MatmulHandler):
         input_shapes: List[tuple[int, ...]] = []
         for arg in node.args[:expected_arity]:
             if not isinstance(arg, torch.fx.Node):
-                raise _error_expected_tensor(op_spec.name)
+                raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
             if arg not in shapes:
-                raise _error_expected_tensor(op_spec.name)
+                raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
             input_nodes.append(arg)
             input_shapes.append(shapes[arg])
         if out_arg is not None and out_arg not in input_nodes:
             if not isinstance(out_arg, torch.fx.Node):
-                raise _error_expected_tensor(op_spec.name)
+                raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
             if out_arg not in shapes:
-                raise _error_expected_tensor(op_spec.name)
+                raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
             input_nodes.append(out_arg)
             input_shapes.append(shapes[out_arg])
         input_dtypes = [dtypes[arg] for arg in input_nodes]
@@ -118,8 +127,8 @@ class _BackendMatmulHandler(MatmulHandler):
             inplace_input=inplace_input,
         )
         self.validate(op_node, input_shapes, input_dtypes, dtype_info)
-        output_shape = _infer_output_shape(
-            op_node, input_shapes, kind_handlers=self._ctx.kind_handlers
+        output_shape = self._ctx.analysis_service.infer_output_shape(
+            op_node, input_shapes
         )
         op_node.output_shape = output_shape
         if out_arg is not None and shapes[out_arg] != output_shape:
@@ -149,11 +158,15 @@ class _BackendAddrHandler(AddrHandler):
     ) -> OpNodeBuildResult | None:
         if dtype_info is None:
             return None
-        handler = getattr(self._ctx, "handle_addmm_like_node", None)
-        if handler is None:
-            return None
-        op_node = handler(
-            node, op_spec, dtype_info, shapes, strides, dtypes, inplace_input
+        op_node = handle_addmm_like_node(
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            inplace_input,
+            infer_output_shape=self._ctx.analysis_service.infer_output_shape,
         )
         if inplace_input is not None:
             input_shape = shapes[op_node.inputs[inplace_input]]
@@ -224,15 +237,21 @@ class _BackendArangeHandler(ArangeHandler):
                 step_arg = node.args[2]
         if "start" in node.kwargs:
             if start_arg is not None:
-                raise _error_kwarg_specified_once(op_spec.name, "start")
+                raise self._ctx.analysis_service.error_kwarg_specified_once(
+                    op_spec.name, "start"
+                )
             start_arg = node.kwargs["start"]
         if "end" in node.kwargs:
             if end_arg is not None:
-                raise _error_kwarg_specified_once(op_spec.name, "end")
+                raise self._ctx.analysis_service.error_kwarg_specified_once(
+                    op_spec.name, "end"
+                )
             end_arg = node.kwargs["end"]
         if "step" in node.kwargs:
             if step_arg is not None:
-                raise _error_kwarg_specified_once(op_spec.name, "step")
+                raise self._ctx.analysis_service.error_kwarg_specified_once(
+                    op_spec.name, "step"
+                )
             step_arg = node.kwargs["step"]
         if start_arg is None or end_arg is None:
             raise CodegenBackendError(
@@ -240,15 +259,21 @@ class _BackendArangeHandler(ArangeHandler):
             )
         if step_arg is None:
             step_arg = 1
-        start = _resolve_scalar_arg(op_spec.name, start_arg, scalar_values)
-        end = _resolve_scalar_arg(op_spec.name, end_arg, scalar_values)
-        step = _resolve_scalar_arg(op_spec.name, step_arg, scalar_values)
+        start = self._ctx.analysis_service.resolve_scalar_arg(
+            op_spec.name, start_arg, scalar_values
+        )
+        end = self._ctx.analysis_service.resolve_scalar_arg(
+            op_spec.name, end_arg, scalar_values
+        )
+        step = self._ctx.analysis_service.resolve_scalar_arg(
+            op_spec.name, step_arg, scalar_values
+        )
         for name, value in (("start", start), ("end", end), ("step", step)):
             if not isinstance(value, numbers.Real):
                 raise CodegenBackendError(
                     f"codegen {op_spec.name} expects {name} to be an int or float"
                 )
-        dtype_spec = _parse_arange_dtype(
+        dtype_spec = parse_arange_dtype(
             op_spec.name, node.kwargs.get("dtype"), dtype_info, start, end, step
         )
         op_node = _OpNode(
@@ -258,9 +283,7 @@ class _BackendArangeHandler(ArangeHandler):
             output_shape=(),
             params={"start": start, "end": end, "step": step},
         )
-        output_shape = _infer_output_shape(
-            op_node, [], kind_handlers=self._ctx.kind_handlers
-        )
+        output_shape = self._ctx.analysis_service.infer_output_shape(op_node, [])
         op_node.output_shape = output_shape
         shapes[node] = output_shape
         dtypes[node] = dtype_spec.torch_dtype
@@ -282,11 +305,11 @@ class _BackendConcatHandler(ConcatHandler):
     ) -> OpNodeBuildResult | None:
         if dtype_info is None:
             return None
-        input_nodes, concat_dim = _parse_concat_args(node)
+        input_nodes, concat_dim = parse_concat_args(node)
         input_shapes: List[tuple[int, ...]] = []
         for arg in input_nodes:
             if arg not in shapes:
-                raise _error_expected_tensor("cat")
+                raise self._ctx.analysis_service.error_expected_tensor("cat")
             input_shapes.append(shapes[arg])
         if not input_shapes:
             raise CodegenBackendError(
@@ -324,8 +347,8 @@ class _BackendConcatHandler(ConcatHandler):
             inplace_input=None,
             params={"dim": concat_dim},
         )
-        output_shape = _infer_output_shape(
-            op_node, input_shapes, kind_handlers=self._ctx.kind_handlers
+        output_shape = self._ctx.analysis_service.infer_output_shape(
+            op_node, input_shapes
         )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
@@ -343,7 +366,9 @@ class _BackendEmptyStridedHandler(EmptyStridedHandler):
             node_dtype = node.args[2]
         if "dtype" in node.kwargs:
             if node_dtype is not None:
-                raise _error_kwarg_specified_once(op_spec.name, "dtype")
+                raise self._ctx.analysis_service.error_kwarg_specified_once(
+                    op_spec.name, "dtype"
+                )
             node_dtype = node.kwargs["dtype"]
         if isinstance(node_dtype, torch.fx.Node):
             raise CodegenBackendError(
@@ -394,7 +419,9 @@ class _BackendEmptyStridedHandler(EmptyStridedHandler):
         for index, name in enumerate(positional_names, start=2):
             if len(node.args) > index:
                 if name in kwargs:
-                    raise _error_kwarg_specified_once(op_spec.name, name)
+                    raise self._ctx.analysis_service.error_kwarg_specified_once(
+                        op_spec.name, name
+                    )
                 kwargs[name] = node.args[index]
         extra = set(kwargs) - {
             "dtype",
@@ -422,8 +449,8 @@ class _BackendEmptyStridedHandler(EmptyStridedHandler):
                 raise CodegenBackendError(
                     f"codegen {op_spec.name} expects {name} to be False"
                 )
-        output_shape = _parse_resize_size(op_spec.name, size_arg)
-        output_strides = _parse_empty_strided_stride(op_spec.name, stride_arg)
+        output_shape = parse_resize_size(op_spec.name, size_arg)
+        output_strides = parse_empty_strided_stride(op_spec.name, stride_arg)
         if len(output_shape) != len(output_strides):
             raise CodegenBackendError(
                 f"codegen {op_spec.name} expects size and stride to match length"
@@ -435,9 +462,7 @@ class _BackendEmptyStridedHandler(EmptyStridedHandler):
             output_shape=(),
             params={"size": output_shape},
         )
-        output_shape = _infer_output_shape(
-            op_node, [], kind_handlers=self._ctx.kind_handlers
-        )
+        output_shape = self._ctx.analysis_service.infer_output_shape(op_node, [])
         op_node.output_shape = output_shape
         shapes[node] = output_shape
         dtypes[node] = dtype_info.torch_dtype

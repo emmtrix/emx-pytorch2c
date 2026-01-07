@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from codegen_backend.emitters.registry import KindHandlerRegistration
     from codegen_backend.graph import _GenericGraph, _OpNode
     from codegen_backend.specs import _OpSpec
+    from codegen_backend.services import GraphAnalysisService
 
 @dataclass
 class KernelEmitRequest:
@@ -48,6 +49,9 @@ class KernelEmitRequest:
 class HandlerContext(Protocol):
     @property
     def kind_handlers(self) -> Dict[OpKind, "OpKindHandler"]: ...
+
+    @property
+    def analysis_service(self) -> "GraphAnalysisService": ...
 
     def kernel_inputs(self, op_node: "_OpNode") -> List["torch.fx.Node"]: ...
 

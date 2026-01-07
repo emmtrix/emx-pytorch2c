@@ -26,18 +26,16 @@ from codegen_backend.kinds import (
 )
 from codegen_backend.param_normalize import normalize_int_or_pair, normalize_int_or_tuple
 from codegen_backend.specs import OpKind, _OpSpec
-from codegen_backend.backend import (
-    _error_expected_tensor,
-    _infer_output_shape,
-    _normalize_param,
-    _parse_adaptive_avg_pool1d_args,
-    _parse_adaptive_avg_pool2d_args,
-    _parse_adaptive_avg_pool2d_backward_args,
-    _parse_adaptive_avg_pool3d_args,
-    _parse_avg_pool1d_args,
-    _parse_avg_pool2d_args,
-    _parse_max_pool1d_args,
-    _parse_max_pool2d_args,
+from codegen_backend.analysis_helpers import normalize_param
+from codegen_backend.groups.builtin.pooling.analysis import (
+    parse_adaptive_avg_pool1d_args,
+    parse_adaptive_avg_pool2d_args,
+    parse_adaptive_avg_pool2d_backward_args,
+    parse_adaptive_avg_pool3d_args,
+    parse_avg_pool1d_args,
+    parse_avg_pool2d_args,
+    parse_max_pool1d_args,
+    parse_max_pool2d_args,
 )
 
 
@@ -56,7 +54,7 @@ class _BackendPool1dHandler(Pool1dHandler):
         if dtype_info is None:
             return None
         if op_spec.name == "adaptive_avg_pool1d":
-            input_arg, output_size = _parse_adaptive_avg_pool1d_args(node)
+            input_arg, output_size = parse_adaptive_avg_pool1d_args(node)
             kernel_size = None
             stride = None
             padding = 0
@@ -72,7 +70,7 @@ class _BackendPool1dHandler(Pool1dHandler):
                 padding,
                 dilation,
                 ceil_mode,
-            ) = _parse_max_pool1d_args(node)
+            ) = parse_max_pool1d_args(node)
             count_include_pad = False
             divisor_override = None
         else:
@@ -84,12 +82,12 @@ class _BackendPool1dHandler(Pool1dHandler):
                 ceil_mode,
                 count_include_pad,
                 divisor_override,
-            ) = _parse_avg_pool1d_args(node)
+            ) = parse_avg_pool1d_args(node)
             dilation = 1
         if not isinstance(input_arg, torch.fx.Node):
-            raise _error_expected_tensor(op_spec.name)
+            raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if input_arg not in shapes:
-            raise _error_expected_tensor(op_spec.name)
+            raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if dtype_info.torch_dtype is not torch.float32:
             raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32 tensors"
@@ -156,19 +154,19 @@ class _BackendPool1dHandler(Pool1dHandler):
             padding_value = 0
             dilation_value = 1
         else:
-            kernel_value = _normalize_param(
+            kernel_value = normalize_param(
                 normalize_int_or_tuple, "kernel_size", kernel_size, 1
             )[0]
             if stride is None:
                 stride_value = kernel_value
             else:
-                stride_value = _normalize_param(
+                stride_value = normalize_param(
                     normalize_int_or_tuple, "stride", stride, 1
                 )[0]
-            padding_value = _normalize_param(
+            padding_value = normalize_param(
                 normalize_int_or_tuple, "padding", padding, 1
             )[0]
-            dilation_value = _normalize_param(
+            dilation_value = normalize_param(
                 normalize_int_or_tuple, "dilation", dilation, 1
             )[0]
         if (
@@ -221,8 +219,8 @@ class _BackendPool1dHandler(Pool1dHandler):
                 "divisor_override": divisor_override_value,
             },
         )
-        output_shape = _infer_output_shape(
-            op_node, [input_shape], kind_handlers=self._ctx.kind_handlers
+        output_shape = self._ctx.analysis_service.infer_output_shape(
+            op_node, [input_shape]
         )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
@@ -252,7 +250,7 @@ class _BackendPool2dHandler(Pool2dHandler):
         if dtype_info is None:
             return None
         if op_spec.name == "adaptive_avg_pool2d":
-            input_arg, output_size = _parse_adaptive_avg_pool2d_args(node)
+            input_arg, output_size = parse_adaptive_avg_pool2d_args(node)
             kernel_size = None
             stride = None
             padding = 0
@@ -268,7 +266,7 @@ class _BackendPool2dHandler(Pool2dHandler):
                 padding,
                 dilation,
                 ceil_mode,
-            ) = _parse_max_pool2d_args(node)
+            ) = parse_max_pool2d_args(node)
             count_include_pad = False
             divisor_override = None
         else:
@@ -280,12 +278,12 @@ class _BackendPool2dHandler(Pool2dHandler):
                 ceil_mode,
                 count_include_pad,
                 divisor_override,
-            ) = _parse_avg_pool2d_args(node)
+            ) = parse_avg_pool2d_args(node)
             dilation = 1
         if not isinstance(input_arg, torch.fx.Node):
-            raise _error_expected_tensor(op_spec.name)
+            raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if input_arg not in shapes:
-            raise _error_expected_tensor(op_spec.name)
+            raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if dtype_info.torch_dtype is not torch.float32:
             raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32 tensors"
@@ -360,19 +358,19 @@ class _BackendPool2dHandler(Pool2dHandler):
             padding_pair = (0, 0)
             dilation_pair = (1, 1)
         else:
-            kernel_pair = _normalize_param(
+            kernel_pair = normalize_param(
                 normalize_int_or_pair, "kernel_size", kernel_size
             )
             if stride is None:
                 stride_pair = kernel_pair
             else:
-                stride_pair = _normalize_param(
+                stride_pair = normalize_param(
                     normalize_int_or_pair, "stride", stride
                 )
-            padding_pair = _normalize_param(
+            padding_pair = normalize_param(
                 normalize_int_or_pair, "padding", padding
             )
-            dilation_pair = _normalize_param(
+            dilation_pair = normalize_param(
                 normalize_int_or_pair, "dilation", dilation
             )
         if (
@@ -417,8 +415,8 @@ class _BackendPool2dHandler(Pool2dHandler):
                 "divisor_override": divisor_override,
             },
         )
-        output_shape = _infer_output_shape(
-            op_node, [input_shape], kind_handlers=self._ctx.kind_handlers
+        output_shape = self._ctx.analysis_service.infer_output_shape(
+            op_node, [input_shape]
         )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
@@ -447,7 +445,7 @@ class _BackendPool3dHandler(Pool3dHandler):
     ) -> OpNodeBuildResult | None:
         if dtype_info is None:
             return None
-        input_arg, output_size = _parse_adaptive_avg_pool3d_args(node)
+        input_arg, output_size = parse_adaptive_avg_pool3d_args(node)
         kernel_size = None
         stride = None
         padding = (0, 0, 0)
@@ -456,9 +454,9 @@ class _BackendPool3dHandler(Pool3dHandler):
         count_include_pad = False
         divisor_override = None
         if not isinstance(input_arg, torch.fx.Node):
-            raise _error_expected_tensor(op_spec.name)
+            raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if input_arg not in shapes:
-            raise _error_expected_tensor(op_spec.name)
+            raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if dtype_info.torch_dtype is not torch.float32:
             raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32 tensors"
@@ -585,8 +583,8 @@ class _BackendPool3dHandler(Pool3dHandler):
                 "divisor_override": divisor_override,
             },
         )
-        output_shape = _infer_output_shape(
-            op_node, [input_shape], kind_handlers=self._ctx.kind_handlers
+        output_shape = self._ctx.analysis_service.infer_output_shape(
+            op_node, [input_shape]
         )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
@@ -615,13 +613,13 @@ class _BackendPool2dBackwardHandler(Pool2dBackwardHandler):
     ) -> OpNodeBuildResult | None:
         if dtype_info is None:
             return None
-        grad_output, input_arg = _parse_adaptive_avg_pool2d_backward_args(node)
+        grad_output, input_arg = parse_adaptive_avg_pool2d_backward_args(node)
         if not isinstance(grad_output, torch.fx.Node) or not isinstance(
             input_arg, torch.fx.Node
         ):
-            raise _error_expected_tensor(op_spec.name)
+            raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if grad_output not in shapes or input_arg not in shapes:
-            raise _error_expected_tensor(op_spec.name)
+            raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if dtype_info.torch_dtype is not torch.float32:
             raise CodegenBackendError(
                 "codegen adaptive_avg_pool2d_backward supports only torch.float32 tensors"
@@ -681,10 +679,8 @@ class _BackendPool2dBackwardHandler(Pool2dBackwardHandler):
                 "stride": stride_pair,
             },
         )
-        output_shape = _infer_output_shape(
-            op_node,
-            [grad_output_shape, input_shape],
-            kind_handlers=self._ctx.kind_handlers,
+        output_shape = self._ctx.analysis_service.infer_output_shape(
+            op_node, [grad_output_shape, input_shape]
         )
         op_node.output_shape = output_shape
         shapes[node] = output_shape

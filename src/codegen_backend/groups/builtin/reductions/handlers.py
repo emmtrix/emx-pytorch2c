@@ -22,13 +22,11 @@ from codegen_backend.kinds import (
     SoftmaxHandler,
 )
 from codegen_backend.specs import OpKind, _OpSpec
-from codegen_backend.backend import (
-    _error_expected_tensor,
-    _infer_output_shape,
-    _parse_argminmax_args,
-    _parse_norm_args,
-    _parse_reduction_args,
-    _parse_softmax_args,
+from codegen_backend.groups.builtin.reductions.analysis import (
+    parse_argminmax_args,
+    parse_norm_args,
+    parse_reduction_args,
+    parse_softmax_args,
 )
 
 
@@ -57,9 +55,9 @@ class _BackendReductionHandler(ReductionHandler):
         input_shapes: List[tuple[int, ...]] = []
         for arg in args_to_check:
             if not isinstance(arg, torch.fx.Node):
-                raise _error_expected_tensor(op_spec.name)
+                raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
             if arg not in shapes:
-                raise _error_expected_tensor(op_spec.name)
+                raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
             input_nodes.append(arg)
             input_shapes.append(shapes[arg])
         input_dtypes = [dtypes[arg] for arg in input_nodes]
@@ -73,12 +71,12 @@ class _BackendReductionHandler(ReductionHandler):
                 raise CodegenBackendError(
                     "codegen norm supports only torch.float32 tensors"
                 )
-            reduction_dims, keepdim, reduce_all, norm_p = _parse_norm_args(
+            reduction_dims, keepdim, reduce_all, norm_p = parse_norm_args(
                 op_spec.name, node, input_shapes[0]
             )
             param_values["norm_p"] = norm_p
         else:
-            reduction_dims, keepdim, reduce_all, unbiased = _parse_reduction_args(
+            reduction_dims, keepdim, reduce_all, unbiased = parse_reduction_args(
                 op_spec.name, node, input_shapes[0]
             )
             if unbiased is not None:
@@ -102,8 +100,8 @@ class _BackendReductionHandler(ReductionHandler):
             params=param_values,
         )
         self.validate(op_node, input_shapes, input_dtypes, dtype_info)
-        output_shape = _infer_output_shape(
-            op_node, input_shapes, kind_handlers=self._ctx.kind_handlers
+        output_shape = self._ctx.analysis_service.infer_output_shape(
+            op_node, input_shapes
         )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
@@ -140,9 +138,9 @@ class _BackendArgReductionHandler(ArgReductionHandler):
         input_shapes: List[tuple[int, ...]] = []
         for arg in args_to_check:
             if not isinstance(arg, torch.fx.Node):
-                raise _error_expected_tensor(op_spec.name)
+                raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
             if arg not in shapes:
-                raise _error_expected_tensor(op_spec.name)
+                raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
             input_nodes.append(arg)
             input_shapes.append(shapes[arg])
         input_dtypes = [dtypes[arg] for arg in input_nodes]
@@ -150,7 +148,7 @@ class _BackendArgReductionHandler(ArgReductionHandler):
             raise CodegenBackendError(
                 f"codegen {op_spec.name} expects inputs to share the graph dtype"
             )
-        reduction_dims, keepdim, reduce_all = _parse_argminmax_args(
+        reduction_dims, keepdim, reduce_all = parse_argminmax_args(
             op_spec.name, node, input_shapes[0]
         )
         reduction_count = 1
@@ -175,8 +173,8 @@ class _BackendArgReductionHandler(ArgReductionHandler):
             params={"reduce_all": reduce_all},
         )
         self.validate(op_node, input_shapes, input_dtypes, dtype_info)
-        output_shape = _infer_output_shape(
-            op_node, input_shapes, kind_handlers=self._ctx.kind_handlers
+        output_shape = self._ctx.analysis_service.infer_output_shape(
+            op_node, input_shapes
         )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
@@ -206,7 +204,7 @@ class _BackendSoftmaxHandler(SoftmaxHandler):
             raise CodegenBackendError(f"codegen {op_spec.name} expects one input")
         input_arg = node.args[0]
         if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
-            raise _error_expected_tensor(op_spec.name)
+            raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if dtype_info.torch_dtype is not torch.float32:
             raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32 tensors"
@@ -215,7 +213,7 @@ class _BackendSoftmaxHandler(SoftmaxHandler):
             raise CodegenBackendError(
                 f"codegen {op_spec.name} supports only torch.float32 tensors"
             )
-        dim, dtype = _parse_softmax_args(op_spec.name, node, shapes[input_arg])
+        dim, dtype = parse_softmax_args(op_spec.name, node, shapes[input_arg])
         if dtype is not None and dtype is not torch.float32:
             raise CodegenBackendError(
                 f"codegen {op_spec.name} expects dtype to be torch.float32 or None"

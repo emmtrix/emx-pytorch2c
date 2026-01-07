@@ -22,12 +22,10 @@ from codegen_backend.kinds import (
 )
 from codegen_backend.param_normalize import normalize_int_or_pair, normalize_int_or_tuple, normalize_padding
 from codegen_backend.specs import OpKind, _OpSpec
-from codegen_backend.backend import (
-    _error_expected_tensor,
-    _infer_output_shape,
-    _normalize_param,
-    _parse_conv1d_args,
-    _parse_conv2d_args,
+from codegen_backend.analysis_helpers import normalize_param
+from codegen_backend.groups.builtin.conv.analysis import (
+    parse_conv1d_args,
+    parse_conv2d_args,
 )
 
 
@@ -53,11 +51,11 @@ class _BackendConv1dHandler(Conv1dHandler):
             padding,
             dilation,
             groups,
-        ) = _parse_conv1d_args(node)
+        ) = parse_conv1d_args(node)
         if not isinstance(input_arg, torch.fx.Node) or not isinstance(
             weight_arg, torch.fx.Node
         ):
-            raise _error_expected_tensor("conv1d")
+            raise self._ctx.analysis_service.error_expected_tensor("conv1d")
         bias_node = None
         if bias is not None:
             if isinstance(bias, torch.fx.Node):
@@ -77,7 +75,7 @@ class _BackendConv1dHandler(Conv1dHandler):
                 "codegen conv1d supports only torch.float32 tensors"
             )
         if input_arg not in shapes or weight_arg not in shapes:
-            raise _error_expected_tensor("conv1d")
+            raise self._ctx.analysis_service.error_expected_tensor("conv1d")
         if (
             dtypes[input_arg] is not torch.float32
             or dtypes[weight_arg] is not torch.float32
@@ -87,7 +85,7 @@ class _BackendConv1dHandler(Conv1dHandler):
             )
         if bias_node is not None:
             if bias_node not in shapes:
-                raise _error_expected_tensor("conv1d")
+                raise self._ctx.analysis_service.error_expected_tensor("conv1d")
             if dtypes[bias_node] is not torch.float32:
                 raise CodegenBackendError(
                     "codegen conv1d supports only torch.float32 tensors"
@@ -104,13 +102,13 @@ class _BackendConv1dHandler(Conv1dHandler):
             raise CodegenBackendError(
                 "codegen conv1d requires 3D input and weight tensors"
             )
-        stride_value = _normalize_param(
+        stride_value = normalize_param(
             normalize_int_or_tuple, "stride", stride, 1
         )[0]
-        dilation_value = _normalize_param(
+        dilation_value = normalize_param(
             normalize_int_or_tuple, "dilation", dilation, 1
         )[0]
-        padding_value = _normalize_param(
+        padding_value = normalize_param(
             normalize_padding, "padding", padding, 1, allow_strings=("same", "valid")
         )
         if not isinstance(padding_value, str):
@@ -140,10 +138,8 @@ class _BackendConv1dHandler(Conv1dHandler):
                 "has_bias": bias_node is not None,
             },
         )
-        output_shape = _infer_output_shape(
-            op_node,
-            [input_shape, weight_shape],
-            kind_handlers=self._ctx.kind_handlers,
+        output_shape = self._ctx.analysis_service.infer_output_shape(
+            op_node, [input_shape, weight_shape]
         )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
@@ -176,11 +172,11 @@ class _BackendConv2dHandler(Conv2dHandler):
             transposed,
             output_padding,
             groups,
-        ) = _parse_conv2d_args(node)
+        ) = parse_conv2d_args(node)
         if not isinstance(input_arg, torch.fx.Node) or not isinstance(
             weight_arg, torch.fx.Node
         ):
-            raise _error_expected_tensor("conv2d")
+            raise self._ctx.analysis_service.error_expected_tensor("conv2d")
         bias_node = None
         if bias is not None:
             if isinstance(bias, torch.fx.Node):
@@ -204,7 +200,7 @@ class _BackendConv2dHandler(Conv2dHandler):
                 "codegen conv2d supports only torch.float32 tensors"
             )
         if input_arg not in shapes or weight_arg not in shapes:
-            raise _error_expected_tensor("conv2d")
+            raise self._ctx.analysis_service.error_expected_tensor("conv2d")
         if (
             dtypes[input_arg] is not torch.float32
             or dtypes[weight_arg] is not torch.float32
@@ -214,7 +210,7 @@ class _BackendConv2dHandler(Conv2dHandler):
             )
         if bias_node is not None:
             if bias_node not in shapes:
-                raise _error_expected_tensor("conv2d")
+                raise self._ctx.analysis_service.error_expected_tensor("conv2d")
             if dtypes[bias_node] is not torch.float32:
                 raise CodegenBackendError(
                     "codegen conv2d supports only torch.float32 tensors"
@@ -231,13 +227,13 @@ class _BackendConv2dHandler(Conv2dHandler):
                 )
         if len(input_shape) != 4:
             raise CodegenBackendError("codegen conv2d requires 4D input tensors")
-        stride_pair = _normalize_param(
+        stride_pair = normalize_param(
             normalize_int_or_pair, "stride", stride
         )
-        padding_pair = _normalize_param(
+        padding_pair = normalize_param(
             normalize_padding, "padding", padding, 2, allow_strings=("same", "valid")
         )
-        dilation_pair = _normalize_param(
+        dilation_pair = normalize_param(
             normalize_int_or_pair, "dilation", dilation
         )
         if isinstance(transposed, bool):
@@ -248,7 +244,7 @@ class _BackendConv2dHandler(Conv2dHandler):
             raise CodegenBackendError(
                 "codegen conv2d expects transposed to be a bool"
             )
-        output_padding_pair = _normalize_param(
+        output_padding_pair = normalize_param(
             normalize_int_or_pair, "output_padding", output_padding
         )
         if isinstance(padding_pair, str):
@@ -290,10 +286,8 @@ class _BackendConv2dHandler(Conv2dHandler):
                 "has_bias": bias_node is not None,
             },
         )
-        output_shape = _infer_output_shape(
-            op_node,
-            [input_shape, weight_shape],
-            kind_handlers=self._ctx.kind_handlers,
+        output_shape = self._ctx.analysis_service.infer_output_shape(
+            op_node, [input_shape, weight_shape]
         )
         op_node.output_shape = output_shape
         if bias_node is not None:

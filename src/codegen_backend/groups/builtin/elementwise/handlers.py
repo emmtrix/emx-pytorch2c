@@ -23,15 +23,12 @@ from codegen_backend.kinds import (
     OpNodeBuildResult,
 )
 from codegen_backend.specs import OpKind, _OpSpec
-from codegen_backend.backend import (
-    _error_expected_tensor,
-    _error_kwarg_specified_once,
-    _infer_output_shape,
-    _is_out_overload,
-    _parse_bitwise_scalar,
-    _parse_parametric_unary_args,
-    _parse_where_inputs,
-    _resolve_scalar_arg,
+from codegen_backend.groups.builtin.elementwise.analysis import (
+    handle_fill_node,
+    handle_to_copy_node,
+    parse_bitwise_scalar,
+    parse_parametric_unary_args,
+    parse_where_inputs,
 )
 
 
@@ -66,18 +63,14 @@ class _BackendElementwiseHandler(ElementwiseHandler):
         if op_spec.name == "_to_copy":
             if dtype_info is None:
                 return None
-            handler = getattr(self._ctx, "handle_to_copy_node", None)
-            if handler is None:
-                return None
-            op_node = handler(node, op_spec, dtype_info, shapes, strides, dtypes)
+            op_node = handle_to_copy_node(
+                node, op_spec, dtype_info, shapes, strides, dtypes
+            )
             return OpNodeBuildResult(op_node)
         if op_spec.kind == OpKind.FILL:
             if dtype_info is None:
                 return None
-            handler = getattr(self._ctx, "handle_fill_node", None)
-            if handler is None:
-                return None
-            op_node = handler(
+            op_node = handle_fill_node(
                 node,
                 op_spec,
                 dtype_info,
@@ -85,6 +78,7 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                 strides,
                 dtypes,
                 inplace_input,
+                infer_output_shape=self._ctx.analysis_service.infer_output_shape,
             )
             return OpNodeBuildResult(op_node)
         if dtype_info is None:
@@ -106,11 +100,13 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                 input_arg = lhs if isinstance(lhs, torch.fx.Node) else rhs
                 scalar_arg = rhs if isinstance(lhs, torch.fx.Node) else lhs
                 if input_arg not in shapes:
-                    raise _error_expected_tensor(op_spec.name)
+                    raise self._ctx.analysis_service.error_expected_tensor(
+                        op_spec.name
+                    )
                 input_nodes = [input_arg]
                 input_shapes = [shapes[input_arg]]
                 if op_spec.name in _BITWISE_OPS:
-                    param_values["scalar"] = _parse_bitwise_scalar(
+                    param_values["scalar"] = parse_bitwise_scalar(
                         op_spec.name, scalar_arg, dtype_info.torch_dtype
                     )
                 else:
@@ -130,11 +126,11 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                     input_nodes = [input_arg]
                     input_shapes = [shapes[input_arg]]
                     if op_spec.name in _BITWISE_OPS:
-                        param_values["scalar"] = _parse_bitwise_scalar(
+                        param_values["scalar"] = parse_bitwise_scalar(
                             op_spec.name, scalar_arg, dtype_info.torch_dtype
                         )
                     else:
-                        param_values["scalar"] = _resolve_scalar_arg(
+                        param_values["scalar"] = self._ctx.analysis_service.resolve_scalar_arg(
                             op_spec.name, scalar_arg, scalar_values
                         )
 
@@ -143,13 +139,15 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                 op_spec.kind == OpKind.UNARY
                 and op_spec.name in _PARAMETRIC_UNARY_OPS
             ):
-                input_node, param_values = _parse_parametric_unary_args(
+                input_node, param_values = parse_parametric_unary_args(
                     op_spec.name, node
                 )
                 args_to_check = (input_node,)
             else:
                 allowed_kwargs = set()
-                is_out_overload = _is_out_overload(node.target)
+                is_out_overload = self._ctx.analysis_service.is_out_overload(
+                    node.target
+                )
                 if op_spec.name == "div":
                     allowed_kwargs = {"rounding_mode"}
                 elif op_spec.name == "copy":
@@ -181,7 +179,7 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                         )
                     if "out" in node.kwargs:
                         if len(node.args) > expected_arity:
-                            raise _error_kwarg_specified_once(
+                            raise self._ctx.analysis_service.error_kwarg_specified_once(
                                 op_spec.name, "out"
                             )
                         out_arg = node.kwargs["out"]
@@ -232,7 +230,7 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                         non_blocking = node.args[2]
                     if "non_blocking" in node.kwargs:
                         if len(node.args) > 2:
-                            raise _error_kwarg_specified_once(
+                            raise self._ctx.analysis_service.error_kwarg_specified_once(
                                 op_spec.name, "non_blocking"
                             )
                         non_blocking = node.kwargs["non_blocking"]
@@ -249,21 +247,29 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                     input_nodes,
                     input_shapes,
                     where_params,
-                ) = _parse_where_inputs(op_spec, node, shapes, scalar_values)
+                ) = parse_where_inputs(op_spec, node, shapes, scalar_values)
                 param_values.update(where_params)
             else:
                 for arg in args_to_check:
                     if not isinstance(arg, torch.fx.Node):
-                        raise _error_expected_tensor(op_spec.name)
+                        raise self._ctx.analysis_service.error_expected_tensor(
+                            op_spec.name
+                        )
                     if arg not in shapes:
-                        raise _error_expected_tensor(op_spec.name)
+                        raise self._ctx.analysis_service.error_expected_tensor(
+                            op_spec.name
+                        )
                     input_nodes.append(arg)
                     input_shapes.append(shapes[arg])
             if out_arg is not None and out_arg not in input_nodes:
                 if not isinstance(out_arg, torch.fx.Node):
-                    raise _error_expected_tensor(op_spec.name)
+                    raise self._ctx.analysis_service.error_expected_tensor(
+                        op_spec.name
+                    )
                 if out_arg not in shapes:
-                    raise _error_expected_tensor(op_spec.name)
+                    raise self._ctx.analysis_service.error_expected_tensor(
+                        op_spec.name
+                    )
                 input_nodes.append(out_arg)
                 input_shapes.append(shapes[out_arg])
 
@@ -337,8 +343,8 @@ class _BackendElementwiseHandler(ElementwiseHandler):
             params=param_values,
         )
         self.validate(op_node, shape_input_shapes, input_dtypes, dtype_info)
-        output_shape = _infer_output_shape(
-            op_node, shape_input_shapes, kind_handlers=self._ctx.kind_handlers
+        output_shape = self._ctx.analysis_service.infer_output_shape(
+            op_node, shape_input_shapes
         )
         op_node.output_shape = output_shape
         if out_arg is not None and shapes[out_arg] != output_shape:

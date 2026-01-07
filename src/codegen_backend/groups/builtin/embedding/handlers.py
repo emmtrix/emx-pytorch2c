@@ -20,11 +20,9 @@ from codegen_backend.kinds import (
     OpNodeBuildResult,
 )
 from codegen_backend.specs import OpKind, _OpSpec
-from codegen_backend.backend import (
-    _error_expected_tensor,
-    _infer_output_shape,
-    _parse_embedding_args,
-    _parse_embedding_bag_args,
+from codegen_backend.groups.builtin.embedding.analysis import (
+    parse_embedding_args,
+    parse_embedding_bag_args,
 )
 
 
@@ -43,16 +41,16 @@ class _BackendEmbeddingHandler(EmbeddingHandler):
         if dtype_info is None:
             return None
         weight, indices, padding_idx, scale_grad_by_freq, sparse = (
-            _parse_embedding_args(node)
+            parse_embedding_args(node)
         )
         if scale_grad_by_freq or sparse:
             raise CodegenBackendError(
                 "codegen embedding supports only scale_grad_by_freq=False and sparse=False"
             )
         if not isinstance(weight, torch.fx.Node) or weight not in shapes:
-            raise _error_expected_tensor(op_spec.name)
+            raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if not isinstance(indices, torch.fx.Node) or indices not in shapes:
-            raise _error_expected_tensor(op_spec.name)
+            raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if dtypes[weight] is not dtype_info.torch_dtype:
             raise CodegenBackendError(
                 "codegen embedding expects weight to match the graph dtype"
@@ -78,10 +76,8 @@ class _BackendEmbeddingHandler(EmbeddingHandler):
             inplace_input=None,
             params={"padding_idx": padding_idx},
         )
-        output_shape = _infer_output_shape(
-            op_node,
-            [weight_shape, indices_shape],
-            kind_handlers=self._ctx.kind_handlers,
+        output_shape = self._ctx.analysis_service.infer_output_shape(
+            op_node, [weight_shape, indices_shape]
         )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
@@ -114,7 +110,7 @@ class _BackendEmbeddingBagHandler(EmbeddingBagHandler):
             per_sample_weights,
             include_last_offset,
             padding_idx,
-        ) = _parse_embedding_bag_args(node)
+        ) = parse_embedding_bag_args(node)
         if scale_grad_by_freq or sparse:
             raise CodegenBackendError(
                 "codegen _embedding_bag supports only scale_grad_by_freq=False and sparse=False"
@@ -124,11 +120,11 @@ class _BackendEmbeddingBagHandler(EmbeddingBagHandler):
                 "codegen _embedding_bag does not support per_sample_weights"
             )
         if not isinstance(weight, torch.fx.Node) or weight not in shapes:
-            raise _error_expected_tensor(op_spec.name)
+            raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if not isinstance(indices, torch.fx.Node) or indices not in shapes:
-            raise _error_expected_tensor(op_spec.name)
+            raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if not isinstance(offsets, torch.fx.Node) or offsets not in shapes:
-            raise _error_expected_tensor(op_spec.name)
+            raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if dtype_info.torch_dtype is not torch.float32:
             raise CodegenBackendError(
                 "codegen _embedding_bag supports only torch.float32 tensors"
@@ -186,10 +182,8 @@ class _BackendEmbeddingBagHandler(EmbeddingBagHandler):
                 "include_last_offset": include_last_offset,
             },
         )
-        output_shape = _infer_output_shape(
-            op_node,
-            [weight_shape, indices_shape, offsets_shape],
-            kind_handlers=self._ctx.kind_handlers,
+        output_shape = self._ctx.analysis_service.infer_output_shape(
+            op_node, [weight_shape, indices_shape, offsets_shape]
         )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
