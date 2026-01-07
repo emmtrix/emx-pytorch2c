@@ -144,7 +144,9 @@ def _insert_inline_weights(source: str, weight_lines: List[str]) -> str:
 
 
 def _emit_model_wrapper(
-    graph: _GenericGraph, weight_placeholders: Dict[torch.fx.Node, str]
+    graph: _GenericGraph,
+    weight_placeholders: Dict[torch.fx.Node, str],
+    function_name: str,
 ) -> str:
     input_args: List[str] = []
     call_args: List[str] = []
@@ -165,14 +167,17 @@ def _emit_model_wrapper(
     call_args.append(output_name)
     call = ", ".join(call_args)
     return (
-        f"void model_run({signature_args}) {{\n"
+        f"void {function_name}({signature_args}) {{\n"
         f"    ref_codegen_main_{graph.dtype.suffix}({call});\n"
         "}\n"
     )
 
 
 def export_generic_c(
-    gm: torch.fx.GraphModule, example_inputs: Sequence[object], out_path: str
+    gm: torch.fx.GraphModule,
+    example_inputs: Sequence[object],
+    out_path: str,
+    function_name: str = "model_run",
 ) -> str:
     (
         lifted_gm,
@@ -188,7 +193,7 @@ def export_generic_c(
     }
     weight_lines = _emit_inline_weights(weights, graph.dtype)
     source = _insert_inline_weights(source, weight_lines)
-    wrapper = _emit_model_wrapper(graph, weight_placeholders)
+    wrapper = _emit_model_wrapper(graph, weight_placeholders, function_name)
     final_source = source.rstrip() + "\n\n" + wrapper
     Path(out_path).write_text(final_source, encoding="utf-8")
     return final_source

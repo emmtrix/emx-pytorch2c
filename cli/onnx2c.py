@@ -94,6 +94,11 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         default=1,
         help="Default dimension to use when ONNX inputs specify dynamic shapes.",
     )
+    parser.add_argument(
+        "--function-name",
+        default="entry",
+        help="Name for the generated C entry function.",
+    )
     return parser.parse_args(argv)
 
 
@@ -118,7 +123,12 @@ def main(argv: Iterable[str] | None = None) -> int:
     torch_module = onnx2torch_module.convert(model)
     torch_module.eval()
     graph_module = _trace_module(torch_module)
-    export_generic_c(graph_module, example_inputs, str(out_path))
+    export_generic_c(
+        graph_module,
+        example_inputs,
+        str(out_path),
+        function_name=args.function_name,
+    )
     return 0
 
 
