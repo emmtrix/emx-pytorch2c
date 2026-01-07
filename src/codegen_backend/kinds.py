@@ -75,6 +75,7 @@ def _make_request(
         input_strides=[graph.strides[node] for node in inputs],
         input_dtypes=[graph.dtypes[node] for node in inputs],
         dtype=graph.dtype,
+        params=dict(op_node.params),
     )
 
 

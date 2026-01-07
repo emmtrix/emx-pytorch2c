@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import List
 
+from c_ref_backend.cffi_bindings import RefBackendError
 from codegen_backend.c_types import _input_c_type
 from codegen_backend.emitters.base import (
     KindEmitterBase,
@@ -15,7 +16,9 @@ from codegen_backend.kinds import KernelEmitRequest
 
 class ViewEmitter(KindEmitterBase):
     def emit(self, req: KernelEmitRequest) -> List[str]:
-        op_node = req.op_node
+        op_spec = req.op_spec
+        if op_spec is None:
+            raise RefBackendError("view requires op spec")
         input_shape = req.input_shapes[0]
         input_dtype = req.input_dtypes[0]
         output_shape = req.output_shape
@@ -24,7 +27,7 @@ class ViewEmitter(KindEmitterBase):
         output_suffix = _format_array_suffix(output_shape)
         input_c_type = _input_c_type(input_dtype, req.dtype)
         signature = (
-            f"void node{req.node_index}_{op_node.spec.name}_{req.dtype.suffix}("
+            f"void node{req.node_index}_{op_spec.name}_{req.dtype.suffix}("
             f"const {input_c_type} a{input_suffix}, "
             f"{req.dtype.c_type} out{output_suffix}) {{"
         )
@@ -34,8 +37,8 @@ class ViewEmitter(KindEmitterBase):
         )
         loop_lines, indent = emit_loops(output_shape)
         lines.extend(loop_lines)
-        view_strides = op_node.p("view_strides", ())
-        storage_offset = int(op_node.p("storage_offset", 0))
+        view_strides = req.params.get("view_strides", ())
+        storage_offset = int(req.params.get("storage_offset", 0))
         if view_strides:
             offset_terms = [
                 f"i{dim} * {stride}"

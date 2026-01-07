@@ -35,12 +35,13 @@ _FLOAT_ONLY_UNARY_OPS = {
 
 class ElementwiseEmitter(KindEmitterBase):
     def emit(self, req: KernelEmitRequest) -> List[str]:
-        op_node = req.op_node
-        op_spec = op_node.spec
+        op_spec = req.op_spec
+        if op_spec is None:
+            raise RefBackendError("elementwise requires op spec")
         elementwise_template = get_template_env().get_template(
             "elementwise_kernel.c.j2"
         )
-        params = op_node.params
+        params = req.params
         signature = emit_signature(
             req.node_index,
             op_spec,
@@ -156,7 +157,7 @@ class ElementwiseEmitter(KindEmitterBase):
                 )
         elif op_spec.kind == OpKind.FILL:
             context["fill_value"] = _format_scalar_literal(
-                op_node.p("value"), req.dtype
+                params["value"], req.dtype
             )
         else:
             a_shape = req.input_shapes[0]
