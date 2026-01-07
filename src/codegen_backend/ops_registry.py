@@ -1,48 +1,13 @@
 from __future__ import annotations
 
+from collections import Counter
+from contextlib import contextmanager
 import operator
 
 import torch
 import torch.nn.functional as F
 
-from codegen_backend.specs import _OpSpec, _binary_spec, _unary_spec
-
-_VALID_KINDS = {
-    "binary",
-    "unary",
-    "fill",
-    "view",
-    "where",
-    "flip",
-    "arg_reduction",
-    "reduction",
-    "arange",
-    "softmax",
-    "cumsum",
-    "concat",
-    "diagonal",
-    "addmm",
-    "addbmm",
-    "addmv",
-    "addr",
-    "matmul",
-    "conv1d",
-    "conv2d",
-    "pool1d",
-    "pool2d",
-    "pool3d",
-    "pool2d_backward",
-    "embedding",
-    "embedding_bag",
-    "gather",
-    "batch_norm",
-    "pdist",
-    "cdist",
-    "pad",
-    "empty_strided",
-    "resize",
-    "col2im",
-}
+from codegen_backend.specs import OpKind, _OpSpec, _binary_spec, _unary_spec
 
 
 def _flatten_targets(targets: tuple[object, ...]) -> list[object]:
@@ -56,7 +21,7 @@ class _OpBuilder:
         self,
         registry: "_OpRegistry",
         name: str,
-        kind: str,
+        kind: OpKind,
         symbol: str | None = None,
     ) -> None:
         self._registry = registry
@@ -77,28 +42,20 @@ class _OpBuilder:
         return self
 
     def build(self) -> _OpSpec:
-        if not self._targets:
-            raise ValueError(f"No targets registered for op '{self._name}'.")
-        if self._kind == "binary":
-            if self._inplace_arg_index not in (None, 0):
-                raise ValueError(
-                    f"Binary op '{self._name}' must use inplace_arg_index=0."
-                )
+        if self._kind == OpKind.BINARY:
             spec = _binary_spec(
                 self._name,
                 self._targets,
                 self._symbol,
                 inplace_targets=self._inplace_targets,
+                inplace_arg_index=self._inplace_arg_index,
             )
-        elif self._kind == "unary":
-            if self._inplace_arg_index not in (None, 0):
-                raise ValueError(
-                    f"Unary op '{self._name}' must use inplace_arg_index=0."
-                )
+        elif self._kind == OpKind.UNARY:
             spec = _unary_spec(
                 self._name,
                 self._targets,
                 inplace_targets=self._inplace_targets,
+                inplace_arg_index=self._inplace_arg_index,
             )
         else:
             spec = _OpSpec(
@@ -113,33 +70,89 @@ class _OpBuilder:
         return spec
 
 
+def validate_op_spec(spec: _OpSpec) -> None:
+    if not isinstance(spec.kind, OpKind):
+        expected = ", ".join(kind.value for kind in OpKind)
+        raise ValueError(
+            "Invalid op spec for "
+            f"'{spec.name}': kind={spec.kind!r}; expected one of {expected}."
+        )
+    if not spec.supported_targets:
+        raise ValueError(
+            "Invalid op spec for "
+            f"'{spec.name}': supported_targets is empty; "
+            "expected at least one target."
+        )
+    if spec.kind != OpKind.BINARY and spec.symbol is not None:
+        raise ValueError(
+            "Invalid op spec for "
+            f"'{spec.name}': symbol is only valid for binary ops; "
+            f"got kind={spec.kind.value}."
+        )
+    if bool(spec.inplace_targets) != (spec.inplace_arg_index is not None):
+        raise ValueError(
+            "Invalid op spec for "
+            f"'{spec.name}': inplace_targets and inplace_arg_index must "
+            "be set together."
+        )
+    if spec.inplace_arg_index is not None and spec.kind in {
+        OpKind.BINARY,
+        OpKind.UNARY,
+    }:
+        if spec.inplace_arg_index != 0:
+            raise ValueError(
+                "Invalid op spec for "
+                f"'{spec.name}': inplace_arg_index must be 0 for "
+                f"{spec.kind.value} ops; got {spec.inplace_arg_index}."
+            )
+    missing_inplace = spec.inplace_targets - spec.supported_targets
+    if missing_inplace:
+        raise ValueError(
+            "Invalid op spec for "
+            f"'{spec.name}': inplace_targets must be a subset of "
+            "supported_targets; missing "
+            f"{sorted(missing_inplace, key=repr)}."
+        )
+
+
 class _OpRegistry:
     def __init__(self) -> None:
         self._specs: dict[str, _OpSpec] = {}
-        self._allowed_duplicate_targets: set[object] = set()
+        self._allowed_duplicate_targets: Counter[object] = Counter()
 
+    @contextmanager
     def allow_duplicate_targets(self, *targets: object) -> "_OpRegistry":
-        self._allowed_duplicate_targets.update(_flatten_targets(targets))
-        return self
+        flattened_targets = _flatten_targets(targets)
+        self._allowed_duplicate_targets.update(flattened_targets)
+        try:
+            yield self
+        finally:
+            for target in flattened_targets:
+                self._allowed_duplicate_targets[target] -= 1
+                if self._allowed_duplicate_targets[target] <= 0:
+                    del self._allowed_duplicate_targets[target]
 
     def register_unary(self, name: str) -> _OpBuilder:
-        return _OpBuilder(self, name, "unary")
+        return _OpBuilder(self, name, OpKind.UNARY)
 
     def register_binary(self, name: str, symbol: str | None = None) -> _OpBuilder:
-        return _OpBuilder(self, name, "binary", symbol=symbol)
+        return _OpBuilder(self, name, OpKind.BINARY, symbol=symbol)
 
     def register_op(
-        self, name: str, kind: str, symbol: str | None = None
+        self, name: str, kind: OpKind, symbol: str | None = None
     ) -> _OpBuilder:
         return _OpBuilder(self, name, kind, symbol=symbol)
 
     def _add(self, spec: _OpSpec) -> None:
         if spec.name in self._specs:
             raise ValueError(f"Duplicate op spec registered: {spec.name}")
+        validate_op_spec(spec)
         self._specs[spec.name] = spec
 
     def build(self) -> dict[str, _OpSpec]:
-        _validate_registry(self._specs, self._allowed_duplicate_targets)
+        _validate_registry(
+            self._specs, allow_duplicate_targets=set(self._allowed_duplicate_targets)
+        )
         return dict(self._specs)
 
 
@@ -147,15 +160,6 @@ def _validate_registry(
     specs: dict[str, _OpSpec],
     allow_duplicate_targets: set[object],
 ) -> None:
-    for spec in specs.values():
-        if spec.kind not in _VALID_KINDS:
-            raise ValueError(
-                f"Unsupported op kind '{spec.kind}' for op '{spec.name}'."
-            )
-        if spec.inplace_targets and spec.inplace_arg_index is None:
-            raise ValueError(
-                f"In-place targets require inplace_arg_index for op '{spec.name}'."
-            )
     seen_targets: dict[object, str] = {}
     for spec in specs.values():
         for target in spec.supported_targets:
@@ -186,11 +190,11 @@ _REGISTRY.register_binary("add", symbol="+").targets(
     torch.ops.aten.add_.Tensor,
     torch.ops.aten.add_,
 ).build()
-_REGISTRY.register_op("constant_pad_nd", kind="pad").targets(
+_REGISTRY.register_op("constant_pad_nd", kind=OpKind.PAD).targets(
     torch.ops.aten.constant_pad_nd,
     torch.ops.aten.constant_pad_nd.default,
 ).build()
-_REGISTRY.register_op("_softmax", kind="softmax").targets(
+_REGISTRY.register_op("_softmax", kind=OpKind.SOFTMAX).targets(
     torch.ops.aten._softmax,
     torch.ops.aten._softmax.default,
 ).build()
@@ -198,7 +202,7 @@ _REGISTRY.register_unary("_to_copy").targets(
     torch.ops.aten._to_copy,
     torch.ops.aten._to_copy.default,
 ).build()
-_REGISTRY.register_op("arange", kind="arange").targets(
+_REGISTRY.register_op("arange", kind=OpKind.ARANGE).targets(
     torch.ops.aten.arange.start_step,
 ).build()
 _REGISTRY.register_binary("sub", symbol="-").targets(
@@ -538,12 +542,12 @@ _REGISTRY.register_binary("heaviside").targets(
     torch.ops.aten.heaviside_.default,
     torch.ops.aten.heaviside_,
 ).build()
-_REGISTRY.register_op("where", kind="where").targets(
+_REGISTRY.register_op("where", kind=OpKind.WHERE).targets(
     torch.where,
     torch.ops.aten.where.self,
     torch.ops.aten.where.Scalar,
 ).build()
-_REGISTRY.register_op("flip", kind="flip").targets(
+_REGISTRY.register_op("flip", kind=OpKind.FLIP).targets(
     torch.flip,
     torch.ops.aten.flip.default,
     torch.ops.aten.flip,
@@ -625,7 +629,7 @@ _REGISTRY.register_unary("abs").targets(
     torch.ops.aten.abs_.default,
     torch.ops.aten.abs_,
 ).build()
-_REGISTRY.register_op("cumsum", kind="cumsum").targets(
+_REGISTRY.register_op("cumsum", kind=OpKind.CUMSUM).targets(
     torch.cumsum,
     torch.ops.aten.cumsum.default,
     torch.ops.aten.cumsum,
@@ -1128,10 +1132,10 @@ _REGISTRY.register_binary("copy").targets(
     torch.ops.aten.copy.default,
     torch.ops.aten.copy,
 ).build()
-_REGISTRY.register_op("resize_", kind="resize").targets(
+_REGISTRY.register_op("resize_", kind=OpKind.RESIZE).targets(
     torch.ops.aten.resize_.default,
 ).build()
-_REGISTRY.register_op("fill", "fill").targets(
+_REGISTRY.register_op("fill", OpKind.FILL).targets(
     torch.ops.aten.fill.Scalar,
     torch.ops.aten.fill,
     torch.ops.aten.fill_.Scalar,
@@ -1141,20 +1145,20 @@ _REGISTRY.register_op("fill", "fill").targets(
     torch.ops.aten.fill_,
     arg_index=0,
 ).build()
-_REGISTRY.register_op("full_like", "fill").targets(
+_REGISTRY.register_op("full_like", OpKind.FILL).targets(
     torch.ops.aten.full_like.default,
     torch.ops.aten.full_like,
 ).build()
-_REGISTRY.register_op("empty_strided", "empty_strided").targets(
+_REGISTRY.register_op("empty_strided", OpKind.EMPTY_STRIDED).targets(
     torch.empty_strided,
     torch.ops.aten.empty_strided.default,
     torch.ops.aten.empty_strided,
 ).build()
-_REGISTRY.register_op("as_strided", kind="view").targets(
+_REGISTRY.register_op("as_strided", kind=OpKind.VIEW).targets(
     torch.ops.aten.as_strided.default,
     torch.ops.aten.as_strided,
 ).build()
-_REGISTRY.register_op("squeeze", kind="view").targets(
+_REGISTRY.register_op("squeeze", kind=OpKind.VIEW).targets(
     torch.ops.aten.squeeze.dim,
     torch.ops.aten.squeeze.dims,
 ).build()
@@ -1323,108 +1327,108 @@ _REGISTRY.register_unary("square").targets(
     torch.ops.aten.square_.default,
     torch.ops.aten.square_,
 ).build()
-_REGISTRY.register_op("argmax", kind="arg_reduction").targets(
+_REGISTRY.register_op("argmax", kind=OpKind.ARG_REDUCTION).targets(
     torch.argmax,
     torch.ops.aten.argmax.default,
     torch.ops.aten.argmax,
 ).build()
-_REGISTRY.register_op("argmin", kind="arg_reduction").targets(
+_REGISTRY.register_op("argmin", kind=OpKind.ARG_REDUCTION).targets(
     torch.argmin,
     torch.ops.aten.argmin.default,
     torch.ops.aten.argmin,
 ).build()
-_REGISTRY.register_op("sum", kind="reduction").targets(
+_REGISTRY.register_op("sum", kind=OpKind.REDUCTION).targets(
     torch.ops.aten.sum.default,
     torch.ops.aten.sum.dim_IntList,
 ).build()
-_REGISTRY.register_op("prod", kind="reduction").targets(
+_REGISTRY.register_op("prod", kind=OpKind.REDUCTION).targets(
     torch.ops.aten.prod.default,
     torch.ops.aten.prod.dim_int,
 ).build()
-_REGISTRY.register_op("mean", kind="reduction").targets(
+_REGISTRY.register_op("mean", kind=OpKind.REDUCTION).targets(
     torch.mean,
     torch.ops.aten.mean.default,
     torch.ops.aten.mean,
     torch.ops.aten.mean.dim,
 ).build()
-_REGISTRY.register_op("std", kind="reduction").targets(
+_REGISTRY.register_op("std", kind=OpKind.REDUCTION).targets(
     torch.std,
     torch.ops.aten.std.default,
     torch.ops.aten.std,
 ).build()
-_REGISTRY.register_op("var", kind="reduction").targets(
+_REGISTRY.register_op("var", kind=OpKind.REDUCTION).targets(
     torch.var,
     torch.ops.aten.var.default,
     torch.ops.aten.var.dim,
 ).build()
-_REGISTRY.register_op("norm", kind="reduction").targets(
+_REGISTRY.register_op("norm", kind=OpKind.REDUCTION).targets(
     torch.norm,
     torch.ops.aten.norm.Scalar,
     torch.ops.aten.norm.ScalarOpt_dim,
 ).build()
-_REGISTRY.register_op("any", kind="reduction").targets(
+_REGISTRY.register_op("any", kind=OpKind.REDUCTION).targets(
     torch.any,
     torch.ops.aten.any.default,
     torch.ops.aten.any.dim,
     torch.ops.aten.any.dims,
     torch.ops.aten.any,
 ).build()
-_REGISTRY.register_op("all", kind="reduction").targets(
+_REGISTRY.register_op("all", kind=OpKind.REDUCTION).targets(
     torch.all,
     torch.ops.aten.all.default,
     torch.ops.aten.all,
 ).build()
-_REGISTRY.register_op("amax", kind="reduction").targets(
+_REGISTRY.register_op("amax", kind=OpKind.REDUCTION).targets(
     torch.amax,
     torch.ops.aten.amax.default,
     torch.ops.aten.amax,
 ).build()
-_REGISTRY.register_op("amin", kind="reduction").targets(
+_REGISTRY.register_op("amin", kind=OpKind.REDUCTION).targets(
     torch.amin,
     torch.ops.aten.amin.default,
     torch.ops.aten.amin,
 ).build()
-_REGISTRY.register_op("softmax", kind="softmax").targets(
+_REGISTRY.register_op("softmax", kind=OpKind.SOFTMAX).targets(
     torch.softmax,
     F.softmax,
     torch.ops.aten.softmax.int,
     torch.ops.aten.softmax,
 ).build()
-_REGISTRY.register_op("log_softmax", kind="softmax").targets(
+_REGISTRY.register_op("log_softmax", kind=OpKind.SOFTMAX).targets(
     torch.log_softmax,
     F.log_softmax,
     torch.ops.aten.log_softmax.int,
     torch.ops.aten.log_softmax,
 ).build()
-_REGISTRY.register_op("_log_softmax", kind="softmax").targets(
+_REGISTRY.register_op("_log_softmax", kind=OpKind.SOFTMAX).targets(
     torch.ops.aten._log_softmax.default,
     torch.ops.aten._log_softmax,
 ).build()
-_REGISTRY.register_op("cat", kind="concat").targets(
+_REGISTRY.register_op("cat", kind=OpKind.CONCAT).targets(
     torch.cat,
     torch.ops.aten.cat.default,
     torch.ops.aten.cat,
 ).build()
-_REGISTRY.register_op("embedding", kind="embedding").targets(
+_REGISTRY.register_op("embedding", kind=OpKind.EMBEDDING).targets(
     F.embedding,
     torch.ops.aten.embedding.default,
     torch.ops.aten.embedding,
 ).build()
-_REGISTRY.register_op("_embedding_bag", kind="embedding_bag").targets(
+_REGISTRY.register_op("_embedding_bag", kind=OpKind.EMBEDDING_BAG).targets(
     torch.ops.aten._embedding_bag.default,
     torch.ops.aten._embedding_bag,
 ).build()
-_REGISTRY.register_op("gather", kind="gather").targets(
+_REGISTRY.register_op("gather", kind=OpKind.GATHER).targets(
     torch.gather,
     torch.ops.aten.gather.default,
     torch.ops.aten.gather,
 ).build()
-_REGISTRY.register_op("diagonal", kind="diagonal").targets(
+_REGISTRY.register_op("diagonal", kind=OpKind.DIAGONAL).targets(
     torch.diagonal,
     torch.ops.aten.diagonal.default,
     torch.ops.aten.diagonal,
 ).build()
-_REGISTRY.register_op("addmm", kind="addmm").targets(
+_REGISTRY.register_op("addmm", kind=OpKind.ADDMM).targets(
     torch.addmm,
     torch.ops.aten.addmm.default,
     torch.ops.aten.addmm,
@@ -1435,7 +1439,7 @@ _REGISTRY.register_op("addmm", kind="addmm").targets(
     torch.ops.aten.addmm_,
     arg_index=0,
 ).build()
-_REGISTRY.register_op("addbmm", kind="addbmm").targets(
+_REGISTRY.register_op("addbmm", kind=OpKind.ADDBMM).targets(
     torch.addbmm,
     torch.ops.aten.addbmm.default,
     torch.ops.aten.addbmm,
@@ -1446,7 +1450,7 @@ _REGISTRY.register_op("addbmm", kind="addbmm").targets(
     torch.ops.aten.addbmm_,
     arg_index=0,
 ).build()
-_REGISTRY.register_op("addmv", kind="addmv").targets(
+_REGISTRY.register_op("addmv", kind=OpKind.ADDMV).targets(
     torch.addmv,
     torch.ops.aten.addmv.default,
     torch.ops.aten.addmv,
@@ -1457,7 +1461,7 @@ _REGISTRY.register_op("addmv", kind="addmv").targets(
     torch.ops.aten.addmv_,
     arg_index=0,
 ).build()
-_REGISTRY.register_op("addr", kind="addr").targets(
+_REGISTRY.register_op("addr", kind=OpKind.ADDR).targets(
     torch.addr,
     torch.ops.aten.addr.default,
     torch.ops.aten.addr,
@@ -1468,7 +1472,7 @@ _REGISTRY.register_op("addr", kind="addr").targets(
     torch.ops.aten.addr_,
     arg_index=0,
 ).build()
-_REGISTRY.register_op("matmul", kind="matmul").targets(
+_REGISTRY.register_op("matmul", kind=OpKind.MATMUL).targets(
     operator.matmul,
     torch.matmul,
     torch.ops.aten.mm,
@@ -1476,82 +1480,82 @@ _REGISTRY.register_op("matmul", kind="matmul").targets(
     torch.ops.aten.matmul,
     torch.ops.aten.matmul.default,
 ).build()
-_REGISTRY.register_op("bmm", kind="matmul").targets(
+_REGISTRY.register_op("bmm", kind=OpKind.MATMUL).targets(
     torch.bmm,
     torch.ops.aten.bmm,
     torch.ops.aten.bmm.default,
 ).build()
-_REGISTRY.register_op("conv2d", kind="conv2d").targets(
+_REGISTRY.register_op("conv2d", kind=OpKind.CONV2D).targets(
     F.conv2d,
     torch.ops.aten.convolution.default,
     torch.ops.aten.convolution,
     torch.ops.aten.conv2d.default,
     torch.ops.aten.conv2d,
 ).build()
-_REGISTRY.register_op("conv1d", kind="conv1d").targets(
+_REGISTRY.register_op("conv1d", kind=OpKind.CONV1D).targets(
     torch.ops.aten.conv1d.default,
     torch.ops.aten.conv1d,
 ).build()
-_REGISTRY.register_op("col2im", kind="col2im").targets(
+_REGISTRY.register_op("col2im", kind=OpKind.COL2IM).targets(
     torch.ops.aten.col2im.default,
     torch.ops.aten.col2im,
 ).build()
-_REGISTRY.register_op("avg_pool1d", kind="pool1d").targets(
+_REGISTRY.register_op("avg_pool1d", kind=OpKind.POOL1D).targets(
     F.avg_pool1d,
     torch.ops.aten.avg_pool1d.default,
     torch.ops.aten.avg_pool1d,
 ).build()
-_REGISTRY.register_op("adaptive_avg_pool1d", kind="pool1d").targets(
+_REGISTRY.register_op("adaptive_avg_pool1d", kind=OpKind.POOL1D).targets(
     F.adaptive_avg_pool1d,
     torch.ops.aten.adaptive_avg_pool1d.default,
     torch.ops.aten.adaptive_avg_pool1d,
 ).build()
-_REGISTRY.register_op("adaptive_avg_pool2d", kind="pool2d").targets(
+_REGISTRY.register_op("adaptive_avg_pool2d", kind=OpKind.POOL2D).targets(
     F.adaptive_avg_pool2d,
     torch.ops.aten.adaptive_avg_pool2d.default,
     torch.ops.aten.adaptive_avg_pool2d,
     torch.ops.aten._adaptive_avg_pool2d.default,
     torch.ops.aten._adaptive_avg_pool2d,
 ).build()
-_REGISTRY.register_op("adaptive_avg_pool3d", kind="pool3d").targets(
+_REGISTRY.register_op("adaptive_avg_pool3d", kind=OpKind.POOL3D).targets(
     F.adaptive_avg_pool3d,
     torch.ops.aten.adaptive_avg_pool3d.default,
     torch.ops.aten.adaptive_avg_pool3d,
     torch.ops.aten._adaptive_avg_pool3d.default,
     torch.ops.aten._adaptive_avg_pool3d,
 ).build()
-_REGISTRY.register_op("_adaptive_avg_pool2d_backward", kind="pool2d_backward").targets(
+_REGISTRY.register_op("_adaptive_avg_pool2d_backward", kind=OpKind.POOL2D_BACKWARD).targets(
     torch.ops.aten._adaptive_avg_pool2d_backward.default,
     torch.ops.aten._adaptive_avg_pool2d_backward,
 ).build()
-_REGISTRY.register_op("max_pool1d", kind="pool1d").targets(
+_REGISTRY.register_op("max_pool1d", kind=OpKind.POOL1D).targets(
     F.max_pool1d,
     torch.ops.aten.max_pool1d.default,
     torch.ops.aten.max_pool1d,
 ).build()
-_REGISTRY.register_op("avg_pool2d", kind="pool2d").targets(
+_REGISTRY.register_op("avg_pool2d", kind=OpKind.POOL2D).targets(
     F.avg_pool2d,
     torch.ops.aten.avg_pool2d.default,
     torch.ops.aten.avg_pool2d,
 ).build()
-_REGISTRY.register_op("max_pool2d", kind="pool2d").targets(
+_REGISTRY.register_op("max_pool2d", kind=OpKind.POOL2D).targets(
     F.max_pool2d,
     torch.ops.aten.max_pool2d.default,
     torch.ops.aten.max_pool2d,
 ).build()
-_REGISTRY.register_op("_native_batch_norm_legit", kind="batch_norm").targets(
+_REGISTRY.register_op("_native_batch_norm_legit", kind=OpKind.BATCH_NORM).targets(
     torch.ops.aten._native_batch_norm_legit,
     torch.ops.aten._native_batch_norm_legit.default,
 ).build()
-_REGISTRY.register_op("_native_batch_norm_legit_no_training", kind="batch_norm").targets(
+_REGISTRY.register_op("_native_batch_norm_legit_no_training", kind=OpKind.BATCH_NORM).targets(
     torch.ops.aten._native_batch_norm_legit_no_training,
     torch.ops.aten._native_batch_norm_legit_no_training.default,
 ).build()
-_REGISTRY.register_op("_pdist_forward", kind="pdist").targets(
+_REGISTRY.register_op("_pdist_forward", kind=OpKind.PDIST).targets(
     torch.ops.aten._pdist_forward,
     torch.ops.aten._pdist_forward.default,
 ).build()
-_REGISTRY.register_op("_cdist_forward", kind="cdist").targets(
+_REGISTRY.register_op("_cdist_forward", kind=OpKind.CDIST).targets(
     torch.ops.aten._cdist_forward,
     torch.ops.aten._cdist_forward.default,
 ).build()

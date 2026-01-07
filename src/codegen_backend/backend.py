@@ -47,7 +47,7 @@ from codegen_backend.param_normalize import (
     normalize_padding,
 )
 from codegen_backend.registry import TARGET_REGISTRY
-from codegen_backend.specs import _OpSpec
+from codegen_backend.specs import OpKind, _OpSpec
 from codegen_backend.templates import get_template_env
 _BITWISE_OPS = {
     "bitwise_and",
@@ -200,7 +200,7 @@ def emit_signature(
     params: Dict[str, object] | None = None,
 ) -> str:
     out_suffix = _format_array_suffix(output_shape)
-    if op_spec.kind == "binary":
+    if op_spec.kind == OpKind.BINARY:
         if len(input_shapes) == 1:
             a_shape = input_shapes[0]
             a_suffix = _format_array_suffix(a_shape)
@@ -221,7 +221,7 @@ def emit_signature(
             f"const {b_c_type} b{b_suffix}, "
             f"{dtype.c_type} out{out_suffix}) {{"
         )
-    if op_spec.kind == "where":
+    if op_spec.kind == OpKind.WHERE:
         params = params or {}
         input_index = 0
         cond_shape = input_shapes[input_index]
@@ -414,7 +414,7 @@ def _write_elementwise_kernel(
     context: Dict[str, object] = {
         "signature": signature,
         "output_dims": output_dims,
-        "op_kind": op_spec.kind,
+        "op_kind": op_spec.kind.value,
         "op_name": op_spec.name,
         "scalar_fn": scalar_fn,
         "output_access": output_access,
@@ -429,7 +429,7 @@ def _write_elementwise_kernel(
         "cond_access": None,
         "input_access": None,
     }
-    if op_spec.kind == "binary":
+    if op_spec.kind == OpKind.BINARY:
         if "scalar" in params:
             a_shape = input_shapes[0]
             a_strides = input_strides[0]
@@ -463,7 +463,7 @@ def _write_elementwise_kernel(
                 broadcast_contiguous=True,
                 c_type=_input_c_type(input_dtypes[1], dtype),
             )
-    elif op_spec.kind == "where":
+    elif op_spec.kind == OpKind.WHERE:
         input_index = 0
         cond_shape = input_shapes[input_index]
         cond_strides = input_strides[input_index]
@@ -507,7 +507,7 @@ def _write_elementwise_kernel(
                 broadcast_contiguous=True,
                 c_type=_input_c_type(input_dtypes[input_index], dtype),
             )
-    elif op_spec.kind == "fill":
+    elif op_spec.kind == OpKind.FILL:
         context["fill_value"] = _format_scalar_literal(
             op_node.p("value"), dtype
         )
@@ -2709,7 +2709,8 @@ def _write_generic_source(graph: _GenericGraph) -> str:
         handler = _KIND_HANDLERS.get(op_node.spec.kind)
         if handler is None:
             raise RefBackendError(
-                f"codegen backend does not support kind '{op_node.spec.kind}'"
+                "codegen backend does not support kind "
+                f"'{op_node.spec.kind.value}'"
             )
         kernel_lines = handler.emit_kernel(index, op_node, graph)
         kernels.append("\n".join(kernel_lines))
@@ -2854,7 +2855,7 @@ def _infer_empty_strided_dtype(
         if node.op != "call_function":
             continue
         target_info = TARGET_REGISTRY.get(node.target)
-        if target_info is None or target_info.op_spec.kind != "empty_strided":
+        if target_info is None or target_info.op_spec.kind != OpKind.EMPTY_STRIDED:
             continue
         found_empty_strided = True
         node_dtype = None
@@ -2908,7 +2909,7 @@ def _infer_output_shape(
     handler = _KIND_HANDLERS.get(op_node.spec.kind)
     if handler is None:
         raise RefBackendError(
-            f"codegen backend does not support kind '{op_node.spec.kind}'"
+            f"codegen backend does not support kind '{op_node.spec.kind.value}'"
         )
     return handler.infer_output_shape(op_node, input_shapes)
 
@@ -6079,7 +6080,7 @@ def _handle_addmm_like_node(
     )
     output_shape = _infer_output_shape(op_node, input_shapes)
     op_node.output_shape = output_shape
-    if op_spec.kind == "addr" and inplace_input is not None:
+    if op_spec.kind == OpKind.ADDR and inplace_input is not None:
         input_shape = input_shapes[inplace_input]
         if len(input_shape) != 2:
             raise RefBackendError(
@@ -7329,7 +7330,7 @@ def _analyze_generic_graph(
                     raise RefBackendError(f"Unsupported call_function: {node.target}")
                 op_spec = target_info.op_spec
                 inplace_input = target_info.inplace_arg_index
-            if op_spec.kind == "arange":
+            if op_spec.kind == OpKind.ARANGE:
                 op_node, dtype_info = _handle_arange_node(
                     node,
                     op_spec,
@@ -7345,49 +7346,49 @@ def _analyze_generic_graph(
                 raise RefBackendError(
                     "codegen backend requires at least one tensor input or a factory op dtype"
                 )
-            if op_spec.kind == "concat":
+            if op_spec.kind == OpKind.CONCAT:
                 op_nodes.append(
                     _handle_concat_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            if op_spec.kind == "pool1d":
+            if op_spec.kind == OpKind.POOL1D:
                 op_nodes.append(
                     _handle_pool1d_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            if op_spec.kind == "pool2d":
+            if op_spec.kind == OpKind.POOL2D:
                 op_nodes.append(
                     _handle_pool2d_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            if op_spec.kind == "pool3d":
+            if op_spec.kind == OpKind.POOL3D:
                 op_nodes.append(
                     _handle_pool3d_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            if op_spec.kind == "pool2d_backward":
+            if op_spec.kind == OpKind.POOL2D_BACKWARD:
                 op_nodes.append(
                     _handle_adaptive_avg_pool2d_backward_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            if op_spec.kind == "col2im":
+            if op_spec.kind == OpKind.COL2IM:
                 op_nodes.append(
                     _handle_col2im_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            if op_spec.kind == "batch_norm":
+            if op_spec.kind == OpKind.BATCH_NORM:
                 op_nodes.append(
                     _handle_batch_norm_node(
                         node,
@@ -7400,42 +7401,47 @@ def _analyze_generic_graph(
                     )
                 )
                 continue
-            if op_spec.kind == "pdist":
+            if op_spec.kind == OpKind.PDIST:
                 op_nodes.append(
                     _handle_pdist_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            if op_spec.kind == "cdist":
+            if op_spec.kind == OpKind.CDIST:
                 op_nodes.append(
                     _handle_cdist_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            if op_spec.kind == "conv1d":
+            if op_spec.kind == OpKind.CONV1D:
                 op_nodes.append(
                     _handle_conv1d_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            if op_spec.kind == "conv2d":
+            if op_spec.kind == OpKind.CONV2D:
                 op_nodes.append(
                     _handle_conv2d_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            if op_spec.kind == "diagonal":
+            if op_spec.kind == OpKind.DIAGONAL:
                 op_nodes.append(
                     _handle_diagonal_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            elif op_spec.kind in {"addmm", "addbmm", "addmv", "addr"}:
+            elif op_spec.kind in {
+                OpKind.ADDMM,
+                OpKind.ADDBMM,
+                OpKind.ADDMV,
+                OpKind.ADDR,
+            }:
                 op_nodes.append(
                     _handle_addmm_like_node(
                         node,
@@ -7448,63 +7454,63 @@ def _analyze_generic_graph(
                     )
                 )
                 continue
-            elif op_spec.kind == "softmax":
+            elif op_spec.kind == OpKind.SOFTMAX:
                 op_nodes.append(
                     _handle_softmax_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            elif op_spec.kind == "flip":
+            elif op_spec.kind == OpKind.FLIP:
                 op_nodes.append(
                     _handle_flip_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            elif op_spec.kind == "cumsum":
+            elif op_spec.kind == OpKind.CUMSUM:
                 op_nodes.append(
                     _handle_cumsum_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            elif op_spec.kind == "pad":
+            elif op_spec.kind == OpKind.PAD:
                 op_nodes.append(
                     _handle_constant_pad_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            elif op_spec.kind == "gather":
+            elif op_spec.kind == OpKind.GATHER:
                 op_nodes.append(
                     _handle_gather_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            elif op_spec.kind == "embedding":
+            elif op_spec.kind == OpKind.EMBEDDING:
                 op_nodes.append(
                     _handle_embedding_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            elif op_spec.kind == "embedding_bag":
+            elif op_spec.kind == OpKind.EMBEDDING_BAG:
                 op_nodes.append(
                     _handle_embedding_bag_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            elif op_spec.kind == "view":
+            elif op_spec.kind == OpKind.VIEW:
                 op_nodes.append(
                     _handle_view_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
                     )
                 )
                 continue
-            elif op_spec.kind == "empty_strided":
+            elif op_spec.kind == OpKind.EMPTY_STRIDED:
                 op_nodes.append(
                     _handle_empty_strided_node(
                         node, op_spec, dtype_info, shapes, strides, dtypes
@@ -7518,7 +7524,7 @@ def _analyze_generic_graph(
                     )
                 )
                 continue
-            elif op_spec.kind == "fill":
+            elif op_spec.kind == OpKind.FILL:
                 op_nodes.append(
                     _handle_fill_node(
                         node,
@@ -7551,7 +7557,7 @@ def _analyze_generic_graph(
             input_nodes: List[torch.fx.Node] = []
             input_shapes: List[Tuple[int, ...]] = []
             out_arg: torch.fx.Node | None = None
-            if op_spec.kind == "binary" and len(node.args) == 2:
+            if op_spec.kind == OpKind.BINARY and len(node.args) == 2:
                 lhs, rhs = node.args
                 if isinstance(lhs, torch.fx.Node) ^ isinstance(rhs, torch.fx.Node):
                     if node.kwargs:
@@ -7573,14 +7579,17 @@ def _analyze_generic_graph(
                             op_spec.name, scalar_arg
                         )
                 else:
-                    if op_spec.kind in {"reduction", "arg_reduction"}:
+                    if op_spec.kind in {
+                        OpKind.REDUCTION,
+                        OpKind.ARG_REDUCTION,
+                    }:
                         if len(node.args) < 1:
                             raise RefBackendError(
                                 f"codegen {op_spec.name} expects one input"
                             )
                         args_to_check = node.args[:1]
                     elif (
-                        op_spec.kind == "unary"
+                        op_spec.kind == OpKind.UNARY
                         and op_spec.name in _PARAMETRIC_UNARY_OPS
                     ):
                         input_node, param_values = _parse_parametric_unary_args(
@@ -7600,11 +7609,11 @@ def _analyze_generic_graph(
                             raise RefBackendError(
                                 "codegen backend expects positional args only"
                             )
-                        if op_spec.kind == "unary":
+                        if op_spec.kind == OpKind.UNARY:
                             expected_arity = 1
-                        elif op_spec.kind == "binary":
+                        elif op_spec.kind == OpKind.BINARY:
                             expected_arity = 2
-                        elif op_spec.kind == "where":
+                        elif op_spec.kind == OpKind.WHERE:
                             expected_arity = 3
                         else:
                             expected_arity = 2
@@ -7693,14 +7702,17 @@ def _analyze_generic_graph(
                         input_nodes.append(out_arg)
                         input_shapes.append(shapes[out_arg])
             else:
-                if op_spec.kind in {"reduction", "arg_reduction"}:
+                if op_spec.kind in {
+                    OpKind.REDUCTION,
+                    OpKind.ARG_REDUCTION,
+                }:
                     if len(node.args) < 1:
                         raise RefBackendError(
                             f"codegen {op_spec.name} expects one input"
                         )
                     args_to_check = node.args[:1]
                 elif (
-                    op_spec.kind == "unary"
+                    op_spec.kind == OpKind.UNARY
                     and op_spec.name in _PARAMETRIC_UNARY_OPS
                 ):
                     input_node, param_values = _parse_parametric_unary_args(
@@ -7726,11 +7738,11 @@ def _analyze_generic_graph(
                         raise RefBackendError(
                             "codegen backend expects positional args only"
                         )
-                    if op_spec.kind == "unary":
+                    if op_spec.kind == OpKind.UNARY:
                         expected_arity = 1
-                    elif op_spec.kind == "binary":
+                    elif op_spec.kind == OpKind.BINARY:
                         expected_arity = 2
-                    elif op_spec.kind == "where":
+                    elif op_spec.kind == OpKind.WHERE:
                         expected_arity = 3
                     else:
                         expected_arity = 2
@@ -7804,7 +7816,7 @@ def _analyze_generic_graph(
                         args_to_check = node.args[:2]
                     else:
                         args_to_check = node.args
-                if op_spec.kind == "where":
+                if op_spec.kind == OpKind.WHERE:
                     (
                         input_nodes,
                         input_shapes,
@@ -7833,7 +7845,7 @@ def _analyze_generic_graph(
                 for arg, shape in zip(input_nodes, input_shapes)
                 if out_arg is None or arg is not out_arg
             ]
-            if op_spec.kind == "where":
+            if op_spec.kind == OpKind.WHERE:
                 if "a_scalar" in param_values:
                     shape_input_shapes.append(())
                 if "b_scalar" in param_values:
@@ -7876,7 +7888,7 @@ def _analyze_generic_graph(
                         raise RefBackendError(
                             "codegen clamp expects integer min/max for integer tensors"
                         )
-            if op_spec.kind == "where":
+            if op_spec.kind == OpKind.WHERE:
                 if input_dtypes[0] is not torch.bool:
                     raise RefBackendError(
                         "codegen where expects condition to be a boolean tensor"
@@ -7891,7 +7903,7 @@ def _analyze_generic_graph(
                 raise RefBackendError(
                     f"codegen {op_spec.name} expects inputs to share the graph dtype"
                 )
-            if op_spec.kind == "reduction":
+            if op_spec.kind == OpKind.REDUCTION:
                 if op_spec.name == "norm":
                     if dtype_info.torch_dtype is not torch.float32:
                         raise RefBackendError(
@@ -7924,7 +7936,7 @@ def _analyze_generic_graph(
                         raise RefBackendError(
                             "codegen var supports only torch.float32 tensors"
                         )
-            elif op_spec.kind == "arg_reduction":
+            elif op_spec.kind == OpKind.ARG_REDUCTION:
                 (
                     reduction_dims,
                     keepdim,
@@ -7943,7 +7955,7 @@ def _analyze_generic_graph(
                     raise RefBackendError(
                         f"codegen {op_spec.name} expects a non-empty reduction dimension"
                     )
-            if op_spec.kind in {"reduction", "arg_reduction"}:
+            if op_spec.kind in {OpKind.REDUCTION, OpKind.ARG_REDUCTION}:
                 param_values["reduce_all"] = reduce_all
             op_node = _OpNode(
                 node=node,
@@ -7962,7 +7974,7 @@ def _analyze_generic_graph(
                     f"codegen {op_spec.name} expects out to match output shape"
                 )
             shapes[node] = output_shape
-            if op_spec.kind == "arg_reduction":
+            if op_spec.kind == OpKind.ARG_REDUCTION:
                 dtypes[node] = torch.int64
             else:
                 dtypes[node] = dtype_info.torch_dtype
@@ -8007,7 +8019,7 @@ def _analyze_generic_graph(
     output_op = next(op for op in op_nodes if op.node is output_value)
     for op_node in op_nodes:
         if (
-            op_node.spec.kind == "empty_strided"
+            op_node.spec.kind == OpKind.EMPTY_STRIDED
             and op_node.node is not output_value
             and not _is_contiguous(op_node.output_shape, strides[op_node.node])
         ):
@@ -8092,7 +8104,7 @@ def _compile_graph(
             {
                 graph.tensor_placeholders.index(input_node)
                 for op_node in graph.op_nodes
-                if op_node.spec.kind in {"conv1d", "conv2d"}
+                if op_node.spec.kind in {OpKind.CONV1D, OpKind.CONV2D}
                 for input_node in op_node.inputs
                 if input_node in graph.tensor_placeholders
             }
@@ -8210,7 +8222,7 @@ def _compile_graph(
                 if contiguous_inputs
                 else torch.device("cpu")
             )
-            if graph.output_op.spec.kind == "empty_strided":
+            if graph.output_op.spec.kind == OpKind.EMPTY_STRIDED:
                 out = torch.empty_strided(
                     graph.shapes[output_value],
                     graph.strides[output_value],

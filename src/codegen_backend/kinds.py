@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Dict, List, Protocol, Sequence, Tuple
 
 from c_ref_backend.cffi_bindings import RefBackendError
 from codegen_backend import shape_utils
+from codegen_backend.specs import OpKind
 
 if TYPE_CHECKING:
     import torch
@@ -456,7 +457,7 @@ class ElementwiseHandler(KindHandler):
         input_shapes: Sequence[Tuple[int, ...]],
     ) -> Tuple[int, ...]:
         op_spec = op_node.spec
-        if op_spec.kind == "binary":
+        if op_spec.kind == OpKind.BINARY:
             if op_spec.name == "copy":
                 output_shape = input_shapes[0]
                 broadcast_shape = shape_utils.broadcast_output_shape(
@@ -470,14 +471,15 @@ class ElementwiseHandler(KindHandler):
             return shape_utils.broadcast_output_shape(
                 op_spec.name, *input_shapes
             )
-        if op_spec.kind == "where":
+        if op_spec.kind == OpKind.WHERE:
             return shape_utils.broadcast_output_shape(
                 op_spec.name, *input_shapes
             )
-        if op_spec.kind in {"unary", "fill"}:
+        if op_spec.kind in {OpKind.UNARY, OpKind.FILL}:
             return input_shapes[0]
         raise NotImplementedError(
-            f"Shape inference not implemented for kind '{op_spec.kind}'."
+            "Shape inference not implemented for kind "
+            f"'{op_spec.kind.value}'."
         )
 
 
@@ -1395,41 +1397,41 @@ class MatmulHandler(KindHandler):
         return (a_shape[0], a_shape[1], b_shape[2])
 
 
-def build_kind_handlers(context: HandlerContext) -> Dict[str, KindHandler]:
+def build_kind_handlers(context: HandlerContext) -> Dict[OpKind, KindHandler]:
     elementwise = ElementwiseHandler(context)
     return {
-        "arange": ArangeHandler(context),
-        "binary": elementwise,
-        "unary": elementwise,
-        "where": elementwise,
-        "fill": elementwise,
-        "flip": FlipHandler(context),
-        "pad": PadHandler(context),
-        "view": ViewHandler(context),
-        "resize": ResizeHandler(context),
-        "empty_strided": EmptyStridedHandler(context),
-        "diagonal": DiagonalHandler(context),
-        "reduction": ReductionHandler(context),
-        "arg_reduction": ArgReductionHandler(context),
-        "softmax": SoftmaxHandler(context),
-        "cumsum": CumsumHandler(context),
-        "embedding": EmbeddingHandler(context),
-        "embedding_bag": EmbeddingBagHandler(context),
-        "gather": GatherHandler(context),
-        "concat": ConcatHandler(context),
-        "pool2d": Pool2dHandler(context),
-        "pool3d": Pool3dHandler(context),
-        "pool2d_backward": Pool2dBackwardHandler(context),
-        "pool1d": Pool1dHandler(context),
-        "col2im": Col2imHandler(context),
-        "batch_norm": BatchNormHandler(context),
-        "pdist": PdistHandler(context),
-        "cdist": CdistHandler(context),
-        "conv1d": Conv1dHandler(context),
-        "conv2d": Conv2dHandler(context),
-        "addmm": AddmmHandler(context),
-        "addbmm": AddbmmHandler(context),
-        "addmv": AddmvHandler(context),
-        "addr": AddrHandler(context),
-        "matmul": MatmulHandler(context),
+        OpKind.ARANGE: ArangeHandler(context),
+        OpKind.BINARY: elementwise,
+        OpKind.UNARY: elementwise,
+        OpKind.WHERE: elementwise,
+        OpKind.FILL: elementwise,
+        OpKind.FLIP: FlipHandler(context),
+        OpKind.PAD: PadHandler(context),
+        OpKind.VIEW: ViewHandler(context),
+        OpKind.RESIZE: ResizeHandler(context),
+        OpKind.EMPTY_STRIDED: EmptyStridedHandler(context),
+        OpKind.DIAGONAL: DiagonalHandler(context),
+        OpKind.REDUCTION: ReductionHandler(context),
+        OpKind.ARG_REDUCTION: ArgReductionHandler(context),
+        OpKind.SOFTMAX: SoftmaxHandler(context),
+        OpKind.CUMSUM: CumsumHandler(context),
+        OpKind.EMBEDDING: EmbeddingHandler(context),
+        OpKind.EMBEDDING_BAG: EmbeddingBagHandler(context),
+        OpKind.GATHER: GatherHandler(context),
+        OpKind.CONCAT: ConcatHandler(context),
+        OpKind.POOL2D: Pool2dHandler(context),
+        OpKind.POOL3D: Pool3dHandler(context),
+        OpKind.POOL2D_BACKWARD: Pool2dBackwardHandler(context),
+        OpKind.POOL1D: Pool1dHandler(context),
+        OpKind.COL2IM: Col2imHandler(context),
+        OpKind.BATCH_NORM: BatchNormHandler(context),
+        OpKind.PDIST: PdistHandler(context),
+        OpKind.CDIST: CdistHandler(context),
+        OpKind.CONV1D: Conv1dHandler(context),
+        OpKind.CONV2D: Conv2dHandler(context),
+        OpKind.ADDMM: AddmmHandler(context),
+        OpKind.ADDBMM: AddbmmHandler(context),
+        OpKind.ADDMV: AddmvHandler(context),
+        OpKind.ADDR: AddrHandler(context),
+        OpKind.MATMUL: MatmulHandler(context),
     }

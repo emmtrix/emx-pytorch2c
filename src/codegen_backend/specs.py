@@ -1,13 +1,51 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Iterable
+
+
+class OpKind(str, Enum):
+    BINARY = "binary"
+    UNARY = "unary"
+    FILL = "fill"
+    VIEW = "view"
+    WHERE = "where"
+    FLIP = "flip"
+    ARG_REDUCTION = "arg_reduction"
+    REDUCTION = "reduction"
+    ARANGE = "arange"
+    SOFTMAX = "softmax"
+    CUMSUM = "cumsum"
+    CONCAT = "concat"
+    DIAGONAL = "diagonal"
+    ADDMM = "addmm"
+    ADDBMM = "addbmm"
+    ADDMV = "addmv"
+    ADDR = "addr"
+    MATMUL = "matmul"
+    CONV1D = "conv1d"
+    CONV2D = "conv2d"
+    POOL1D = "pool1d"
+    POOL2D = "pool2d"
+    POOL3D = "pool3d"
+    POOL2D_BACKWARD = "pool2d_backward"
+    EMBEDDING = "embedding"
+    EMBEDDING_BAG = "embedding_bag"
+    GATHER = "gather"
+    BATCH_NORM = "batch_norm"
+    PDIST = "pdist"
+    CDIST = "cdist"
+    PAD = "pad"
+    EMPTY_STRIDED = "empty_strided"
+    RESIZE = "resize"
+    COL2IM = "col2im"
 
 
 @dataclass(frozen=True)
 class _OpSpec:
     name: str
-    kind: str
+    kind: OpKind
     symbol: str | None
     supported_targets: set
     inplace_targets: set = field(default_factory=set)
@@ -19,27 +57,35 @@ def _binary_spec(
     targets: Iterable[object],
     symbol: str | None,
     inplace_targets: Iterable[object] = (),
+    inplace_arg_index: int | None = None,
 ) -> _OpSpec:
     inplace_targets_set = set(inplace_targets)
+    if inplace_targets_set and inplace_arg_index is None:
+        inplace_arg_index = 0
     return _OpSpec(
         name=name,
-        kind="binary",
+        kind=OpKind.BINARY,
         symbol=symbol,
         supported_targets=set(targets),
         inplace_targets=inplace_targets_set,
-        inplace_arg_index=0 if inplace_targets_set else None,
+        inplace_arg_index=inplace_arg_index,
     )
 
 
 def _unary_spec(
-    name: str, targets: Iterable[object], inplace_targets: Iterable[object] = ()
+    name: str,
+    targets: Iterable[object],
+    inplace_targets: Iterable[object] = (),
+    inplace_arg_index: int | None = None,
 ) -> _OpSpec:
     inplace_targets_set = set(inplace_targets)
+    if inplace_targets_set and inplace_arg_index is None:
+        inplace_arg_index = 0
     return _OpSpec(
         name=name,
-        kind="unary",
+        kind=OpKind.UNARY,
         symbol=None,
         supported_targets=set(targets),
         inplace_targets=inplace_targets_set,
-        inplace_arg_index=0 if inplace_targets_set else None,
+        inplace_arg_index=inplace_arg_index,
     )
