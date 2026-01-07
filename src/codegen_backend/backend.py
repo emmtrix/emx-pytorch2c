@@ -4,7 +4,6 @@ import numbers
 import operator
 import tempfile
 from collections.abc import Sequence as ABCSequence
-from fractions import Fraction
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -26,7 +25,7 @@ from codegen_backend.dtypes import (
     _INTEGER_CODEGEN_DTYPES,
 )
 from codegen_backend.graph import _GenericGraph, _GenericLibrary, _OpNode
-from codegen_backend.kinds import build_kind_handlers
+from codegen_backend.kinds import HandlerContext, build_kind_handlers
 from codegen_backend.ops_registry import SUPPORTED_OPS
 from codegen_backend.param_normalize import (
     normalize_bool,
@@ -35,6 +34,7 @@ from codegen_backend.param_normalize import (
     normalize_padding,
 )
 from codegen_backend.registry import TARGET_REGISTRY
+from codegen_backend import shape_inference
 from codegen_backend.specs import _OpSpec
 _BITWISE_OPS = {
     "bitwise_and",
@@ -87,35 +87,12 @@ def _is_out_overload(target: object) -> bool:
     return schema is not None and schema.overload_name == "out"
 
 
-_KIND_HANDLERS = build_kind_handlers()
-
-
 _LIBRARY_CACHE: Dict[str, object] = {}
 _C_SRC_DIR = Path(__file__).resolve().parents[2] / "csrc"
 
 
 def _format_array_suffix(shape: Sequence[int]) -> str:
     return "".join(f"[{dim}]" for dim in shape) or "[1]"
-
-
-def _broadcast_output_shape(
-    op_spec: _OpSpec, *input_shapes: Sequence[int]
-) -> Tuple[int, ...]:
-    if not input_shapes:
-        return ()
-    max_len = max(len(shape) for shape in input_shapes)
-    output_shape = []
-    for dim in range(1, max_len + 1):
-        sizes = [
-            shape[-dim] if dim <= len(shape) else 1 for shape in input_shapes
-        ]
-        max_size = max(sizes)
-        if any(size not in (1, max_size) for size in sizes):
-            raise RefBackendError(
-                f"codegen {op_spec.name} requires inputs to be broadcastable"
-            )
-        output_shape.append(max_size)
-    return tuple(reversed(output_shape))
 
 
 def _broadcast_index_expr(
@@ -193,146 +170,6 @@ def _is_contiguous(shape: Sequence[int], strides: Sequence[int]) -> bool:
     )
 
 
-def _unpack_conv2d_input_shape(
-    input_shape: Sequence[int],
-) -> Tuple[bool, int, int, int, int]:
-    if len(input_shape) == 4:
-        batch, in_channels, in_h, in_w = input_shape
-        return True, batch, in_channels, in_h, in_w
-    if len(input_shape) == 3:
-        in_channels, in_h, in_w = input_shape
-        return False, 1, in_channels, in_h, in_w
-    raise RefBackendError("codegen conv2d requires 3D or 4D input tensors")
-
-
-def _conv2d_output_shape_from_shapes(
-    input_shape: Sequence[int],
-    weight_shape: Sequence[int],
-    stride: Tuple[int, int],
-    padding: Tuple[int, int],
-    dilation: Tuple[int, int],
-    groups: int,
-) -> Tuple[int, ...]:
-    has_batch, batch, in_channels, in_h, in_w = _unpack_conv2d_input_shape(
-        input_shape
-    )
-    out_channels, weight_in_channels, kernel_h, kernel_w = weight_shape
-    if in_channels != weight_in_channels * groups:
-        raise RefBackendError(
-            "codegen conv2d requires input channels to match weight channels * groups"
-        )
-    if out_channels % groups != 0:
-        raise RefBackendError(
-            "codegen conv2d requires output channels to be divisible by groups"
-        )
-    stride_h, stride_w = stride
-    pad_h, pad_w = padding
-    dil_h, dil_w = dilation
-    numerator_h = in_h + 2 * pad_h - dil_h * (kernel_h - 1) - 1
-    numerator_w = in_w + 2 * pad_w - dil_w * (kernel_w - 1) - 1
-    if numerator_h < 0 or numerator_w < 0:
-        raise RefBackendError(
-            "codegen conv2d requires output shape (N, C_out, H_out, W_out)"
-        )
-    out_h = numerator_h // stride_h + 1
-    out_w = numerator_w // stride_w + 1
-    if has_batch:
-        return batch, out_channels, out_h, out_w
-    return out_channels, out_h, out_w
-
-
-def _conv2d_transposed_output_shape_from_shapes(
-    input_shape: Sequence[int],
-    weight_shape: Sequence[int],
-    stride: Tuple[int, int],
-    padding: Tuple[int, int],
-    dilation: Tuple[int, int],
-    output_padding: Tuple[int, int],
-    groups: int,
-) -> Tuple[int, ...]:
-    has_batch, batch, in_channels, in_h, in_w = _unpack_conv2d_input_shape(
-        input_shape
-    )
-    weight_in_channels, weight_out_channels, kernel_h, kernel_w = weight_shape
-    if in_channels != weight_in_channels:
-        raise RefBackendError(
-            "codegen conv2d requires input channels to match weight channels"
-        )
-    if in_channels % groups != 0:
-        raise RefBackendError(
-            "codegen conv2d requires input channels to be divisible by groups"
-        )
-    out_channels = weight_out_channels * groups
-    stride_h, stride_w = stride
-    pad_h, pad_w = padding
-    dil_h, dil_w = dilation
-    out_pad_h, out_pad_w = output_padding
-    out_h = (
-        (in_h - 1) * stride_h
-        - 2 * pad_h
-        + dil_h * (kernel_h - 1)
-        + out_pad_h
-        + 1
-    )
-    out_w = (
-        (in_w - 1) * stride_w
-        - 2 * pad_w
-        + dil_w * (kernel_w - 1)
-        + out_pad_w
-        + 1
-    )
-    if out_h <= 0 or out_w <= 0:
-        raise RefBackendError(
-            "codegen conv2d requires output shape (N, C_out, H_out, W_out)"
-        )
-    if has_batch:
-        return batch, out_channels, out_h, out_w
-    return out_channels, out_h, out_w
-
-
-def _conv2d_same_padding(
-    input_shape: Sequence[int],
-    weight_shape: Sequence[int],
-    stride: Tuple[int, int],
-    dilation: Tuple[int, int],
-) -> Tuple[Tuple[int, int], Tuple[int, int]]:
-    _, _, in_h, in_w = _unpack_conv2d_input_shape(input_shape)[1:]
-    _, _, kernel_h, kernel_w = weight_shape
-    stride_h, stride_w = stride
-    dil_h, dil_w = dilation
-    out_h = math.ceil(in_h / stride_h)
-    out_w = math.ceil(in_w / stride_w)
-    pad_h = max(
-        (out_h - 1) * stride_h + (dil_h * (kernel_h - 1) + 1) - in_h,
-        0,
-    )
-    pad_w = max(
-        (out_w - 1) * stride_w + (dil_w * (kernel_w - 1) + 1) - in_w,
-        0,
-    )
-    pad_top = pad_h // 2
-    pad_left = pad_w // 2
-    return (pad_top, pad_left), (out_h, out_w)
-
-
-def _conv2d_validate_channels(
-    input_shape: Sequence[int],
-    weight_shape: Sequence[int],
-    groups: int,
-) -> Tuple[bool, int]:
-    has_batch, _, in_channels, _, _ = _unpack_conv2d_input_shape(input_shape)
-    out_channels, weight_in_channels, _, _ = weight_shape
-    if in_channels != weight_in_channels * groups:
-        raise RefBackendError(
-            "codegen conv2d requires input channels to match weight channels * groups"
-        )
-    if out_channels % groups != 0:
-        raise RefBackendError(
-            "codegen conv2d requires output channels to be divisible by groups"
-        )
-    return has_batch, out_channels
-
-
 def _normalize_col2im_output_size(
     op_name: str, value: object
 ) -> Tuple[int, int]:
@@ -348,143 +185,6 @@ def _normalize_col2im_output_size(
         raise RefBackendError(
             f"codegen {op_name} expects output_size to be a tuple of ints"
         ) from exc
-
-
-def _pool1d_output_shape_from_shapes(
-    input_shape: Sequence[int],
-    kernel_size: int,
-    stride: int,
-    padding: int,
-    dilation: int,
-    ceil_mode: bool,
-) -> Tuple[int, int, int]:
-    batch, channels, in_l = input_shape
-    numerator = in_l + 2 * padding - dilation * (kernel_size - 1) - 1
-    if numerator < 0:
-        raise RefBackendError(
-            "codegen pool1d requires output shape (N, C, L_out)"
-        )
-    if ceil_mode:
-        out_l = (numerator + stride - 1) // stride + 1
-        if (out_l - 1) * stride >= in_l + padding:
-            out_l -= 1
-    else:
-        out_l = numerator // stride + 1
-    return batch, channels, out_l
-
-
-def _pool2d_output_shape_from_shapes(
-    input_shape: Sequence[int],
-    kernel_size: Tuple[int, int],
-    stride: Tuple[int, int],
-    padding: Tuple[int, int],
-    dilation: Tuple[int, int],
-    ceil_mode: bool = False,
-) -> Tuple[int, int, int, int]:
-    batch, channels, in_h, in_w = input_shape
-    k_h, k_w = kernel_size
-    stride_h, stride_w = stride
-    pad_h, pad_w = padding
-    dil_h, dil_w = dilation
-    numerator_h = in_h + 2 * pad_h - dil_h * (k_h - 1) - 1
-    numerator_w = in_w + 2 * pad_w - dil_w * (k_w - 1) - 1
-    if numerator_h < 0 or numerator_w < 0:
-        raise RefBackendError(
-            "codegen pool2d requires output shape (N, C, H_out, W_out)"
-        )
-    if ceil_mode:
-        out_h = (numerator_h + stride_h - 1) // stride_h + 1
-        out_w = (numerator_w + stride_w - 1) // stride_w + 1
-        if (out_h - 1) * stride_h >= in_h + pad_h:
-            out_h -= 1
-        if (out_w - 1) * stride_w >= in_w + pad_w:
-            out_w -= 1
-    else:
-        out_h = numerator_h // stride_h + 1
-        out_w = numerator_w // stride_w + 1
-    return batch, channels, out_h, out_w
-
-
-def _pool3d_output_shape_from_shapes(
-    input_shape: Sequence[int],
-    kernel_size: Tuple[int, int, int],
-    stride: Tuple[int, int, int],
-    padding: Tuple[int, int, int],
-    dilation: Tuple[int, int, int],
-) -> Tuple[int, int, int, int, int]:
-    batch, channels, in_d, in_h, in_w = input_shape
-    k_d, k_h, k_w = kernel_size
-    stride_d, stride_h, stride_w = stride
-    pad_d, pad_h, pad_w = padding
-    dil_d, dil_h, dil_w = dilation
-    numerator_d = in_d + 2 * pad_d - dil_d * (k_d - 1) - 1
-    numerator_h = in_h + 2 * pad_h - dil_h * (k_h - 1) - 1
-    numerator_w = in_w + 2 * pad_w - dil_w * (k_w - 1) - 1
-    if numerator_d < 0 or numerator_h < 0 or numerator_w < 0:
-        raise RefBackendError(
-            "codegen pool3d requires output shape (N, C, D_out, H_out, W_out)"
-        )
-    out_d = numerator_d // stride_d + 1
-    out_h = numerator_h // stride_h + 1
-    out_w = numerator_w // stride_w + 1
-    return batch, channels, out_d, out_h, out_w
-
-
-def _conv1d_validate_channels(
-    input_shape: Sequence[int],
-    weight_shape: Sequence[int],
-    groups: int,
-) -> Tuple[int, int]:
-    batch, in_channels, _ = input_shape
-    out_channels, weight_in_channels, _ = weight_shape
-    if in_channels != weight_in_channels * groups:
-        raise RefBackendError(
-            "codegen conv1d requires input channels to match weight channels * groups"
-        )
-    if out_channels % groups != 0:
-        raise RefBackendError(
-            "codegen conv1d requires output channels to be divisible by groups"
-        )
-    return batch, out_channels
-
-
-def _conv1d_same_padding(
-    input_shape: Sequence[int],
-    weight_shape: Sequence[int],
-    stride: int,
-    dilation: int,
-) -> Tuple[int, int]:
-    _, _, in_l = input_shape
-    _, _, kernel_l = weight_shape
-    out_l = math.ceil(in_l / stride)
-    pad_l = max(
-        (out_l - 1) * stride + (dilation * (kernel_l - 1) + 1) - in_l,
-        0,
-    )
-    pad_left = pad_l // 2
-    return pad_left, out_l
-
-
-def _conv1d_output_shape_from_shapes(
-    input_shape: Sequence[int],
-    weight_shape: Sequence[int],
-    stride: int,
-    padding: int,
-    dilation: int,
-    groups: int,
-) -> Tuple[int, int, int]:
-    batch, out_channels = _conv1d_validate_channels(
-        input_shape, weight_shape, groups
-    )
-    in_l = input_shape[2]
-    kernel_l = weight_shape[2]
-    numerator = in_l + 2 * padding - dilation * (kernel_l - 1) - 1
-    if numerator < 0:
-        raise RefBackendError(
-            "codegen conv1d requires output shape (N, C_out, L_out)"
-        )
-    out_l = numerator // stride + 1
-    return batch, out_channels, out_l
 
 
 def _emit_strided_access(
@@ -2663,8 +2363,8 @@ def _write_conv2d_kernel(
         "conv2d_transpose_kernel.c.j2" if transposed else "conv2d_kernel.c.j2"
     )
     conv2d_template = _get_template_env().get_template(template_name)
-    has_batch, batch, in_channels, in_h, in_w = _unpack_conv2d_input_shape(
-        input_shape
+    has_batch, batch, in_channels, in_h, in_w = (
+        shape_inference.unpack_conv2d_input_shape(input_shape)
     )
     if transposed:
         weight_in_channels, weight_out_channels, k_h, k_w = weight_shape
@@ -3350,14 +3050,14 @@ def _unwrap_output_node(output_node: torch.fx.Node) -> Tuple[torch.fx.Node, obje
 
 
 def _infer_output_shape(
-    op_spec: _OpSpec, input_shapes: Sequence[Tuple[int, ...]]
+    op_node: _OpNode, input_shapes: Sequence[Tuple[int, ...]]
 ) -> Tuple[int, ...]:
-    handler = _KIND_HANDLERS.get(op_spec.kind)
+    handler = _KIND_HANDLERS.get(op_node.spec.kind)
     if handler is None:
         raise RefBackendError(
-            f"codegen backend does not support kind '{op_spec.kind}'"
+            f"codegen backend does not support kind '{op_node.spec.kind}'"
         )
-    return handler.infer_output_shape(op_spec, input_shapes)
+    return handler.infer_output_shape(op_node, input_shapes)
 
 
 def _normalize_flip_dims(
@@ -3405,25 +3105,6 @@ def _normalize_flip_dims(
         seen.add(dim)
         normalized.append(dim)
     return tuple(normalized)
-def _infer_diagonal_output_shape(
-    input_shape: Sequence[int], offset: int, dim1: int, dim2: int
-) -> Tuple[int, ...]:
-    size1 = input_shape[dim1]
-    size2 = input_shape[dim2]
-    if offset >= 0:
-        diag_len = min(size1, size2 - offset)
-    else:
-        diag_len = min(size1 + offset, size2)
-    diag_len = max(0, diag_len)
-    output_dims = [
-        size
-        for index, size in enumerate(input_shape)
-        if index not in (dim1, dim2)
-    ]
-    output_dims.append(diag_len)
-    return tuple(output_dims)
-
-
 def _normalize_reduction_dims(
     op_name: str, dim: object | None, rank: int
 ) -> Tuple[int, ...]:
@@ -3490,27 +3171,6 @@ def _normalize_param(normalizer: Callable[..., Any], *args: Any, **kwargs: Any) 
         return normalizer(*args, **kwargs)
     except ValueError as exc:
         raise RefBackendError(str(exc)) from exc
-
-
-def _infer_reduction_output_shape(
-    input_shape: Sequence[int],
-    reduction_dims: Tuple[int, ...],
-    keepdim: bool,
-    *,
-    reduce_all: bool,
-) -> Tuple[int, ...]:
-    if reduce_all:
-        return ()
-    if not reduction_dims:
-        return tuple(input_shape)
-    if keepdim:
-        output_shape = list(input_shape)
-        for dim in reduction_dims:
-            output_shape[dim] = 1
-        return tuple(output_shape)
-    return tuple(
-        size for dim, size in enumerate(input_shape) if dim not in reduction_dims
-    )
 
 
 def _parse_reduction_args(
@@ -5197,20 +4857,20 @@ def _handle_concat_node(
     input_dtypes = [dtypes[arg] for arg in input_nodes]
     if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
         raise RefBackendError("codegen cat expects inputs to share the graph dtype")
-    output_shape = list(input_shapes[0])
-    output_shape[concat_dim] = sum(shape[concat_dim] for shape in input_shapes)
-    output_shape = tuple(output_shape)
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=list(input_nodes),
-        output_shape=output_shape,
+        output_shape=(),
         inplace_input=None,
         params={"dim": concat_dim},
     )
+    output_shape = _infer_output_shape(op_node, input_shapes)
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_flip_node(
@@ -5249,18 +4909,20 @@ def _handle_flip_node(
             f"codegen {op_spec.name} expects inputs to share the graph dtype"
         )
     normalized_dims = _normalize_flip_dims(op_spec.name, dims, len(input_shape))
-    output_shape = input_shape
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[input_node],
-        output_shape=output_shape,
+        output_shape=(),
         inplace_input=None,
         params={"dims": normalized_dims},
     )
+    output_shape = _infer_output_shape(op_node, [input_shape])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_conv1d_node(
@@ -5326,52 +4988,24 @@ def _handle_conv1d_node(
     padding_value = _normalize_param(
         normalize_padding, "padding", padding, 1, allow_strings=("same", "valid")
     )
-    if isinstance(padding_value, str):
-        if padding_value == "valid":
-            padding_value = 0
-            output_shape = _conv1d_output_shape_from_shapes(
-                input_shape,
-                weight_shape,
-                stride_value,
-                padding_value,
-                dilation_value,
-                groups,
-            )
-        else:
-            batch, out_channels = _conv1d_validate_channels(
-                input_shape, weight_shape, groups
-            )
-            padding_value, out_l = _conv1d_same_padding(
-                input_shape, weight_shape, stride_value, dilation_value
-            )
-            output_shape = (batch, out_channels, out_l)
-    else:
+    if not isinstance(padding_value, str):
         padding_value = padding_value[0]
-        output_shape = _conv1d_output_shape_from_shapes(
-            input_shape,
-            weight_shape,
-            stride_value,
-            padding_value,
-            dilation_value,
-            groups,
-        )
-    if stride_value <= 0 or dilation_value <= 0 or padding_value < 0:
+    if stride_value <= 0 or dilation_value <= 0 or (
+        not isinstance(padding_value, str) and padding_value < 0
+    ):
         raise RefBackendError(
             "codegen conv1d expects stride and dilation to be positive and padding to be non-negative"
         )
     if not isinstance(groups, int) or groups <= 0:
         raise RefBackendError("codegen conv1d requires positive groups")
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
     inputs = (input_arg, weight_arg)
     if bias_node is not None:
         inputs = (*inputs, bias_node)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=list(inputs),
-        output_shape=output_shape,
+        output_shape=(),
         inplace_input=None,
         params={
             "stride": stride_value,
@@ -5381,6 +5015,12 @@ def _handle_conv1d_node(
             "has_bias": bias_node is not None,
         },
     )
+    output_shape = _infer_output_shape(op_node, [input_shape, weight_shape])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_conv2d_node(
@@ -5462,56 +5102,19 @@ def _handle_conv2d_node(
         raise RefBackendError(
             "codegen conv2d expects numeric padding for transposed convolutions"
         )
-    if isinstance(padding_value, str):
-        if padding_value == "valid":
-            padding_pair = (0, 0)
-            output_shape = _conv2d_output_shape_from_shapes(
-                input_shape,
-                weight_shape,
-                stride_pair,
-                padding_pair,
-                dilation_pair,
-                groups_value,
-            )
-        else:
-            has_batch, out_channels = _conv2d_validate_channels(
-                input_shape, weight_shape, groups_value
-            )
-            padding_pair, (out_h, out_w) = _conv2d_same_padding(
-                input_shape, weight_shape, stride_pair, dilation_pair
-            )
-            if has_batch:
-                output_shape = (input_shape[0], out_channels, out_h, out_w)
-            else:
-                output_shape = (out_channels, out_h, out_w)
+    if not isinstance(padding_value, str):
+        padding_pair = padding_value
     else:
         padding_pair = padding_value
-        if transposed_value:
-            output_shape = _conv2d_transposed_output_shape_from_shapes(
-                input_shape,
-                weight_shape,
-                stride_pair,
-                padding_pair,
-                dilation_pair,
-                output_padding_pair,
-                groups_value,
-            )
-        else:
-            output_shape = _conv2d_output_shape_from_shapes(
-                input_shape,
-                weight_shape,
-                stride_pair,
-                padding_pair,
-                dilation_pair,
-                groups_value,
-            )
     if (
         stride_pair[0] <= 0
         or stride_pair[1] <= 0
         or dilation_pair[0] <= 0
         or dilation_pair[1] <= 0
-        or padding_pair[0] < 0
-        or padding_pair[1] < 0
+        or (
+            not isinstance(padding_pair, str)
+            and (padding_pair[0] < 0 or padding_pair[1] < 0)
+        )
     ):
         raise RefBackendError(
             "codegen conv2d expects stride and dilation to be positive and padding to be non-negative"
@@ -5522,6 +5125,27 @@ def _handle_conv2d_node(
         )
     if groups_value <= 0:
         raise RefBackendError("codegen conv2d requires positive groups")
+    inputs = (input_arg, weight_arg)
+    if bias_node is not None:
+        inputs = (*inputs, bias_node)
+    op_node = _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=list(inputs),
+        output_shape=(),
+        inplace_input=None,
+        params={
+            "stride": stride_pair,
+            "padding": padding_pair,
+            "dilation": dilation_pair,
+            "groups": groups_value,
+            "transposed": transposed_value,
+            "output_padding": output_padding_pair,
+            "has_bias": bias_node is not None,
+        },
+    )
+    output_shape = _infer_output_shape(op_node, [input_shape, weight_shape])
+    op_node.output_shape = output_shape
     if bias_node is not None:
         bias_shape = shapes[bias_node]
         if len(output_shape) == 4:
@@ -5535,25 +5159,7 @@ def _handle_conv2d_node(
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
     strides[node] = _contiguous_strides(output_shape)
-    inputs = (input_arg, weight_arg)
-    if bias_node is not None:
-        inputs = (*inputs, bias_node)
-    return _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=list(inputs),
-        output_shape=output_shape,
-        inplace_input=None,
-        params={
-            "stride": stride_pair,
-            "padding": padding_pair,
-            "dilation": dilation_pair,
-            "groups": groups_value,
-            "transposed": transposed_value,
-            "output_padding": output_padding_pair,
-            "has_bias": bias_node is not None,
-        },
-    )
+    return op_node
 
 
 def _handle_pool1d_node(
@@ -5723,22 +5329,11 @@ def _handle_pool1d_node(
             raise RefBackendError(
                 "codegen avg_pool2d expects padding to be at most half of effective kernel size"
             )
-    output_shape = _pool1d_output_shape_from_shapes(
-        input_shape,
-        kernel_value,
-        stride_value,
-        padding_value,
-        dilation_value,
-        bool(ceil_mode),
-    )
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[input_arg],
-        output_shape=output_shape,
+        output_shape=(),
         inplace_input=None,
         params={
             "kernel_size": kernel_value,
@@ -5750,6 +5345,12 @@ def _handle_pool1d_node(
             "divisor_override": divisor_override_value,
         },
     )
+    output_shape = _infer_output_shape(op_node, [input_shape])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_pool2d_node(
@@ -5904,22 +5505,11 @@ def _handle_pool2d_node(
             raise RefBackendError(
                 f"codegen {op_spec.name} expects divisor_override to be a positive int"
             )
-    output_shape = _pool2d_output_shape_from_shapes(
-        input_shape,
-        kernel_pair,
-        stride_pair,
-        padding_pair,
-        dilation_pair,
-        ceil_mode,
-    )
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[input_arg],
-        output_shape=output_shape,
+        output_shape=(),
         inplace_input=None,
         params={
             "kernel_size": kernel_pair,
@@ -5931,6 +5521,12 @@ def _handle_pool2d_node(
             "divisor_override": divisor_override,
         },
     )
+    output_shape = _infer_output_shape(op_node, [input_shape])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_pool3d_node(
@@ -6067,21 +5663,11 @@ def _handle_pool3d_node(
             raise RefBackendError(
                 f"codegen {op_spec.name} expects divisor_override to be a positive int"
             )
-    output_shape = _pool3d_output_shape_from_shapes(
-        input_shape,
-        kernel_triplet,
-        stride_triplet,
-        padding_triplet,
-        dilation_triplet,
-    )
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[input_arg],
-        output_shape=output_shape,
+        output_shape=(),
         inplace_input=None,
         params={
             "kernel_size": kernel_triplet,
@@ -6093,6 +5679,12 @@ def _handle_pool3d_node(
             "divisor_override": divisor_override,
         },
     )
+    output_shape = _infer_output_shape(op_node, [input_shape])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_adaptive_avg_pool2d_backward_node(
@@ -6148,21 +5740,23 @@ def _handle_adaptive_avg_pool2d_backward_node(
         )
     kernel_pair = (in_h // out_h, in_w // out_w)
     stride_pair = kernel_pair
-    output_shape = input_shape
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[grad_output, input_arg],
-        output_shape=output_shape,
+        output_shape=(),
         inplace_input=None,
         params={
             "kernel_size": kernel_pair,
             "stride": stride_pair,
         },
     )
+    output_shape = _infer_output_shape(op_node, [grad_output_shape, input_shape])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_col2im_node(
@@ -6227,59 +5821,21 @@ def _handle_col2im_node(
         )
     input_shape = shapes[input_arg]
     if len(input_shape) == 3:
-        batch, col_channels, col_length = input_shape
+        batch, col_channels, _ = input_shape
         has_batch = True
     elif len(input_shape) == 2:
-        col_channels, col_length = input_shape
+        col_channels, _ = input_shape
         batch = 1
         has_batch = False
     else:
         raise RefBackendError("codegen col2im expects 2D or 3D input tensors")
     if not _is_contiguous(input_shape, strides[input_arg]):
         raise RefBackendError("codegen col2im requires contiguous input tensors")
-    k_h, k_w = kernel_pair
-    channels_divisor = k_h * k_w
-    if channels_divisor <= 0 or col_channels % channels_divisor != 0:
-        raise RefBackendError(
-            "codegen col2im expects input channels divisible by kernel_size"
-        )
-    out_h, out_w = output_pair
-    dil_h, dil_w = dilation_pair
-    pad_h, pad_w = padding_pair
-    stride_h, stride_w = stride_pair
-    effective_kh = dil_h * (k_h - 1) + 1
-    effective_kw = dil_w * (k_w - 1) + 1
-    numerator_h = out_h + 2 * pad_h - effective_kh
-    numerator_w = out_w + 2 * pad_w - effective_kw
-    if (
-        numerator_h < 0
-        or numerator_w < 0
-        or numerator_h % stride_h != 0
-        or numerator_w % stride_w != 0
-    ):
-        raise RefBackendError(
-            "codegen col2im expects output_size to be compatible with kernel_size, dilation, padding, and stride"
-        )
-    out_blocks_h = numerator_h // stride_h + 1
-    out_blocks_w = numerator_w // stride_w + 1
-    expected_length = out_blocks_h * out_blocks_w
-    if col_length != expected_length:
-        raise RefBackendError(
-            "codegen col2im expects input length to match output_size and stride"
-        )
-    channels = col_channels // channels_divisor
-    if has_batch:
-        output_shape = (batch, channels, out_h, out_w)
-    else:
-        output_shape = (channels, out_h, out_w)
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[input_arg],
-        output_shape=output_shape,
+        output_shape=(),
         inplace_input=None,
         params={
             "output_size": output_pair,
@@ -6287,10 +5843,14 @@ def _handle_col2im_node(
             "dilation": dilation_pair,
             "padding": padding_pair,
             "stride": stride_pair,
-            "out_blocks_h": out_blocks_h,
-            "out_blocks_w": out_blocks_w,
         },
     )
+    output_shape = _infer_output_shape(op_node, [input_shape])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_to_copy_node(
@@ -6338,18 +5898,20 @@ def _handle_to_copy_node(
         )
     if memory_format is not None:
         raise RefBackendError("codegen _to_copy does not support memory_format")
-    output_shape = shapes[input_arg]
-    shapes[node] = output_shape
-    dtypes[node] = dtypes[input_arg]
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[input_arg],
-        output_shape=output_shape,
+        output_shape=(),
         inplace_input=None,
         params={},
     )
+    output_shape = _infer_output_shape(op_node, [shapes[input_arg]])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtypes[input_arg]
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_batch_norm_node(
@@ -6472,19 +6034,16 @@ def _handle_batch_norm_node(
         raise RefBackendError(
             f"codegen {op_spec.name} expects eps to be a float"
         ) from exc
-    shapes[node] = input_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(input_shape)
     inputs = [input_arg, running_mean, running_var]
     if weight_node is not None:
         inputs.append(weight_node)
     if bias_node is not None:
         inputs.append(bias_node)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=inputs,
-        output_shape=input_shape,
+        output_shape=(),
         inplace_input=None,
         params={
             "eps": eps_value,
@@ -6492,6 +6051,12 @@ def _handle_batch_norm_node(
             "has_bias": bias_node is not None,
         },
     )
+    output_shape = _infer_output_shape(op_node, [input_shape])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_pdist_node(
@@ -6529,20 +6094,20 @@ def _handle_pdist_node(
         raise RefBackendError("codegen _pdist_forward expects a 2D input tensor")
     if not _is_contiguous(input_shape, strides[input_arg]):
         raise RefBackendError("codegen _pdist_forward requires contiguous input")
-    n = input_shape[0]
-    output_len = n * (n - 1) // 2
-    output_shape = (output_len,)
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[input_arg],
-        output_shape=output_shape,
+        output_shape=(),
         inplace_input=None,
         params={},
     )
+    output_shape = _infer_output_shape(op_node, [input_shape])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_cdist_node(
@@ -6611,18 +6176,20 @@ def _handle_cdist_node(
         raise RefBackendError(
             "codegen _cdist_forward requires contiguous inputs"
         )
-    output_shape = (x1_shape[0], x2_shape[0])
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[x1_arg, x2_arg],
-        output_shape=output_shape,
+        output_shape=(),
         inplace_input=None,
         params={},
     )
+    output_shape = _infer_output_shape(op_node, [x1_shape, x2_shape])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_addmm_like_node(
@@ -6649,7 +6216,16 @@ def _handle_addmm_like_node(
             f"codegen {op_name} expects inputs to share the graph dtype"
         )
     _validate_addmm_like_scalars(op_name, dtype_info.torch_dtype, alpha, beta)
-    output_shape = _infer_output_shape(op_spec, input_shapes)
+    op_node = _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=list(input_nodes),
+        output_shape=(),
+        inplace_input=inplace_input,
+        params={"alpha": alpha, "beta": beta},
+    )
+    output_shape = _infer_output_shape(op_node, input_shapes)
+    op_node.output_shape = output_shape
     if op_spec.kind == "addr" and inplace_input is not None:
         input_shape = input_shapes[inplace_input]
         if len(input_shape) != 2:
@@ -6666,14 +6242,7 @@ def _handle_addmm_like_node(
         strides[node] = strides[input_nodes[inplace_input]]
     else:
         strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=list(input_nodes),
-        output_shape=output_shape,
-        inplace_input=inplace_input,
-        params={"alpha": alpha, "beta": beta},
-    )
+    return op_node
 
 
 def _handle_diagonal_node(
@@ -6696,19 +6265,19 @@ def _handle_diagonal_node(
     offset, dim1, dim2 = _parse_diagonal_args(
         op_spec.name, node, shapes[input_arg]
     )
-    output_shape = _infer_diagonal_output_shape(
-        shapes[input_arg], offset, dim1, dim2
-    )
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[input_arg],
-        output_shape=output_shape,
+        output_shape=(),
         params={"offset": offset, "dim1": dim1, "dim2": dim2},
     )
+    output_shape = _infer_output_shape(op_node, [shapes[input_arg]])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_softmax_node(
@@ -6786,18 +6355,20 @@ def _handle_embedding_node(
                 "codegen embedding expects padding_idx to be -1 or within num_embeddings"
             )
     indices_shape = shapes[indices]
-    output_shape = tuple(indices_shape) + (weight_shape[1],)
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[weight, indices],
-        output_shape=output_shape,
+        output_shape=(),
         inplace_input=None,
         params={"padding_idx": padding_idx},
     )
+    output_shape = _infer_output_shape(op_node, [weight_shape, indices_shape])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_embedding_bag_node(
@@ -6876,15 +6447,11 @@ def _handle_embedding_bag_node(
         raise RefBackendError(
             "codegen _embedding_bag expects offsets to contain at least one entry"
         )
-    output_shape = (bag_count, weight_shape[1])
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[weight, indices, offsets],
-        output_shape=output_shape,
+        output_shape=(),
         inplace_input=None,
         params={
             "mode": mode,
@@ -6892,6 +6459,14 @@ def _handle_embedding_bag_node(
             "include_last_offset": include_last_offset,
         },
     )
+    output_shape = _infer_output_shape(
+        op_node, [weight_shape, indices_shape, offsets_shape]
+    )
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_cumsum_node(
@@ -6921,18 +6496,20 @@ def _handle_cumsum_node(
         raise RefBackendError(
             f"codegen {op_spec.name} expects dtype to be torch.float32, torch.int8, or torch.int32"
         )
-    output_shape = shapes[input_arg]
-    shapes[node] = output_shape
-    dtypes[node] = output_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[input_arg],
-        output_shape=output_shape,
+        output_shape=(),
         inplace_input=None,
         params={"dim": dim},
     )
+    output_shape = _infer_output_shape(op_node, [shapes[input_arg]])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = output_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_constant_pad_node(
@@ -7018,33 +6595,28 @@ def _handle_constant_pad_node(
         dim = rank - 1 - idx
         pad_before[dim] = pad_values[2 * idx]
         pad_after[dim] = pad_values[2 * idx + 1]
-    output_shape: List[int] = []
-    for size, before, after in zip(input_shape, pad_before, pad_after):
-        new_size = size + before + after
-        if new_size < 0:
-            raise RefBackendError(
-                "codegen constant_pad_nd expects non-negative output sizes"
-            )
-        output_shape.append(new_size)
     if isinstance(value, torch.fx.Node):
         raise RefBackendError(
             "codegen constant_pad_nd expects a constant padding value"
         )
     value = _normalize_scalar_value(op_spec.name, value)
-    shapes[node] = tuple(output_shape)
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[input_arg],
-        output_shape=tuple(output_shape),
+        output_shape=(),
         params={
             "pad_before": tuple(pad_before),
             "pad_after": tuple(pad_after),
             "value": value,
         },
     )
+    output_shape = _infer_output_shape(op_node, [input_shape])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_gather_node(
@@ -7094,18 +6666,20 @@ def _handle_gather_node(
             raise RefBackendError(
                 "codegen gather expects index shape to match input shape"
             )
-    output_shape = index_shape
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[input_arg, index],
-        output_shape=output_shape,
+        output_shape=(),
         inplace_input=None,
         params={"dim": dim_value},
     )
+    output_shape = _infer_output_shape(op_node, [input_shape, index_shape])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_fill_node(
@@ -7230,21 +6804,23 @@ def _handle_fill_node(
             f"codegen {op_spec.name} expects inputs to share the graph dtype"
         )
     scalar_value = _normalize_scalar_value(op_spec.name, value)
-    output_shape = shapes[input_arg]
+    op_node = _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=[input_arg],
+        output_shape=(),
+        inplace_input=inplace_input,
+        params={"value": scalar_value},
+    )
+    output_shape = _infer_output_shape(op_node, [shapes[input_arg]])
+    op_node.output_shape = output_shape
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
     if inplace_input is not None:
         strides[node] = strides[input_arg]
     else:
         strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=[input_arg],
-        output_shape=output_shape,
-        inplace_input=inplace_input,
-        params={"value": scalar_value},
-    )
+    return op_node
 
 
 def _parse_arange_dtype(
@@ -7285,36 +6861,6 @@ def _parse_arange_dtype(
             f"codegen {op_name} expects dtype to match the graph dtype"
         )
     return dtype_spec
-
-
-def _compute_arange_size(
-    start: float | int | bool,
-    end: float | int | bool,
-    step: float | int | bool,
-) -> int:
-    if step == 0:
-        raise RefBackendError("codegen arange expects step to be non-zero")
-    if all(
-        isinstance(value, numbers.Integral) for value in (start, end, step)
-    ):
-        start_value = int(start)
-        end_value = int(end)
-        step_value = int(step)
-        if step_value == 0:
-            raise RefBackendError("codegen arange expects step to be non-zero")
-        if step_value > 0 and end_value <= start_value:
-            return 0
-        if step_value < 0 and end_value >= start_value:
-            return 0
-        delta = end_value - start_value
-        size = int(math.ceil(Fraction(delta, step_value)))
-        return max(size, 0)
-    start_value = float(start)
-    end_value = float(end)
-    step_value = float(step)
-    delta = (end_value - start_value) / step_value
-    size = int(math.ceil(delta))
-    return max(size, 0)
 
 
 def _handle_arange_node(
@@ -7396,21 +6942,19 @@ def _handle_arange_node(
     dtype_spec = _parse_arange_dtype(
         op_spec.name, node.kwargs.get("dtype"), dtype_info, start, end, step
     )
-    output_size = _compute_arange_size(start, end, step)
-    output_shape = (output_size,)
+    op_node = _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=[],
+        output_shape=(),
+        params={"start": start, "end": end, "step": step},
+    )
+    output_shape = _infer_output_shape(op_node, [])
+    op_node.output_shape = output_shape
     shapes[node] = output_shape
     dtypes[node] = dtype_spec.torch_dtype
     strides[node] = _contiguous_strides(output_shape)
-    return (
-        _OpNode(
-            node=node,
-            spec=op_spec,
-            inputs=[],
-            output_shape=output_shape,
-            params={"start": start, "step": step},
-        ),
-        dtype_spec,
-    )
+    return op_node, dtype_spec
 
 
 def _handle_view_node(
@@ -7483,20 +7027,23 @@ def _handle_view_node(
             raise RefBackendError(
                 "codegen as_strided expects storage_offset to be non-negative"
             )
-        output_shape = size_tuple
-        shapes[node] = output_shape
-        dtypes[node] = dtype_info.torch_dtype
-        strides[node] = _contiguous_strides(output_shape)
-        return _OpNode(
+        op_node = _OpNode(
             node=node,
             spec=op_spec,
             inputs=[input_arg],
-            output_shape=output_shape,
+            output_shape=(),
             params={
+                "size": size_tuple,
                 "view_strides": stride_tuple,
                 "storage_offset": storage_offset_value,
             },
         )
+        output_shape = _infer_output_shape(op_node, [shapes[input_arg]])
+        op_node.output_shape = output_shape
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        strides[node] = _contiguous_strides(output_shape)
+        return op_node
     if op_spec.name == "squeeze":
         input_shape = shapes[input_arg]
         input_strides = strides[input_arg]
@@ -7557,26 +7104,28 @@ def _handle_view_node(
             remove_dims = {
                 dim for dim in set(dim_values) if input_shape[dim] == 1
             }
-        output_shape = tuple(
-            size
-            for dim, size in enumerate(input_shape)
-            if dim not in remove_dims
-        )
         view_strides = tuple(
             stride
             for dim, stride in enumerate(input_strides)
             if dim not in remove_dims
         )
-        shapes[node] = output_shape
-        dtypes[node] = dtype_info.torch_dtype
-        strides[node] = _contiguous_strides(output_shape)
-        return _OpNode(
+        op_node = _OpNode(
             node=node,
             spec=op_spec,
             inputs=[input_arg],
-            output_shape=output_shape,
-            params={"view_strides": view_strides, "storage_offset": 0},
+            output_shape=(),
+            params={
+                "squeeze_dims": tuple(sorted(remove_dims)),
+                "view_strides": view_strides,
+                "storage_offset": 0,
+            },
         )
+        output_shape = _infer_output_shape(op_node, [input_shape])
+        op_node.output_shape = output_shape
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        strides[node] = _contiguous_strides(output_shape)
+        return op_node
     raise RefBackendError(f"Unsupported view op: {op_spec.name}")
 
 
@@ -7682,15 +7231,19 @@ def _handle_empty_strided_node(
         raise RefBackendError(
             f"codegen {op_spec.name} expects size and stride to match length"
         )
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = output_strides
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[],
-        output_shape=output_shape,
+        output_shape=(),
+        params={"size": output_shape},
     )
+    output_shape = _infer_output_shape(op_node, [])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = output_strides
+    return op_node
 
 
 def _handle_resize_node(
@@ -7730,24 +7283,28 @@ def _handle_resize_node(
         raise RefBackendError(
             "codegen resize_ expects size to match the input numel"
         )
-    shapes[node] = size
-    dtypes[node] = dtype_info.torch_dtype
-    if memory_format is None or memory_format is torch.contiguous_format:
-        output_strides = _contiguous_strides(size)
-    elif memory_format is torch.channels_last:
-        output_strides = _channels_last_strides(size)
-    elif memory_format is torch.channels_last_3d:
-        output_strides = _channels_last_3d_strides(size)
-    else:
-        raise RefBackendError("Unsupported memory formatPreserve")
-    strides[node] = output_strides
-    return _OpNode(
+    op_node = _OpNode(
         node=node,
         spec=op_spec,
         inputs=[input_arg],
-        output_shape=size,
+        output_shape=(),
         inplace_input=None,
+        params={"size": size},
     )
+    output_shape = _infer_output_shape(op_node, [input_shape])
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    if memory_format is None or memory_format is torch.contiguous_format:
+        output_strides = _contiguous_strides(output_shape)
+    elif memory_format is torch.channels_last:
+        output_strides = _channels_last_strides(output_shape)
+    elif memory_format is torch.channels_last_3d:
+        output_strides = _channels_last_3d_strides(output_shape)
+    else:
+        raise RefBackendError("Unsupported memory formatPreserve")
+    strides[node] = output_strides
+    return op_node
 
 
 def _parse_where_inputs(
@@ -8507,12 +8064,6 @@ def _analyze_generic_graph(
                         raise RefBackendError(
                             "codegen var supports only torch.float32 tensors"
                         )
-                output_shape = _infer_reduction_output_shape(
-                    shape_input_shapes[0],
-                    reduction_dims,
-                    keepdim,
-                    reduce_all=reduce_all,
-                )
             elif op_spec.kind == "arg_reduction":
                 (
                     reduction_dims,
@@ -8532,20 +8083,24 @@ def _analyze_generic_graph(
                     raise RefBackendError(
                         f"codegen {op_spec.name} expects a non-empty reduction dimension"
                     )
-                output_shape = _infer_reduction_output_shape(
-                    shape_input_shapes[0],
-                    reduction_dims,
-                    keepdim,
-                    reduce_all=reduce_all,
-                )
-            else:
-                output_shape = _infer_output_shape(op_spec, shape_input_shapes)
+            if op_spec.kind in {"reduction", "arg_reduction"}:
+                param_values["reduce_all"] = reduce_all
+            op_node = _OpNode(
+                node=node,
+                spec=op_spec,
+                inputs=list(input_nodes),
+                output_shape=(),
+                inplace_input=inplace_input,
+                reduction_dims=reduction_dims,
+                keepdim=keepdim,
+                params=param_values,
+            )
+            output_shape = _infer_output_shape(op_node, shape_input_shapes)
+            op_node.output_shape = output_shape
             if out_arg is not None and shapes[out_arg] != output_shape:
                 raise RefBackendError(
                     f"codegen {op_spec.name} expects out to match output shape"
                 )
-            if op_spec.kind in {"reduction", "arg_reduction"}:
-                param_values["reduce_all"] = reduce_all
             shapes[node] = output_shape
             if op_spec.kind == "arg_reduction":
                 dtypes[node] = torch.int64
@@ -8555,18 +8110,7 @@ def _analyze_generic_graph(
                 strides[node] = strides[input_nodes[inplace_input]]
             else:
                 strides[node] = _contiguous_strides(output_shape)
-            op_nodes.append(
-                _OpNode(
-                    node=node,
-                    spec=op_spec,
-                    inputs=list(input_nodes),
-                    output_shape=output_shape,
-                    inplace_input=inplace_input,
-                    reduction_dims=reduction_dims,
-                    keepdim=keepdim,
-                    params=param_values,
-                )
-            )
+            op_nodes.append(op_node)
             continue
         if node.op == "output":
             output_node = node
@@ -8890,6 +8434,851 @@ def get_generic_source(
 ) -> str:
     graph = _analyze_generic_graph(gm, example_inputs)
     return _write_generic_source(graph)
+
+
+class _KindHandlerContext(HandlerContext):
+    def kernel_inputs(self, op_node: _OpNode) -> List[torch.fx.Node]:
+        return _kernel_inputs(op_node)
+
+    def write_arange_kernel(
+        self,
+        node_index: int,
+        op_node: _OpNode,
+        output_shape: Sequence[int],
+        output_strides: Sequence[int],
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_arange_kernel(
+            node_index, op_node, output_shape, output_strides, dtype
+        )
+
+    def write_elementwise_kernel(
+        self,
+        node_index: int,
+        op_node: _OpNode,
+        output_shape: Sequence[int],
+        input_shapes: Sequence[Sequence[int]],
+        input_strides: Sequence[Sequence[int]],
+        input_dtypes: Sequence[torch.dtype],
+        output_strides: Sequence[int],
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_elementwise_kernel(
+            node_index,
+            op_node,
+            output_shape,
+            input_shapes,
+            input_strides,
+            input_dtypes,
+            output_strides,
+            dtype,
+        )
+
+    def write_flip_kernel(
+        self,
+        node_index: int,
+        op_node: _OpNode,
+        input_shape: Sequence[int],
+        input_strides: Sequence[int],
+        input_dtype: torch.dtype,
+        output_shape: Sequence[int],
+        output_strides: Sequence[int],
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_flip_kernel(
+            node_index,
+            op_node,
+            input_shape,
+            input_strides,
+            input_dtype,
+            output_shape,
+            output_strides,
+            dtype,
+        )
+
+    def write_constant_pad_kernel(
+        self,
+        node_index: int,
+        op_node: _OpNode,
+        input_shape: Sequence[int],
+        input_strides: Sequence[int],
+        input_dtype: torch.dtype,
+        output_shape: Sequence[int],
+        output_strides: Sequence[int],
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_constant_pad_kernel(
+            node_index,
+            op_node,
+            input_shape,
+            input_strides,
+            input_dtype,
+            output_shape,
+            output_strides,
+            dtype,
+        )
+
+    def write_view_kernel(
+        self,
+        node_index: int,
+        op_node: _OpNode,
+        input_shape: Sequence[int],
+        input_dtype: torch.dtype,
+        output_shape: Sequence[int],
+        output_strides: Sequence[int],
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_view_kernel(
+            node_index,
+            op_node,
+            input_shape,
+            input_dtype,
+            output_shape,
+            output_strides,
+            dtype,
+        )
+
+    def write_resize_kernel(
+        self,
+        node_index: int,
+        op_node: _OpNode,
+        input_shape: Sequence[int],
+        input_strides: Sequence[int],
+        input_dtype: torch.dtype,
+        output_shape: Sequence[int],
+        output_strides: Sequence[int],
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_resize_kernel(
+            node_index,
+            op_node,
+            input_shape,
+            input_strides,
+            input_dtype,
+            output_shape,
+            output_strides,
+            dtype,
+        )
+
+    def write_empty_strided_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        output_shape: Sequence[int],
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_empty_strided_kernel(
+            node_index, op_spec, output_shape, dtype
+        )
+
+    def write_diagonal_kernel(
+        self,
+        node_index: int,
+        op_node: _OpNode,
+        input_shape: Sequence[int],
+        input_strides: Sequence[int],
+        input_dtype: torch.dtype,
+        output_shape: Sequence[int],
+        output_strides: Sequence[int],
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_diagonal_kernel(
+            node_index,
+            op_node,
+            input_shape,
+            input_strides,
+            input_dtype,
+            output_shape,
+            output_strides,
+            dtype,
+        )
+
+    def write_std_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        input_strides: Sequence[int],
+        output_shape: Sequence[int],
+        output_strides: Sequence[int],
+        reduction_dims: Sequence[int],
+        keepdim: bool,
+        dtype: _CodegenDType,
+        *,
+        unbiased: bool,
+    ) -> List[str]:
+        return _write_std_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            input_strides,
+            output_shape,
+            output_strides,
+            reduction_dims,
+            keepdim,
+            dtype,
+            unbiased=unbiased,
+        )
+
+    def write_var_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        input_strides: Sequence[int],
+        output_shape: Sequence[int],
+        output_strides: Sequence[int],
+        reduction_dims: Sequence[int],
+        keepdim: bool,
+        dtype: _CodegenDType,
+        *,
+        unbiased: bool,
+    ) -> List[str]:
+        return _write_var_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            input_strides,
+            output_shape,
+            output_strides,
+            reduction_dims,
+            keepdim,
+            dtype,
+            unbiased=unbiased,
+        )
+
+    def write_norm_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        input_strides: Sequence[int],
+        output_shape: Sequence[int],
+        output_strides: Sequence[int],
+        reduction_dims: Sequence[int],
+        keepdim: bool,
+        dtype: _CodegenDType,
+        *,
+        p_value: float,
+    ) -> List[str]:
+        return _write_norm_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            input_strides,
+            output_shape,
+            output_strides,
+            reduction_dims,
+            keepdim,
+            dtype,
+            p_value=p_value,
+        )
+
+    def write_reduction_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        input_strides: Sequence[int],
+        output_shape: Sequence[int],
+        output_strides: Sequence[int],
+        reduction_dims: Sequence[int],
+        keepdim: bool,
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_reduction_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            input_strides,
+            output_shape,
+            output_strides,
+            reduction_dims,
+            keepdim,
+            dtype,
+        )
+
+    def write_argminmax_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        input_strides: Sequence[int],
+        output_shape: Sequence[int],
+        output_strides: Sequence[int],
+        reduction_dims: Sequence[int],
+        keepdim: bool,
+        reduce_all: bool,
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_argminmax_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            input_strides,
+            output_shape,
+            output_strides,
+            reduction_dims,
+            keepdim,
+            reduce_all,
+            dtype,
+        )
+
+    def write_softmax_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        input_strides: Sequence[int],
+        output_strides: Sequence[int],
+        dim: int,
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_softmax_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            input_strides,
+            output_strides,
+            dim,
+            dtype,
+        )
+
+    def write_cumsum_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        input_strides: Sequence[int],
+        output_strides: Sequence[int],
+        dim: int,
+        dtype: _CodegenDType,
+        output_dtype: torch.dtype,
+    ) -> List[str]:
+        return _write_cumsum_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            input_strides,
+            output_strides,
+            dim,
+            dtype,
+            output_dtype,
+        )
+
+    def write_embedding_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        weight_shape: Sequence[int],
+        indices_shape: Sequence[int],
+        weight_strides: Sequence[int],
+        indices_strides: Sequence[int],
+        output_shape: Sequence[int],
+        output_strides: Sequence[int],
+        indices_dtype: torch.dtype,
+        dtype: _CodegenDType,
+        *,
+        padding_idx: int,
+    ) -> List[str]:
+        return _write_embedding_kernel(
+            node_index,
+            op_spec,
+            weight_shape,
+            indices_shape,
+            weight_strides,
+            indices_strides,
+            output_shape,
+            output_strides,
+            indices_dtype,
+            dtype,
+            padding_idx=padding_idx,
+        )
+
+    def write_embedding_bag_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        weight_shape: Sequence[int],
+        indices_shape: Sequence[int],
+        offsets_shape: Sequence[int],
+        weight_strides: Sequence[int],
+        indices_strides: Sequence[int],
+        offsets_strides: Sequence[int],
+        output_shape: Sequence[int],
+        output_strides: Sequence[int],
+        indices_dtype: torch.dtype,
+        offsets_dtype: torch.dtype,
+        dtype: _CodegenDType,
+        *,
+        mode: int,
+        padding_idx: int,
+        include_last_offset: bool,
+    ) -> List[str]:
+        return _write_embedding_bag_kernel(
+            node_index,
+            op_spec,
+            weight_shape,
+            indices_shape,
+            offsets_shape,
+            weight_strides,
+            indices_strides,
+            offsets_strides,
+            output_shape,
+            output_strides,
+            indices_dtype,
+            offsets_dtype,
+            dtype,
+            mode=mode,
+            padding_idx=padding_idx,
+            include_last_offset=include_last_offset,
+        )
+
+    def write_gather_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        index_shape: Sequence[int],
+        input_strides: Sequence[int],
+        index_strides: Sequence[int],
+        output_shape: Sequence[int],
+        output_strides: Sequence[int],
+        index_dtype: torch.dtype,
+        dim: int,
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_gather_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            index_shape,
+            input_strides,
+            index_strides,
+            output_shape,
+            output_strides,
+            index_dtype,
+            dim,
+            dtype,
+        )
+
+    def write_concat_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shapes: Sequence[Sequence[int]],
+        input_strides: Sequence[Sequence[int]],
+        output_shape: Sequence[int],
+        output_strides: Sequence[int],
+        dim: int,
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_concat_kernel(
+            node_index,
+            op_spec,
+            input_shapes,
+            input_strides,
+            output_shape,
+            output_strides,
+            dim,
+            dtype,
+        )
+
+    def write_pool2d_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        output_shape: Sequence[int],
+        kernel_size: Tuple[int, int],
+        stride: Tuple[int, int],
+        padding: Tuple[int, int],
+        dilation: Tuple[int, int],
+        dtype: _CodegenDType,
+        ceil_mode: bool,
+        count_include_pad: bool,
+        divisor_override: object,
+    ) -> List[str]:
+        return _write_pool2d_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            output_shape,
+            kernel_size,
+            stride,
+            padding,
+            dilation,
+            dtype,
+            ceil_mode,
+            count_include_pad,
+            divisor_override,
+        )
+
+    def write_pool3d_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        output_shape: Sequence[int],
+        kernel_size: Tuple[int, int, int],
+        stride: Tuple[int, int, int],
+        padding: Tuple[int, int, int],
+        dilation: Tuple[int, int, int],
+        dtype: _CodegenDType,
+        ceil_mode: bool,
+        count_include_pad: bool,
+        divisor_override: object,
+    ) -> List[str]:
+        return _write_pool3d_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            output_shape,
+            kernel_size,
+            stride,
+            padding,
+            dilation,
+            dtype,
+            ceil_mode,
+            count_include_pad,
+            divisor_override,
+        )
+
+    def write_adaptive_avg_pool2d_backward_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        grad_output_shape: Sequence[int],
+        input_shape: Sequence[int],
+        output_shape: Sequence[int],
+        kernel_size: Tuple[int, int],
+        stride: Tuple[int, int],
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_adaptive_avg_pool2d_backward_kernel(
+            node_index,
+            op_spec,
+            grad_output_shape,
+            input_shape,
+            output_shape,
+            kernel_size,
+            stride,
+            dtype,
+        )
+
+    def write_pool1d_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        output_shape: Sequence[int],
+        kernel_size: int,
+        stride: int,
+        padding: int,
+        dilation: int,
+        dtype: _CodegenDType,
+        ceil_mode: bool,
+        count_include_pad: bool,
+        divisor_override: object,
+    ) -> List[str]:
+        return _write_pool1d_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            output_shape,
+            kernel_size,
+            stride,
+            padding,
+            dilation,
+            dtype,
+            ceil_mode,
+            count_include_pad,
+            divisor_override,
+        )
+
+    def write_col2im_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        output_shape: Sequence[int],
+        output_size: Tuple[int, int],
+        kernel_size: Tuple[int, int],
+        dilation: Tuple[int, int],
+        padding: Tuple[int, int],
+        stride: Tuple[int, int],
+        dtype: _CodegenDType,
+        out_blocks_h: int,
+        out_blocks_w: int,
+    ) -> List[str]:
+        return _write_col2im_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            output_shape,
+            output_size,
+            kernel_size,
+            dilation,
+            padding,
+            stride,
+            dtype,
+            out_blocks_h,
+            out_blocks_w,
+        )
+
+    def write_batch_norm_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        output_shape: Sequence[int],
+        dtype: _CodegenDType,
+        eps: float,
+        has_weight: bool,
+        has_bias: bool,
+    ) -> List[str]:
+        return _write_batch_norm_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            output_shape,
+            dtype,
+            eps,
+            has_weight,
+            has_bias,
+        )
+
+    def write_pdist_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        output_shape: Sequence[int],
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_pdist_kernel(
+            node_index, op_spec, input_shape, output_shape, dtype
+        )
+
+    def write_cdist_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        x1_shape: Sequence[int],
+        x2_shape: Sequence[int],
+        output_shape: Sequence[int],
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_cdist_kernel(
+            node_index, op_spec, x1_shape, x2_shape, output_shape, dtype
+        )
+
+    def write_conv1d_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        weight_shape: Sequence[int],
+        output_shape: Sequence[int],
+        stride: int,
+        padding: int,
+        dilation: int,
+        groups: int,
+        dtype: _CodegenDType,
+        has_bias: bool,
+    ) -> List[str]:
+        return _write_conv1d_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            weight_shape,
+            output_shape,
+            stride,
+            padding,
+            dilation,
+            groups,
+            dtype,
+            has_bias,
+        )
+
+    def write_conv2d_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        weight_shape: Sequence[int],
+        output_shape: Sequence[int],
+        transposed: bool,
+        stride: Tuple[int, int],
+        padding: Tuple[int, int],
+        dilation: Tuple[int, int],
+        groups: int,
+        dtype: _CodegenDType,
+        has_bias: bool,
+    ) -> List[str]:
+        return _write_conv2d_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            weight_shape,
+            output_shape,
+            transposed,
+            stride,
+            padding,
+            dilation,
+            groups,
+            dtype,
+            has_bias,
+        )
+
+    def write_addmm_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        output_shape: Sequence[int],
+        mat1_shape: Sequence[int],
+        mat2_shape: Sequence[int],
+        input_strides: Sequence[int],
+        mat1_strides: Sequence[int],
+        mat2_strides: Sequence[int],
+        output_strides: Sequence[int],
+        dtype: _CodegenDType,
+        *,
+        alpha: float,
+        beta: float,
+    ) -> List[str]:
+        return _write_addmm_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            output_shape,
+            mat1_shape,
+            mat2_shape,
+            input_strides,
+            mat1_strides,
+            mat2_strides,
+            output_strides,
+            dtype,
+            alpha=alpha,
+            beta=beta,
+        )
+
+    def write_addbmm_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        output_shape: Sequence[int],
+        batch1_shape: Sequence[int],
+        batch2_shape: Sequence[int],
+        input_strides: Sequence[int],
+        batch1_strides: Sequence[int],
+        batch2_strides: Sequence[int],
+        output_strides: Sequence[int],
+        dtype: _CodegenDType,
+        *,
+        alpha: float,
+        beta: float,
+    ) -> List[str]:
+        return _write_addbmm_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            output_shape,
+            batch1_shape,
+            batch2_shape,
+            input_strides,
+            batch1_strides,
+            batch2_strides,
+            output_strides,
+            dtype,
+            alpha=alpha,
+            beta=beta,
+        )
+
+    def write_addmv_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        output_shape: Sequence[int],
+        mat_shape: Sequence[int],
+        vec_shape: Sequence[int],
+        input_strides: Sequence[int],
+        mat_strides: Sequence[int],
+        vec_strides: Sequence[int],
+        output_strides: Sequence[int],
+        dtype: _CodegenDType,
+        *,
+        alpha: float,
+        beta: float,
+    ) -> List[str]:
+        return _write_addmv_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            output_shape,
+            mat_shape,
+            vec_shape,
+            input_strides,
+            mat_strides,
+            vec_strides,
+            output_strides,
+            dtype,
+            alpha=alpha,
+            beta=beta,
+        )
+
+    def write_addr_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        input_shape: Sequence[int],
+        output_shape: Sequence[int],
+        vec1_shape: Sequence[int],
+        vec2_shape: Sequence[int],
+        input_strides: Sequence[int],
+        vec1_strides: Sequence[int],
+        vec2_strides: Sequence[int],
+        output_strides: Sequence[int],
+        dtype: _CodegenDType,
+        *,
+        alpha: float,
+        beta: float,
+    ) -> List[str]:
+        return _write_addr_kernel(
+            node_index,
+            op_spec,
+            input_shape,
+            output_shape,
+            vec1_shape,
+            vec2_shape,
+            input_strides,
+            vec1_strides,
+            vec2_strides,
+            output_strides,
+            dtype,
+            alpha=alpha,
+            beta=beta,
+        )
+
+    def write_matmul_kernel(
+        self,
+        node_index: int,
+        op_spec: _OpSpec,
+        a_shape: Sequence[int],
+        b_shape: Sequence[int],
+        a_strides: Sequence[int],
+        b_strides: Sequence[int],
+        dtype: _CodegenDType,
+    ) -> List[str]:
+        return _write_matmul_kernel(
+            node_index, op_spec, a_shape, b_shape, a_strides, b_strides, dtype
+        )
+
+
+_KIND_HANDLERS = build_kind_handlers(_KindHandlerContext())
 
 
 
