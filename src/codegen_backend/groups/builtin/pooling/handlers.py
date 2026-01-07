@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, List, Sequence, TYPE_CHECKING, Tuple
 
 import numbers
 import torch
@@ -11,20 +11,15 @@ from codegen_backend.emitters.pool1d import Pool1dEmitter
 from codegen_backend.emitters.pool2d import Pool2dEmitter
 from codegen_backend.emitters.pool2d_backward import Pool2dBackwardEmitter
 from codegen_backend.emitters.pool3d import Pool3dEmitter
-from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.errors import CodegenBackendError
-from codegen_backend.graph import _OpNode
+from codegen_backend.graph import _GenericGraph, _OpNode
 from codegen_backend.indexing import _contiguous_strides
 from codegen_backend.kinds import (
     HandlerContextProvider,
     OpKindHandler,
     OpKindHandlerFactory,
     OpNodeBuildResult,
-    Pool1dHandler,
-    Pool2dBackwardHandler,
-    Pool2dHandler,
     PoolingContext,
-    Pool3dHandler,
 )
 from codegen_backend.param_normalize import normalize_int_or_pair, normalize_int_or_tuple
 from codegen_backend.specs import OpKind, _OpSpec
@@ -39,6 +34,221 @@ from codegen_backend.groups.builtin.pooling.analysis import (
     parse_max_pool1d_args,
     parse_max_pool2d_args,
 )
+
+if TYPE_CHECKING:
+    from codegen_backend.emitters.registry import KindHandlerRegistration
+
+
+def _pool1d_output_shape_from_shapes(
+    input_shape: Sequence[int],
+    kernel_size: int,
+    stride: int,
+    padding: int,
+    dilation: int,
+    ceil_mode: bool,
+) -> Tuple[int, int, int]:
+    batch, channels, in_l = input_shape
+    numerator = in_l + 2 * padding - dilation * (kernel_size - 1) - 1
+    if numerator < 0:
+        raise CodegenBackendError(
+            "codegen pool1d requires output shape (N, C, L_out)"
+        )
+    if ceil_mode:
+        out_l = (numerator + stride - 1) // stride + 1
+        if (out_l - 1) * stride >= in_l + padding:
+            out_l -= 1
+    else:
+        out_l = numerator // stride + 1
+    return batch, channels, out_l
+
+
+def _pool2d_output_shape_from_shapes(
+    input_shape: Sequence[int],
+    kernel_size: Tuple[int, int],
+    stride: Tuple[int, int],
+    padding: Tuple[int, int],
+    dilation: Tuple[int, int],
+    ceil_mode: bool = False,
+) -> Tuple[int, int, int, int]:
+    batch, channels, in_h, in_w = input_shape
+    k_h, k_w = kernel_size
+    stride_h, stride_w = stride
+    pad_h, pad_w = padding
+    dil_h, dil_w = dilation
+    numerator_h = in_h + 2 * pad_h - dil_h * (k_h - 1) - 1
+    numerator_w = in_w + 2 * pad_w - dil_w * (k_w - 1) - 1
+    if numerator_h < 0 or numerator_w < 0:
+        raise CodegenBackendError(
+            "codegen pool2d requires output shape (N, C, H_out, W_out)"
+        )
+    if ceil_mode:
+        out_h = (numerator_h + stride_h - 1) // stride_h + 1
+        out_w = (numerator_w + stride_w - 1) // stride_w + 1
+        if (out_h - 1) * stride_h >= in_h + pad_h:
+            out_h -= 1
+        if (out_w - 1) * stride_w >= in_w + pad_w:
+            out_w -= 1
+    else:
+        out_h = numerator_h // stride_h + 1
+        out_w = numerator_w // stride_w + 1
+    return batch, channels, out_h, out_w
+
+
+def _pool3d_output_shape_from_shapes(
+    input_shape: Sequence[int],
+    kernel_size: Tuple[int, int, int],
+    stride: Tuple[int, int, int],
+    padding: Tuple[int, int, int],
+    dilation: Tuple[int, int, int],
+) -> Tuple[int, int, int, int, int]:
+    batch, channels, in_d, in_h, in_w = input_shape
+    k_d, k_h, k_w = kernel_size
+    stride_d, stride_h, stride_w = stride
+    pad_d, pad_h, pad_w = padding
+    dil_d, dil_h, dil_w = dilation
+    numerator_d = in_d + 2 * pad_d - dil_d * (k_d - 1) - 1
+    numerator_h = in_h + 2 * pad_h - dil_h * (k_h - 1) - 1
+    numerator_w = in_w + 2 * pad_w - dil_w * (k_w - 1) - 1
+    if numerator_d < 0 or numerator_h < 0 or numerator_w < 0:
+        raise CodegenBackendError(
+            "codegen pool3d requires output shape (N, C, D_out, H_out, W_out)"
+        )
+    out_d = numerator_d // stride_d + 1
+    out_h = numerator_h // stride_h + 1
+    out_w = numerator_w // stride_w + 1
+    return batch, channels, out_d, out_h, out_w
+
+
+class Pool2dHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            params={
+                "kernel_size": op_node.p("kernel_size", (1, 1)),
+                "stride": op_node.p("stride", (1, 1)),
+                "padding": op_node.p("padding", (0, 0)),
+                "dilation": op_node.p("dilation", (1, 1)),
+                "ceil_mode": bool(op_node.p("ceil_mode", False)),
+                "count_include_pad": bool(
+                    op_node.p("count_include_pad", False)
+                ),
+                "divisor_override": op_node.p("divisor_override"),
+            },
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        return _pool2d_output_shape_from_shapes(
+            input_shapes[0],
+            op_node.p("kernel_size", (1, 1)),
+            op_node.p("stride", (1, 1)),
+            op_node.p("padding", (0, 0)),
+            op_node.p("dilation", (1, 1)),
+            bool(op_node.p("ceil_mode", False)),
+        )
+
+
+class Pool3dHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            params={
+                "kernel_size": op_node.p("kernel_size", (1, 1, 1)),
+                "stride": op_node.p("stride", (1, 1, 1)),
+                "padding": op_node.p("padding", (0, 0, 0)),
+                "dilation": op_node.p("dilation", (1, 1, 1)),
+                "ceil_mode": bool(op_node.p("ceil_mode", False)),
+                "count_include_pad": bool(
+                    op_node.p("count_include_pad", False)
+                ),
+                "divisor_override": op_node.p("divisor_override"),
+            },
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        return _pool3d_output_shape_from_shapes(
+            input_shapes[0],
+            op_node.p("kernel_size", (1, 1, 1)),
+            op_node.p("stride", (1, 1, 1)),
+            op_node.p("padding", (0, 0, 0)),
+            op_node.p("dilation", (1, 1, 1)),
+        )
+
+
+class Pool2dBackwardHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        grad_output_node, input_node = op_node.inputs
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            inputs=(grad_output_node, input_node),
+            params={
+                "kernel_size": op_node.p("kernel_size", (1, 1)),
+                "stride": op_node.p("stride", (1, 1)),
+            },
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        _grad_output_shape, input_shape = input_shapes
+        return input_shape
+
+
+class Pool1dHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            params={
+                "kernel_size": op_node.p("kernel_size", 1),
+                "stride": op_node.p("stride", 1),
+                "padding": op_node.p("padding", 0),
+                "dilation": op_node.p("dilation", 1),
+                "ceil_mode": bool(op_node.p("ceil_mode", False)),
+                "count_include_pad": bool(
+                    op_node.p("count_include_pad", False)
+                ),
+                "divisor_override": op_node.p("divisor_override"),
+            },
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        return _pool1d_output_shape_from_shapes(
+            input_shapes[0],
+            op_node.p("kernel_size", 1),
+            op_node.p("stride", 1),
+            op_node.p("padding", 0),
+            op_node.p("dilation", 1),
+            bool(op_node.p("ceil_mode", False)),
+        )
 
 
 class _BackendPool1dHandler(Pool1dHandler):
@@ -715,7 +925,9 @@ class PoolingKindHandlerFactory:
         return build_handlers(context_provider.pooling)
 
 
-def build_kind_handler_registrations() -> Dict[OpKind, KindHandlerRegistration]:
+def build_kind_handler_registrations() -> Dict[OpKind, "KindHandlerRegistration"]:
+    from codegen_backend.emitters.registry import KindHandlerRegistration
+
     return {
         OpKind.POOL1D: KindHandlerRegistration(
             _BackendPool1dHandler, Pool1dEmitter

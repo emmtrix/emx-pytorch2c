@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Sequence, TYPE_CHECKING, Tuple
 
 import torch
 import torch.fx
@@ -8,22 +8,110 @@ import torch.fx
 from codegen_backend.dtypes import _CodegenDType
 from codegen_backend.emitters.argreduction import ArgReductionEmitter
 from codegen_backend.emitters.reduction import ReductionEmitter
-from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.emitters.softmax import SoftmaxEmitter
 from codegen_backend.errors import CodegenBackendError
-from codegen_backend.graph import _OpNode
+from codegen_backend.graph import _GenericGraph, _OpNode
 from codegen_backend.indexing import _contiguous_strides
 from codegen_backend.kinds import (
-    ArgReductionHandler,
     HandlerContextProvider,
     OpKindHandler,
     OpKindHandlerFactory,
     OpNodeBuildResult,
-    ReductionHandler,
     ReductionContext,
-    SoftmaxHandler,
 )
 from codegen_backend.specs import OpKind, _OpSpec
+
+if TYPE_CHECKING:
+    from codegen_backend.emitters.registry import KindHandlerRegistration
+
+
+def _infer_reduction_output_shape(
+    input_shape: Sequence[int],
+    reduction_dims: Tuple[int, ...],
+    keepdim: bool,
+    *,
+    reduce_all: bool,
+) -> Tuple[int, ...]:
+    if reduce_all:
+        return ()
+    if not reduction_dims:
+        return tuple(input_shape)
+    if keepdim:
+        output_shape = list(input_shape)
+        for dim in reduction_dims:
+            output_shape[dim] = 1
+        return tuple(output_shape)
+    return tuple(
+        size for dim, size in enumerate(input_shape) if dim not in reduction_dims
+    )
+
+
+class ReductionHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        req = self._make_standard_request(node_index, op_node, graph)
+        req.reduction_dims = op_node.reduction_dims or ()
+        req.keepdim = op_node.keepdim
+        if op_node.spec.name in {"std", "var"}:
+            req.params["unbiased"] = bool(op_node.p("unbiased", True))
+        if op_node.spec.name == "norm":
+            req.params["p_value"] = float(op_node.p("norm_p", 2.0))
+        return self._emit_request(req)
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        return _infer_reduction_output_shape(
+            input_shapes[0],
+            op_node.reduction_dims or (),
+            op_node.keepdim,
+            reduce_all=bool(op_node.p("reduce_all", False)),
+        )
+
+
+class ArgReductionHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        req = self._make_standard_request(node_index, op_node, graph)
+        req.reduction_dims = op_node.reduction_dims or ()
+        req.keepdim = op_node.keepdim
+        req.params["reduce_all"] = bool(op_node.p("reduce_all", False))
+        return self._emit_request(req)
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        return _infer_reduction_output_shape(
+            input_shapes[0],
+            op_node.reduction_dims or (),
+            op_node.keepdim,
+            reduce_all=bool(op_node.p("reduce_all", False)),
+        )
+
+
+class SoftmaxHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            params={"dim": op_node.p("dim")},
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        return input_shapes[0]
 
 
 class _BackendReductionHandler(ReductionHandler):
@@ -249,7 +337,9 @@ class ReductionsKindHandlerFactory:
         return build_handlers(context_provider.reductions)
 
 
-def build_kind_handler_registrations() -> Dict[OpKind, KindHandlerRegistration]:
+def build_kind_handler_registrations() -> Dict[OpKind, "KindHandlerRegistration"]:
+    from codegen_backend.emitters.registry import KindHandlerRegistration
+
     return {
         OpKind.REDUCTION: KindHandlerRegistration(
             _BackendReductionHandler, ReductionEmitter

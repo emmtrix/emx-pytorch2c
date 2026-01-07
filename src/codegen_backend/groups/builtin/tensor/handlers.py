@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from typing import Dict, List
+from fractions import Fraction
+import math
+from typing import Dict, List, Sequence, TYPE_CHECKING, Tuple
 
 import numbers
 import torch
 import torch.fx
 
+from codegen_backend import shape_utils
 from codegen_backend.dtypes import _CodegenDType
 from codegen_backend.emitters.addbmm import AddbmmEmitter
 from codegen_backend.emitters.addmm import AddmmEmitter
@@ -25,38 +28,17 @@ from codegen_backend.emitters.linear import LinearEmitter
 from codegen_backend.emitters.matmul import MatmulEmitter
 from codegen_backend.emitters.pad import PadEmitter
 from codegen_backend.emitters.pdist import PdistEmitter
-from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.emitters.resize import ResizeEmitter
 from codegen_backend.emitters.view import ViewEmitter
 from codegen_backend.errors import CodegenBackendError
-from codegen_backend.graph import _OpNode
+from codegen_backend.graph import _GenericGraph, _OpNode
 from codegen_backend.indexing import _contiguous_strides
 from codegen_backend.kinds import (
-    AddbmmHandler,
-    AddmmHandler,
-    AddmvHandler,
-    AddrHandler,
-    ArangeHandler,
-    BatchNormHandler,
-    CdistHandler,
-    Col2imHandler,
-    ConcatHandler,
-    CumsumHandler,
-    DiagonalHandler,
-    EmptyStridedHandler,
-    FlipHandler,
-    GatherHandler,
     HandlerContextProvider,
-    LinearHandler,
-    MatmulHandler,
     OpKindHandler,
     OpKindHandlerFactory,
     OpNodeBuildResult,
-    PadHandler,
-    PdistHandler,
-    ResizeHandler,
     TensorContext,
-    ViewHandler,
 )
 from codegen_backend.specs import OpKind, _OpSpec
 from codegen_backend.groups.builtin.tensor.analysis import (
@@ -78,6 +60,686 @@ from codegen_backend.groups.builtin.tensor.analysis import (
     parse_resize_size,
 )
 
+if TYPE_CHECKING:
+    from codegen_backend.emitters.registry import KindHandlerRegistration
+
+
+def _compute_arange_size(
+    start: float | int | bool,
+    end: float | int | bool,
+    step: float | int | bool,
+) -> int:
+    if step == 0:
+        raise CodegenBackendError("codegen arange expects step to be non-zero")
+    if all(
+        isinstance(value, numbers.Integral) for value in (start, end, step)
+    ):
+        start_value = int(start)
+        end_value = int(end)
+        step_value = int(step)
+        if step_value == 0:
+            raise CodegenBackendError("codegen arange expects step to be non-zero")
+        if step_value > 0 and end_value <= start_value:
+            return 0
+        if step_value < 0 and end_value >= start_value:
+            return 0
+        delta = end_value - start_value
+        size = int(math.ceil(Fraction(delta, step_value)))
+        return max(size, 0)
+    start_value = float(start)
+    end_value = float(end)
+    step_value = float(step)
+    delta = (end_value - start_value) / step_value
+    size = int(math.ceil(delta))
+    return max(size, 0)
+
+
+def _infer_diagonal_output_shape(
+    input_shape: Sequence[int], offset: int, dim1: int, dim2: int
+) -> Tuple[int, ...]:
+    size1 = input_shape[dim1]
+    size2 = input_shape[dim2]
+    if offset >= 0:
+        diag_len = min(size1, size2 - offset)
+    else:
+        diag_len = min(size1 + offset, size2)
+    diag_len = max(0, diag_len)
+    output_dims = [
+        size
+        for index, size in enumerate(input_shape)
+        if index not in (dim1, dim2)
+    ]
+    output_dims.append(diag_len)
+    return tuple(output_dims)
+
+
+class ArangeHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(
+            node_index, op_node, graph, inputs=()
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        output_size = _compute_arange_size(
+            op_node.p("start"), op_node.p("end"), op_node.p("step")
+        )
+        return (output_size,)
+
+
+class FlipHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(node_index, op_node, graph)
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        return input_shapes[0]
+
+
+class PadHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(node_index, op_node, graph)
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        input_shape = input_shapes[0]
+        pad_before = op_node.p("pad_before", ())
+        pad_after = op_node.p("pad_after", ())
+        if not pad_before or not pad_after:
+            raise CodegenBackendError(
+                "codegen constant_pad_nd expects constant padding arguments"
+            )
+        output_shape = []
+        for size, before, after in zip(input_shape, pad_before, pad_after):
+            new_size = size + before + after
+            if new_size < 0:
+                raise CodegenBackendError(
+                    "codegen constant_pad_nd expects non-negative output sizes"
+                )
+            output_shape.append(new_size)
+        return tuple(output_shape)
+
+
+class ViewHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(node_index, op_node, graph)
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        if op_node.spec.name == "as_strided":
+            size = op_node.p("size", None)
+            if size is None:
+                raise CodegenBackendError(
+                    "codegen as_strided expects size and stride"
+                )
+            return tuple(size)
+        if op_node.spec.name == "squeeze":
+            input_shape = input_shapes[0]
+            squeeze_dims = op_node.p("squeeze_dims", ())
+            remove_dims = {
+                dim for dim in squeeze_dims if input_shape[dim] == 1
+            }
+            return tuple(
+                size
+                for dim, size in enumerate(input_shape)
+                if dim not in remove_dims
+            )
+        if op_node.spec.name == "reshape":
+            size = op_node.p("size", None)
+            if size is None:
+                raise CodegenBackendError(
+                    "codegen reshape expects shape to be resolved"
+                )
+            return tuple(size)
+        raise CodegenBackendError(f"Unsupported view op: {op_node.spec.name}")
+
+
+class ResizeHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(node_index, op_node, graph)
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        size = op_node.p("size", None)
+        if size is None:
+            raise CodegenBackendError("codegen resize_ expects a size argument")
+        return tuple(size)
+
+
+class EmptyStridedHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(
+            node_index, op_node, graph, inputs=()
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        size = op_node.p("size", None)
+        if size is None:
+            raise CodegenBackendError("codegen empty_strided expects a size argument")
+        return tuple(size)
+
+
+class DiagonalHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(node_index, op_node, graph)
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        return _infer_diagonal_output_shape(
+            input_shapes[0],
+            int(op_node.p("offset", 0)),
+            int(op_node.p("dim1", 0)),
+            int(op_node.p("dim2", 1)),
+        )
+
+
+class CumsumHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            params={
+                "dim": op_node.p("dim"),
+                "output_dtype": graph.dtypes[op_node.node],
+            },
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        return input_shapes[0]
+
+
+class GatherHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            params={"dim": int(op_node.p("dim"))},
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        return input_shapes[1]
+
+
+class ConcatHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            params={"dim": op_node.p("dim", 0)},
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        if not input_shapes:
+            raise CodegenBackendError(
+                "codegen cat expects a non-empty tensor list input"
+            )
+        concat_dim = int(op_node.p("dim", 0))
+        output_shape = list(input_shapes[0])
+        output_shape[concat_dim] = sum(
+            shape[concat_dim] for shape in input_shapes
+        )
+        return tuple(output_shape)
+
+
+class Col2imHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            params={
+                "output_size": op_node.p("output_size", (1, 1)),
+                "kernel_size": op_node.p("kernel_size", (1, 1)),
+                "dilation": op_node.p("dilation", (1, 1)),
+                "padding": op_node.p("padding", (0, 0)),
+                "stride": op_node.p("stride", (1, 1)),
+                "out_blocks_h": op_node.p("out_blocks_h", 1),
+                "out_blocks_w": op_node.p("out_blocks_w", 1),
+            },
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        input_shape = input_shapes[0]
+        output_pair = op_node.p("output_size", (1, 1))
+        kernel_pair = op_node.p("kernel_size", (1, 1))
+        dilation_pair = op_node.p("dilation", (1, 1))
+        padding_pair = op_node.p("padding", (0, 0))
+        stride_pair = op_node.p("stride", (1, 1))
+        k_h, k_w = kernel_pair
+        channels_divisor = k_h * k_w
+        if len(input_shape) == 3:
+            batch, col_channels, col_length = input_shape
+            has_batch = True
+        else:
+            col_channels, col_length = input_shape
+            batch = 1
+            has_batch = False
+        if channels_divisor <= 0 or col_channels % channels_divisor != 0:
+            raise CodegenBackendError(
+                "codegen col2im expects input channels divisible by kernel_size"
+            )
+        out_h, out_w = output_pair
+        dil_h, dil_w = dilation_pair
+        pad_h, pad_w = padding_pair
+        stride_h, stride_w = stride_pair
+        effective_kh = dil_h * (k_h - 1) + 1
+        effective_kw = dil_w * (k_w - 1) + 1
+        numerator_h = out_h + 2 * pad_h - effective_kh
+        numerator_w = out_w + 2 * pad_w - effective_kw
+        if (
+            numerator_h < 0
+            or numerator_w < 0
+            or numerator_h % stride_h != 0
+            or numerator_w % stride_w != 0
+        ):
+            raise CodegenBackendError(
+                "codegen col2im expects output_size to be compatible with kernel_size, dilation, padding, and stride"
+            )
+        out_blocks_h = numerator_h // stride_h + 1
+        out_blocks_w = numerator_w // stride_w + 1
+        expected_length = out_blocks_h * out_blocks_w
+        if col_length != expected_length:
+            raise CodegenBackendError(
+                "codegen col2im expects input length to match output_size and stride"
+            )
+        op_node.params["out_blocks_h"] = out_blocks_h
+        op_node.params["out_blocks_w"] = out_blocks_w
+        channels = col_channels // channels_divisor
+        if has_batch:
+            return (batch, channels, out_h, out_w)
+        return (channels, out_h, out_w)
+
+
+class BatchNormHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            params={
+                "eps": float(op_node.p("eps", 1e-5)),
+                "has_weight": bool(op_node.p("has_weight", False)),
+                "has_bias": bool(op_node.p("has_bias", False)),
+            },
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        return input_shapes[0]
+
+
+class PdistHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(node_index, op_node, graph)
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        if len(input_shapes[0]) != 2:
+            raise CodegenBackendError(
+                "codegen pdist expects a 2D input tensor"
+            )
+        n = input_shapes[0][0]
+        return (n * (n - 1) // 2,)
+
+
+class CdistHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(node_index, op_node, graph)
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        if len(input_shapes) < 2:
+            raise CodegenBackendError(
+                "codegen cdist expects two input tensors"
+            )
+        x1_shape, x2_shape = input_shapes[:2]
+        if len(x1_shape) != 2 or len(x2_shape) != 2:
+            raise CodegenBackendError(
+                "codegen cdist expects 2D input tensors"
+            )
+        if x1_shape[1] != x2_shape[1]:
+            raise CodegenBackendError(
+                "codegen cdist expects matching feature dimensions"
+            )
+        return (x1_shape[0], x2_shape[0])
+
+
+class AddmmHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        input_node, mat1_node, mat2_node = op_node.inputs
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            inputs=(input_node, mat1_node, mat2_node),
+            params={
+                "alpha": float(op_node.p("alpha", 1.0)),
+                "beta": float(op_node.p("beta", 1.0)),
+            },
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        input_shape, mat1_shape, mat2_shape = input_shapes
+        if len(input_shape) > 2 or len(mat1_shape) != 2 or len(mat2_shape) != 2:
+            raise CodegenBackendError("codegen addmm expects 2D inputs")
+        if mat1_shape[1] != mat2_shape[0]:
+            raise CodegenBackendError(
+                "codegen addmm requires inner dimensions to match"
+            )
+        expected_shape = (mat1_shape[0], mat2_shape[1])
+        if (
+            shape_utils.broadcast_output_shape(
+                op_node.spec.name, input_shape, expected_shape
+            )
+            != expected_shape
+        ):
+            raise CodegenBackendError(
+                "codegen addmm expects input shape to be broadcastable to matmul output"
+            )
+        return expected_shape
+
+
+class LinearHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        inputs = op_node.inputs
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            inputs=inputs,
+            params={"has_bias": bool(op_node.p("has_bias", False))},
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        input_shape, weight_shape = input_shapes[:2]
+        if len(input_shape) != 2 or len(weight_shape) != 2:
+            raise CodegenBackendError("codegen linear expects 2D input and weight")
+        if input_shape[1] != weight_shape[1]:
+            raise CodegenBackendError(
+                "codegen linear requires input and weight inner dims to match"
+            )
+        output_shape = (input_shape[0], weight_shape[0])
+        if op_node.p("has_bias", False):
+            bias_shape = input_shapes[2]
+            if (
+                shape_utils.broadcast_output_shape(
+                    op_node.spec.name, bias_shape, output_shape
+                )
+                != output_shape
+            ):
+                raise CodegenBackendError(
+                    "codegen linear expects bias to be broadcastable to output"
+                )
+        return output_shape
+
+
+class AddbmmHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        input_node, batch1_node, batch2_node = op_node.inputs
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            inputs=(input_node, batch1_node, batch2_node),
+            params={
+                "alpha": float(op_node.p("alpha", 1.0)),
+                "beta": float(op_node.p("beta", 1.0)),
+            },
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        input_shape, batch1_shape, batch2_shape = input_shapes
+        if (
+            len(input_shape) > 2
+            or len(batch1_shape) != 3
+            or len(batch2_shape) != 3
+        ):
+            raise CodegenBackendError(
+                "codegen addbmm expects 0-2D input and 3D batches"
+            )
+        if batch1_shape[0] != batch2_shape[0]:
+            raise CodegenBackendError(
+                "codegen addbmm requires batch dimensions to match"
+            )
+        if batch1_shape[2] != batch2_shape[1]:
+            raise CodegenBackendError(
+                "codegen addbmm requires inner dimensions to match"
+            )
+        expected_shape = (batch1_shape[1], batch2_shape[2])
+        if (
+            shape_utils.broadcast_output_shape(
+                op_node.spec.name, input_shape, expected_shape
+            )
+            != expected_shape
+        ):
+            raise CodegenBackendError(
+                "codegen addbmm expects input shape to be broadcastable to bmm output"
+            )
+        return expected_shape
+
+
+class AddmvHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        input_node, mat_node, vec_node = op_node.inputs
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            inputs=(input_node, mat_node, vec_node),
+            params={
+                "alpha": float(op_node.p("alpha", 1.0)),
+                "beta": float(op_node.p("beta", 1.0)),
+            },
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        input_shape, mat_shape, vec_shape = input_shapes
+        if len(input_shape) not in (0, 1) or len(mat_shape) != 2 or len(vec_shape) != 1:
+            raise CodegenBackendError(
+                "codegen addmv expects a scalar or 1D input and 2D matrix/1D vector"
+            )
+        if mat_shape[1] != vec_shape[0]:
+            raise CodegenBackendError(
+                "codegen addmv requires inner dimensions to match"
+            )
+        expected_shape = (mat_shape[0],)
+        if (
+            shape_utils.broadcast_output_shape(
+                op_node.spec.name, input_shape, expected_shape
+            )
+            != expected_shape
+        ):
+            raise CodegenBackendError(
+                "codegen addmv expects input shape to be broadcastable to mat-vec output"
+            )
+        return expected_shape
+
+
+class AddrHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        input_node, vec1_node, vec2_node = op_node.inputs
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            inputs=(input_node, vec1_node, vec2_node),
+            params={
+                "alpha": float(op_node.p("alpha", 1.0)),
+                "beta": float(op_node.p("beta", 1.0)),
+            },
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        input_shape, vec1_shape, vec2_shape = input_shapes
+        if len(vec1_shape) != 1 or len(vec2_shape) != 1:
+            raise CodegenBackendError(
+                "codegen addr expects 1D vectors"
+            )
+        if len(input_shape) > 2:
+            raise CodegenBackendError(
+                "codegen addr expects input with rank <= 2"
+            )
+        expected_shape = (vec1_shape[0], vec2_shape[0])
+        if (
+            shape_utils.broadcast_output_shape(
+                op_node.spec.name, input_shape, expected_shape
+            )
+            != expected_shape
+        ):
+            raise CodegenBackendError(
+                "codegen addr expects input shape to be broadcastable to outer product output"
+            )
+        return expected_shape
+
+
+class MatmulHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(node_index, op_node, graph)
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        op_spec = op_node.spec
+        a_shape, b_shape = input_shapes
+        if op_spec.name == "matmul":
+            if len(a_shape) == 1 and len(b_shape) == 1:
+                if a_shape[0] != b_shape[0]:
+                    raise CodegenBackendError(
+                        "codegen matmul requires inner dimensions to match"
+                    )
+                return ()
+            if len(a_shape) != 2 or len(b_shape) != 2:
+                raise CodegenBackendError(
+                    "codegen matmul requires 1D or 2D inputs"
+                )
+            if a_shape[1] != b_shape[0]:
+                raise CodegenBackendError(
+                    "codegen matmul requires inner dimensions to match"
+                )
+            return (a_shape[0], b_shape[1])
+        if len(a_shape) != 3 or len(b_shape) != 3:
+            raise CodegenBackendError("codegen bmm requires 3D inputs")
+        if a_shape[0] != b_shape[0]:
+            raise CodegenBackendError(
+                "codegen bmm requires batch dimensions to match"
+            )
+        if a_shape[2] != b_shape[1]:
+            raise CodegenBackendError(
+                "codegen bmm requires inner dimensions to match"
+            )
+        return (a_shape[0], a_shape[1], b_shape[2])
 
 class _BackendMatmulHandler(MatmulHandler):
     def build_op_node(
@@ -694,7 +1356,9 @@ class TensorKindHandlerFactory:
         return build_handlers(context_provider.tensor)
 
 
-def build_kind_handler_registrations() -> Dict[OpKind, KindHandlerRegistration]:
+def build_kind_handler_registrations() -> Dict[OpKind, "KindHandlerRegistration"]:
+    from codegen_backend.emitters.registry import KindHandlerRegistration
+
     return {
         OpKind.MATMUL: KindHandlerRegistration(
             _BackendMatmulHandler, MatmulEmitter

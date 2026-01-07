@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, List, Sequence, TYPE_CHECKING, Tuple
 
 import torch
 import torch.fx
@@ -8,13 +8,10 @@ import torch.fx
 from codegen_backend.dtypes import _CodegenDType, _EMBEDDING_INDEX_DTYPES
 from codegen_backend.emitters.embedding import EmbeddingEmitter
 from codegen_backend.emitters.embedding_bag import EmbeddingBagEmitter
-from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.errors import CodegenBackendError
-from codegen_backend.graph import _OpNode
+from codegen_backend.graph import _GenericGraph, _OpNode
 from codegen_backend.indexing import _contiguous_strides
 from codegen_backend.kinds import (
-    EmbeddingBagHandler,
-    EmbeddingHandler,
     EmbeddingContext,
     HandlerContextProvider,
     OpKindHandler,
@@ -26,6 +23,73 @@ from codegen_backend.groups.builtin.embedding.analysis import (
     parse_embedding_args,
     parse_embedding_bag_args,
 )
+
+if TYPE_CHECKING:
+    from codegen_backend.emitters.registry import KindHandlerRegistration
+
+
+class EmbeddingHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        weight_node, indices_node = op_node.inputs
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            inputs=(weight_node, indices_node),
+            params={"padding_idx": int(op_node.p("padding_idx", -1))},
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        weight_shape, indices_shape = input_shapes
+        if len(weight_shape) != 2:
+            raise CodegenBackendError(
+                "codegen embedding expects 2D weight tensor"
+            )
+        return tuple(indices_shape) + (weight_shape[1],)
+
+
+class EmbeddingBagHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        weight_node, indices_node, offsets_node = op_node.inputs
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            inputs=(weight_node, indices_node, offsets_node),
+            params={
+                "mode": int(op_node.p("mode", 0)),
+                "padding_idx": int(op_node.p("padding_idx", -1)),
+                "include_last_offset": bool(
+                    op_node.p("include_last_offset", False)
+                ),
+            },
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        weight_shape, _indices_shape, offsets_shape = input_shapes
+        if len(weight_shape) != 2:
+            raise CodegenBackendError(
+                "codegen _embedding_bag expects 2D weight tensor"
+            )
+        if len(offsets_shape) != 1:
+            raise CodegenBackendError(
+                "codegen _embedding_bag expects 1D offsets tensor"
+            )
+        include_last_offset = bool(op_node.p("include_last_offset", False))
+        bag_count = offsets_shape[0] - 1 if include_last_offset else offsets_shape[0]
+        return (bag_count, weight_shape[1])
 
 
 class _BackendEmbeddingHandler(EmbeddingHandler):
@@ -210,7 +274,9 @@ class EmbeddingKindHandlerFactory:
         return build_handlers(context_provider.embedding)
 
 
-def build_kind_handler_registrations() -> Dict[OpKind, KindHandlerRegistration]:
+def build_kind_handler_registrations() -> Dict[OpKind, "KindHandlerRegistration"]:
+    from codegen_backend.emitters.registry import KindHandlerRegistration
+
     return {
         OpKind.EMBEDDING: KindHandlerRegistration(
             _BackendEmbeddingHandler, EmbeddingEmitter
