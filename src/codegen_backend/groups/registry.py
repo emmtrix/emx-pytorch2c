@@ -1,33 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Dict, Iterable, Mapping, Protocol
+from dataclasses import dataclass
+from typing import Dict, List
 
+from codegen_backend.groups.base import OperatorGroup
 from codegen_backend.kinds import HandlerContext, OpKindHandler
 from codegen_backend.registry import _TargetInfo
 from codegen_backend.specs import OpKind, _OpSpec
 
 
-class Group(Protocol):
-    name: str
-
-    def kind_handlers(
-        self, context: HandlerContext
-    ) -> Dict[OpKind, OpKindHandler]: ...
-
-    @property
-    def supported_ops(self) -> Mapping[str, _OpSpec]: ...
-
-    @property
-    def target_registry(self) -> Mapping[object, _TargetInfo]: ...
-
-
-@dataclass
+@dataclass(frozen=True)
 class GroupRegistry:
-    groups: list[Group] = field(default_factory=list)
+    groups: List[OperatorGroup]
 
-    def register(self, group: Group) -> None:
-        self.groups.append(group)
+    def register(self, group: OperatorGroup) -> "GroupRegistry":
+        return GroupRegistry(groups=[*self.groups, group])
 
     def build_kind_handlers(
         self, context: HandlerContext
@@ -37,21 +24,17 @@ class GroupRegistry:
             merged.update(group.kind_handlers(context))
         return merged
 
-    def _merge_overlays(
-        self, overlays: Iterable[Mapping[object, object]]
-    ) -> Dict[object, object]:
-        merged: Dict[object, object] = {}
-        for overlay in overlays:
-            merged.update(overlay)
+    def merged_supported_ops(self) -> Dict[object, _OpSpec]:
+        merged: Dict[object, _OpSpec] = {}
+        for group in self.groups:
+            merged.update(group.supported_ops())
         return merged
 
-    def build_supported_ops(self) -> Dict[str, _OpSpec]:
-        overlays = [group.supported_ops for group in self.groups]
-        return {key: value for key, value in self._merge_overlays(overlays).items()}
-
-    def build_target_registry(self) -> Dict[object, _TargetInfo]:
-        overlays = [group.target_registry for group in self.groups]
-        return {key: value for key, value in self._merge_overlays(overlays).items()}
+    def merged_target_registry(self) -> Dict[object, _TargetInfo]:
+        merged: Dict[object, _TargetInfo] = {}
+        for group in self.groups:
+            merged.update(group.target_registry())
+        return merged
 
 
 _GROUP_REGISTRY: GroupRegistry | None = None
@@ -60,12 +43,10 @@ _GROUP_REGISTRY: GroupRegistry | None = None
 def get_group_registry() -> GroupRegistry:
     global _GROUP_REGISTRY
     if _GROUP_REGISTRY is None:
-        from codegen_backend.groups.legacy import LegacyGroup
+        from codegen_backend.groups.builtin.legacy_backend import LegacyBackendGroup
 
-        registry = GroupRegistry()
-        registry.register(LegacyGroup())
-        _GROUP_REGISTRY = registry
+        _GROUP_REGISTRY = GroupRegistry(groups=[LegacyBackendGroup()])
     return _GROUP_REGISTRY
 
 
-__all__ = ["Group", "GroupRegistry", "get_group_registry"]
+__all__ = ["GroupRegistry", "get_group_registry"]
