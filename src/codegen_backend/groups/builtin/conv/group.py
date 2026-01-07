@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Mapping
+from typing import List, Mapping, Sequence
 
+from codegen_backend.groups.analysis import GroupAnalyzer
+from codegen_backend.groups.builtin.conv.analyzer import ConvAnalyzer
 from codegen_backend.groups.builtin.conv import handlers
 from codegen_backend.kinds import OpKindHandlerFactory
 from codegen_backend.ops_registry_conv import build_supported_ops
@@ -22,6 +24,11 @@ class ConvGroup:
 
     def target_registry(self) -> Mapping[object, _TargetInfo]:
         return build_target_registry(self.supported_ops())
+
+    def analyzers(self) -> Sequence[GroupAnalyzer]:
+        supported_ops = self.supported_ops()
+        target_registry = build_target_registry(supported_ops)
+        return [ConvAnalyzer(supported_ops, target_registry)]
 
 
 __all__ = ["ConvGroup"]
