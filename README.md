@@ -15,11 +15,34 @@ This project generates simple, correct, generic, and easily analyzable C code fr
 ## Features
 
 * Supported operators (codegen backend): see [`tests/list_aten_core_ops_ref.md`](tests/list_aten_core_ops_ref.md).
+* `torch.compile` backend for generating generic C code from PyTorch workloads.
+* Export utility for emitting standalone C sources from Python functions.
+* ONNX-to-C conversion via the `cli.onnx2c` command-line interface.
+
+## Requirements
+
+* Python >= 3.8
+* PyTorch
+* Jinja2
 
 ## Setup
 
 ```bash
 pip install -e .
+```
+
+## Quickstart
+
+```python
+import torch
+from codegen_backend.backend import codegen_generic_backend
+
+
+def f(a, b):
+    return a + b
+
+compiled = torch.compile(f, backend=codegen_generic_backend)
+print(compiled(torch.randn(2, 2), torch.randn(2, 2)))
 ```
 
 ## Usage
@@ -60,6 +83,12 @@ print(result.c_source)
 
 ```bash
 python -m cli.onnx2c --help
+```
+
+Example:
+
+```bash
+python -m cli.onnx2c model.onnx -o model.c --self-test-runs 0
 ```
 
 ## Tests
