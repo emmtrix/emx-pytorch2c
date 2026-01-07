@@ -61,6 +61,7 @@ class FlipEmitter(KindEmitterBase):
                 [input_shape],
                 [input_dtype],
                 req.dtype,
+                signature_kind="unary",
             )
         ]
         loop_lines, indent = emit_loops(output_shape)

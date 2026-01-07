@@ -13,7 +13,7 @@ from codegen_backend.indexing import (
     format_output_access,
 )
 from codegen_backend.kinds import KernelEmitRequest
-from codegen_backend.specs import OpKind, _OpSpec
+from codegen_backend.specs import _OpSpec
 
 
 def _format_array_suffix(shape: Sequence[int]) -> str:
@@ -36,18 +36,11 @@ def emit_signature(
     input_dtypes: Sequence[torch.dtype],
     dtype: _CodegenDType,
     params: Dict[str, object] | None = None,
+    *,
+    signature_kind: str = "unary",
 ) -> str:
     out_suffix = _format_array_suffix(output_shape)
-    if op_spec.kind == OpKind.BINARY:
-        if len(input_shapes) == 1:
-            a_shape = input_shapes[0]
-            a_suffix = _format_array_suffix(a_shape)
-            a_c_type = _input_c_type(input_dtypes[0], dtype)
-            return (
-                f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
-                f"const {a_c_type} a{a_suffix}, "
-                f"{dtype.c_type} out{out_suffix}) {{"
-            )
+    if signature_kind == "binary":
         a_shape, b_shape = input_shapes
         a_suffix = _format_array_suffix(a_shape)
         b_suffix = _format_array_suffix(b_shape)
@@ -59,7 +52,16 @@ def emit_signature(
             f"const {b_c_type} b{b_suffix}, "
             f"{dtype.c_type} out{out_suffix}) {{"
         )
-    if op_spec.kind == OpKind.WHERE:
+    if signature_kind == "binary_scalar":
+        a_shape = input_shapes[0]
+        a_suffix = _format_array_suffix(a_shape)
+        a_c_type = _input_c_type(input_dtypes[0], dtype)
+        return (
+            f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+            f"const {a_c_type} a{a_suffix}, "
+            f"{dtype.c_type} out{out_suffix}) {{"
+        )
+    if signature_kind == "where":
         params = params or {}
         input_index = 0
         cond_shape = input_shapes[input_index]

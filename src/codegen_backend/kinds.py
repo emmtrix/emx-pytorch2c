@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 import math
 import numbers
-from typing import TYPE_CHECKING, Dict, List, Protocol, Sequence, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Protocol, Sequence, Tuple
 
 from c_ref_backend.cffi_bindings import RefBackendError
 from codegen_backend import shape_utils
@@ -13,6 +13,8 @@ from codegen_backend.specs import OpKind
 
 if TYPE_CHECKING:
     import torch
+    from codegen_backend.dtypes import _CodegenDType
+    from codegen_backend.emitters.base import KindEmitter
     from codegen_backend.graph import _GenericGraph, _OpNode
     from codegen_backend.specs import _OpSpec
 
@@ -36,12 +38,301 @@ class KernelEmitRequest:
 class HandlerContext(Protocol):
     def kernel_inputs(self, op_node: "_OpNode") -> List["torch.fx.Node"]: ...
 
-    def emit_kernel(self, kind: str, req: KernelEmitRequest) -> List[str]: ...
+    def handle_arange_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType | None",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+        scalar_values: Dict["torch.fx.Node", object],
+    ) -> Tuple["_OpNode", "_CodegenDType"]: ...
+
+    def handle_concat_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_pool1d_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_pool2d_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_pool3d_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_pool2d_backward_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_col2im_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_batch_norm_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+        scalar_values: Dict["torch.fx.Node", object],
+    ) -> "_OpNode": ...
+
+    def handle_pdist_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_cdist_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_conv1d_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_conv2d_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_diagonal_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_addmm_like_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+        inplace_input: int | None,
+    ) -> "_OpNode": ...
+
+    def handle_softmax_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_flip_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_cumsum_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_pad_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_gather_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_embedding_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_embedding_bag_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_view_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_empty_strided_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
+
+    def handle_fill_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+        inplace_input: int | None,
+    ) -> "_OpNode": ...
+
+    def handle_resize_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+        inplace_input: int | None,
+    ) -> "_OpNode": ...
+
+    def handle_to_copy_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+    ) -> "_OpNode": ...
 
 
-class KindHandler(ABC):
-    def __init__(self, context: HandlerContext) -> None:
+@dataclass
+class OpNodeBuildResult:
+    op_node: "_OpNode"
+    dtype_info: "_CodegenDType | None" = None
+
+
+class OpKindHandler(ABC):
+    def __init__(
+        self,
+        context: HandlerContext,
+        emitter: "KindEmitter | None" = None,
+        builder: Callable[
+            [
+                "torch.fx.Node",
+                "_OpSpec",
+                "_CodegenDType | None",
+                Dict["torch.fx.Node", Tuple[int, ...]],
+                Dict["torch.fx.Node", Tuple[int, ...]],
+                Dict["torch.fx.Node", "torch.dtype"],
+                Dict["torch.fx.Node", object],
+                int | None,
+            ],
+            OpNodeBuildResult | None,
+        ]
+        | None = None,
+    ) -> None:
         self._ctx = context
+        self._emitter = emitter
+        self._builder = builder
 
     def _make_standard_request(
         self,
@@ -62,7 +353,6 @@ class KindHandler(ABC):
 
     def _emit_standard(
         self,
-        kind: str | OpKind,
         node_index: int,
         op_node: _OpNode,
         graph: _GenericGraph,
@@ -70,24 +360,74 @@ class KindHandler(ABC):
         inputs: Sequence["torch.fx.Node"] | None = None,
         params: Dict[str, object] | None = None,
     ) -> List[str]:
+        if self._emitter is None:
+            raise RefBackendError("codegen handler requires an emitter")
         req = self._make_standard_request(
             node_index, op_node, graph, inputs=inputs, params=params
         )
-        return self._ctx.emit_kernel(kind, req)
+        return self._emitter.emit(req)
+
+    def _emit_request(self, req: KernelEmitRequest) -> List[str]:
+        if self._emitter is None:
+            raise RefBackendError("codegen handler requires an emitter")
+        return self._emitter.emit(req)
+
+    def build_op_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType | None",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+        scalar_values: Dict["torch.fx.Node", object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if self._builder is None:
+            return None
+        return self._builder(
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            scalar_values,
+            inplace_input,
+        )
+
+    def validate(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+        input_dtypes: Sequence["torch.dtype"],
+        dtype_info: "_CodegenDType",
+    ) -> None:
+        return None
 
     @abstractmethod
-    def emit_kernel(
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         raise NotImplementedError
 
     @abstractmethod
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
     ) -> Tuple[int, ...]:
         raise NotImplementedError
+
+    def infer_output_shape(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        return self.infer_shapes(op_node, input_shapes)
+
+    def postprocess(self, op_node: _OpNode, graph: _GenericGraph) -> None:
+        return None
 
 
 def _make_request(
@@ -458,15 +798,15 @@ def _pool3d_output_shape_from_shapes(
     return batch, channels, out_d, out_h, out_w
 
 
-class ArangeHandler(KindHandler):
-    def emit_kernel(
+class ArangeHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         return self._emit_standard(
-            op_node.spec.kind, node_index, op_node, graph, inputs=()
+            node_index, op_node, graph, inputs=()
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -477,13 +817,51 @@ class ArangeHandler(KindHandler):
         return (output_size,)
 
 
-class ElementwiseHandler(KindHandler):
-    def emit_kernel(
+class ElementwiseHandler(OpKindHandler):
+    def __init__(
+        self,
+        context: HandlerContext,
+        emitter: "KindEmitter | None",
+        elementwise_kind: str,
+        builder: Callable[
+            [
+                "torch.fx.Node",
+                "_OpSpec",
+                "_CodegenDType | None",
+                Dict["torch.fx.Node", Tuple[int, ...]],
+                Dict["torch.fx.Node", Tuple[int, ...]],
+                Dict["torch.fx.Node", "torch.dtype"],
+                Dict["torch.fx.Node", object],
+                int | None,
+            ],
+            OpNodeBuildResult | None,
+        ]
+        | None = None,
+    ) -> None:
+        super().__init__(context, emitter, builder)
+        self._elementwise_kind = elementwise_kind
+
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
+        signature_kind = "unary"
+        if self._elementwise_kind == "binary":
+            signature_kind = (
+                "binary_scalar"
+                if "scalar" in op_node.params
+                else "binary"
+            )
+        elif self._elementwise_kind == "where":
+            signature_kind = "where"
+        params = {
+            "elementwise_kind": self._elementwise_kind,
+            "signature_kind": signature_kind,
+        }
+        return self._emit_standard(
+            node_index, op_node, graph, params=params
+        )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -515,13 +893,13 @@ class ElementwiseHandler(KindHandler):
         )
 
 
-class FlipHandler(KindHandler):
-    def emit_kernel(
+class FlipHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
+        return self._emit_standard(node_index, op_node, graph)
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -529,13 +907,13 @@ class FlipHandler(KindHandler):
         return input_shapes[0]
 
 
-class PadHandler(KindHandler):
-    def emit_kernel(
+class PadHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
+        return self._emit_standard(node_index, op_node, graph)
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -558,13 +936,13 @@ class PadHandler(KindHandler):
         return tuple(output_shape)
 
 
-class ViewHandler(KindHandler):
-    def emit_kernel(
+class ViewHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
+        return self._emit_standard(node_index, op_node, graph)
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -590,13 +968,13 @@ class ViewHandler(KindHandler):
         raise RefBackendError(f"Unsupported view op: {op_node.spec.name}")
 
 
-class ResizeHandler(KindHandler):
-    def emit_kernel(
+class ResizeHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
+        return self._emit_standard(node_index, op_node, graph)
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -607,15 +985,15 @@ class ResizeHandler(KindHandler):
         return tuple(size)
 
 
-class EmptyStridedHandler(KindHandler):
-    def emit_kernel(
+class EmptyStridedHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         return self._emit_standard(
-            op_node.spec.kind, node_index, op_node, graph, inputs=()
+            node_index, op_node, graph, inputs=()
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -626,13 +1004,13 @@ class EmptyStridedHandler(KindHandler):
         return tuple(size)
 
 
-class DiagonalHandler(KindHandler):
-    def emit_kernel(
+class DiagonalHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
+        return self._emit_standard(node_index, op_node, graph)
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -645,8 +1023,8 @@ class DiagonalHandler(KindHandler):
         )
 
 
-class ReductionHandler(KindHandler):
-    def emit_kernel(
+class ReductionHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         req = self._make_standard_request(node_index, op_node, graph)
@@ -656,9 +1034,9 @@ class ReductionHandler(KindHandler):
             req.params["unbiased"] = bool(op_node.p("unbiased", True))
         if op_node.spec.name == "norm":
             req.params["p_value"] = float(op_node.p("norm_p", 2.0))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_request(req)
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -671,17 +1049,17 @@ class ReductionHandler(KindHandler):
         )
 
 
-class ArgReductionHandler(KindHandler):
-    def emit_kernel(
+class ArgReductionHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         req = self._make_standard_request(node_index, op_node, graph)
         req.reduction_dims = op_node.reduction_dims or ()
         req.keepdim = op_node.keepdim
         req.params["reduce_all"] = bool(op_node.p("reduce_all", False))
-        return self._ctx.emit_kernel(op_node.spec.kind, req)
+        return self._emit_request(req)
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -694,19 +1072,18 @@ class ArgReductionHandler(KindHandler):
         )
 
 
-class SoftmaxHandler(KindHandler):
-    def emit_kernel(
+class SoftmaxHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
             params={"dim": op_node.p("dim")},
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -714,12 +1091,11 @@ class SoftmaxHandler(KindHandler):
         return input_shapes[0]
 
 
-class CumsumHandler(KindHandler):
-    def emit_kernel(
+class CumsumHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
@@ -729,7 +1105,7 @@ class CumsumHandler(KindHandler):
             },
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -737,13 +1113,12 @@ class CumsumHandler(KindHandler):
         return input_shapes[0]
 
 
-class EmbeddingHandler(KindHandler):
-    def emit_kernel(
+class EmbeddingHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         weight_node, indices_node = op_node.inputs
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
@@ -751,7 +1126,7 @@ class EmbeddingHandler(KindHandler):
             params={"padding_idx": int(op_node.p("padding_idx", -1))},
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -764,13 +1139,12 @@ class EmbeddingHandler(KindHandler):
         return tuple(indices_shape) + (weight_shape[1],)
 
 
-class EmbeddingBagHandler(KindHandler):
-    def emit_kernel(
+class EmbeddingBagHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         weight_node, indices_node, offsets_node = op_node.inputs
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
@@ -784,7 +1158,7 @@ class EmbeddingBagHandler(KindHandler):
             },
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -803,19 +1177,18 @@ class EmbeddingBagHandler(KindHandler):
         return (bag_count, weight_shape[1])
 
 
-class GatherHandler(KindHandler):
-    def emit_kernel(
+class GatherHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
             params={"dim": int(op_node.p("dim"))},
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -823,19 +1196,18 @@ class GatherHandler(KindHandler):
         return input_shapes[1]
 
 
-class ConcatHandler(KindHandler):
-    def emit_kernel(
+class ConcatHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
             params={"dim": op_node.p("dim", 0)},
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -852,12 +1224,11 @@ class ConcatHandler(KindHandler):
         return tuple(output_shape)
 
 
-class Pool2dHandler(KindHandler):
-    def emit_kernel(
+class Pool2dHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
@@ -874,7 +1245,7 @@ class Pool2dHandler(KindHandler):
             },
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -889,12 +1260,11 @@ class Pool2dHandler(KindHandler):
         )
 
 
-class Pool3dHandler(KindHandler):
-    def emit_kernel(
+class Pool3dHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
@@ -911,7 +1281,7 @@ class Pool3dHandler(KindHandler):
             },
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -925,13 +1295,12 @@ class Pool3dHandler(KindHandler):
         )
 
 
-class Pool2dBackwardHandler(KindHandler):
-    def emit_kernel(
+class Pool2dBackwardHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         grad_output_node, input_node = op_node.inputs
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
@@ -942,7 +1311,7 @@ class Pool2dBackwardHandler(KindHandler):
             },
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -951,12 +1320,11 @@ class Pool2dBackwardHandler(KindHandler):
         return input_shape
 
 
-class Pool1dHandler(KindHandler):
-    def emit_kernel(
+class Pool1dHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
@@ -973,7 +1341,7 @@ class Pool1dHandler(KindHandler):
             },
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -988,12 +1356,11 @@ class Pool1dHandler(KindHandler):
         )
 
 
-class Col2imHandler(KindHandler):
-    def emit_kernel(
+class Col2imHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
@@ -1008,7 +1375,7 @@ class Col2imHandler(KindHandler):
             },
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -1064,12 +1431,11 @@ class Col2imHandler(KindHandler):
         return (channels, out_h, out_w)
 
 
-class BatchNormHandler(KindHandler):
-    def emit_kernel(
+class BatchNormHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
@@ -1080,7 +1446,7 @@ class BatchNormHandler(KindHandler):
             },
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -1088,13 +1454,13 @@ class BatchNormHandler(KindHandler):
         return input_shapes[0]
 
 
-class PdistHandler(KindHandler):
-    def emit_kernel(
+class PdistHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
+        return self._emit_standard(node_index, op_node, graph)
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -1107,13 +1473,13 @@ class PdistHandler(KindHandler):
         return (n * (n - 1) // 2,)
 
 
-class CdistHandler(KindHandler):
-    def emit_kernel(
+class CdistHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
+        return self._emit_standard(node_index, op_node, graph)
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -1134,14 +1500,13 @@ class CdistHandler(KindHandler):
         return (x1_shape[0], x2_shape[0])
 
 
-class Conv1dHandler(KindHandler):
-    def emit_kernel(
+class Conv1dHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, weight_node, *_ = op_node.inputs
         # Only the input and weight tensors are part of the kernel signature.
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
@@ -1155,7 +1520,7 @@ class Conv1dHandler(KindHandler):
             },
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -1199,14 +1564,13 @@ class Conv1dHandler(KindHandler):
         )
 
 
-class Conv2dHandler(KindHandler):
-    def emit_kernel(
+class Conv2dHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, weight_node, *_ = op_node.inputs
         # Only the input and weight tensors are part of the kernel signature.
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
@@ -1221,7 +1585,7 @@ class Conv2dHandler(KindHandler):
             },
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -1274,13 +1638,12 @@ class Conv2dHandler(KindHandler):
         )
 
 
-class AddmmHandler(KindHandler):
-    def emit_kernel(
+class AddmmHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, mat1_node, mat2_node = op_node.inputs
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
@@ -1291,7 +1654,7 @@ class AddmmHandler(KindHandler):
             },
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -1316,13 +1679,12 @@ class AddmmHandler(KindHandler):
         return expected_shape
 
 
-class AddbmmHandler(KindHandler):
-    def emit_kernel(
+class AddbmmHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, batch1_node, batch2_node = op_node.inputs
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
@@ -1333,7 +1695,7 @@ class AddbmmHandler(KindHandler):
             },
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -1368,13 +1730,12 @@ class AddbmmHandler(KindHandler):
         return expected_shape
 
 
-class AddmvHandler(KindHandler):
-    def emit_kernel(
+class AddmvHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, mat_node, vec_node = op_node.inputs
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
@@ -1385,7 +1746,7 @@ class AddmvHandler(KindHandler):
             },
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -1412,13 +1773,12 @@ class AddmvHandler(KindHandler):
         return expected_shape
 
 
-class AddrHandler(KindHandler):
-    def emit_kernel(
+class AddrHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, vec1_node, vec2_node = op_node.inputs
         return self._emit_standard(
-            op_node.spec.kind,
             node_index,
             op_node,
             graph,
@@ -1429,7 +1789,7 @@ class AddrHandler(KindHandler):
             },
         )
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -1456,13 +1816,13 @@ class AddrHandler(KindHandler):
         return expected_shape
 
 
-class MatmulHandler(KindHandler):
-    def emit_kernel(
+class MatmulHandler(OpKindHandler):
+    def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        return self._emit_standard(op_node.spec.kind, node_index, op_node, graph)
+        return self._emit_standard(node_index, op_node, graph)
 
-    def infer_output_shape(
+    def infer_shapes(
         self,
         op_node: _OpNode,
         input_shapes: Sequence[Tuple[int, ...]],
@@ -1498,41 +1858,324 @@ class MatmulHandler(KindHandler):
         return (a_shape[0], a_shape[1], b_shape[2])
 
 
-def build_kind_handlers(context: HandlerContext) -> Dict[OpKind, KindHandler]:
-    elementwise = ElementwiseHandler(context)
+def build_kind_handlers(context: HandlerContext) -> Dict[OpKind, OpKindHandler]:
+    from codegen_backend.emitters.addbmm import AddbmmEmitter
+    from codegen_backend.emitters.addmm import AddmmEmitter
+    from codegen_backend.emitters.addmv import AddmvEmitter
+    from codegen_backend.emitters.addr import AddrEmitter
+    from codegen_backend.emitters.arange import ArangeEmitter
+    from codegen_backend.emitters.argreduction import ArgReductionEmitter
+    from codegen_backend.emitters.batch_norm import BatchNormEmitter
+    from codegen_backend.emitters.cdist import CdistEmitter
+    from codegen_backend.emitters.col2im import Col2imEmitter
+    from codegen_backend.emitters.concat import ConcatEmitter
+    from codegen_backend.emitters.conv1d import Conv1dEmitter
+    from codegen_backend.emitters.conv2d import Conv2dEmitter
+    from codegen_backend.emitters.cumsum import CumsumEmitter
+    from codegen_backend.emitters.diagonal import DiagonalEmitter
+    from codegen_backend.emitters.embedding import EmbeddingEmitter
+    from codegen_backend.emitters.embedding_bag import EmbeddingBagEmitter
+    from codegen_backend.emitters.empty_strided import EmptyStridedEmitter
+    from codegen_backend.emitters.elementwise import ElementwiseEmitter
+    from codegen_backend.emitters.flip import FlipEmitter
+    from codegen_backend.emitters.gather import GatherEmitter
+    from codegen_backend.emitters.matmul import MatmulEmitter
+    from codegen_backend.emitters.pad import PadEmitter
+    from codegen_backend.emitters.pdist import PdistEmitter
+    from codegen_backend.emitters.pool1d import Pool1dEmitter
+    from codegen_backend.emitters.pool2d import Pool2dEmitter
+    from codegen_backend.emitters.pool2d_backward import Pool2dBackwardEmitter
+    from codegen_backend.emitters.pool3d import Pool3dEmitter
+    from codegen_backend.emitters.reduction import ReductionEmitter
+    from codegen_backend.emitters.resize import ResizeEmitter
+    from codegen_backend.emitters.softmax import SoftmaxEmitter
+    from codegen_backend.emitters.view import ViewEmitter
+
+    def _build_with_dtype(func):
+        def builder(
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            scalar_values,
+            inplace_input,
+        ):
+            if dtype_info is None:
+                return None
+            op_node = func(node, op_spec, dtype_info, shapes, strides, dtypes)
+            return OpNodeBuildResult(op_node)
+
+        return builder
+
+    def _build_with_scalar(func):
+        def builder(
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            scalar_values,
+            inplace_input,
+        ):
+            if dtype_info is None:
+                return None
+            op_node = func(
+                node,
+                op_spec,
+                dtype_info,
+                shapes,
+                strides,
+                dtypes,
+                scalar_values,
+            )
+            return OpNodeBuildResult(op_node)
+
+        return builder
+
+    def _build_with_inplace(func):
+        def builder(
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            scalar_values,
+            inplace_input,
+        ):
+            if dtype_info is None:
+                return None
+            op_node = func(
+                node,
+                op_spec,
+                dtype_info,
+                shapes,
+                strides,
+                dtypes,
+                inplace_input,
+            )
+            return OpNodeBuildResult(op_node)
+
+        return builder
+
+    def _maybe_builder(method_name, builder_factory):
+        method = getattr(context, method_name, None)
+        if method is None:
+            return None
+        return builder_factory(method)
+
+    def _build_arange(
+        node,
+        op_spec,
+        dtype_info,
+        shapes,
+        strides,
+        dtypes,
+        scalar_values,
+        inplace_input,
+    ):
+        handler = getattr(context, "handle_arange_node", None)
+        if handler is None:
+            return None
+        op_node, dtype_spec = handler(
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            scalar_values,
+        )
+        return OpNodeBuildResult(op_node, dtype_spec)
+
+    def _build_to_copy(
+        node,
+        op_spec,
+        dtype_info,
+        shapes,
+        strides,
+        dtypes,
+        scalar_values,
+        inplace_input,
+    ):
+        if op_spec.name != "_to_copy":
+            return None
+        if dtype_info is None:
+            return None
+        handler = getattr(context, "handle_to_copy_node", None)
+        if handler is None:
+            return None
+        op_node = handler(node, op_spec, dtype_info, shapes, strides, dtypes)
+        return OpNodeBuildResult(op_node)
+
+    elementwise_emitter = ElementwiseEmitter()
+    binary_handler = ElementwiseHandler(
+        context,
+        elementwise_emitter,
+        "binary",
+    )
+    unary_handler = ElementwiseHandler(
+        context,
+        elementwise_emitter,
+        "unary",
+        builder=_build_to_copy,
+    )
+    where_handler = ElementwiseHandler(
+        context,
+        elementwise_emitter,
+        "where",
+    )
+    fill_handler = ElementwiseHandler(
+        context,
+        elementwise_emitter,
+        "fill",
+        builder=_maybe_builder("handle_fill_node", _build_with_inplace),
+    )
+
     return {
-        OpKind.ARANGE: ArangeHandler(context),
-        OpKind.BINARY: elementwise,
-        OpKind.UNARY: elementwise,
-        OpKind.WHERE: elementwise,
-        OpKind.FILL: elementwise,
-        OpKind.FLIP: FlipHandler(context),
-        OpKind.PAD: PadHandler(context),
-        OpKind.VIEW: ViewHandler(context),
-        OpKind.RESIZE: ResizeHandler(context),
-        OpKind.EMPTY_STRIDED: EmptyStridedHandler(context),
-        OpKind.DIAGONAL: DiagonalHandler(context),
-        OpKind.REDUCTION: ReductionHandler(context),
-        OpKind.ARG_REDUCTION: ArgReductionHandler(context),
-        OpKind.SOFTMAX: SoftmaxHandler(context),
-        OpKind.CUMSUM: CumsumHandler(context),
-        OpKind.EMBEDDING: EmbeddingHandler(context),
-        OpKind.EMBEDDING_BAG: EmbeddingBagHandler(context),
-        OpKind.GATHER: GatherHandler(context),
-        OpKind.CONCAT: ConcatHandler(context),
-        OpKind.POOL2D: Pool2dHandler(context),
-        OpKind.POOL3D: Pool3dHandler(context),
-        OpKind.POOL2D_BACKWARD: Pool2dBackwardHandler(context),
-        OpKind.POOL1D: Pool1dHandler(context),
-        OpKind.COL2IM: Col2imHandler(context),
-        OpKind.BATCH_NORM: BatchNormHandler(context),
-        OpKind.PDIST: PdistHandler(context),
-        OpKind.CDIST: CdistHandler(context),
-        OpKind.CONV1D: Conv1dHandler(context),
-        OpKind.CONV2D: Conv2dHandler(context),
-        OpKind.ADDMM: AddmmHandler(context),
-        OpKind.ADDBMM: AddbmmHandler(context),
-        OpKind.ADDMV: AddmvHandler(context),
-        OpKind.ADDR: AddrHandler(context),
-        OpKind.MATMUL: MatmulHandler(context),
+        OpKind.ARANGE: ArangeHandler(context, ArangeEmitter(), builder=_build_arange),
+        OpKind.BINARY: binary_handler,
+        OpKind.UNARY: unary_handler,
+        OpKind.WHERE: where_handler,
+        OpKind.FILL: fill_handler,
+        OpKind.FLIP: FlipHandler(
+            context,
+            FlipEmitter(),
+            builder=_maybe_builder("handle_flip_node", _build_with_dtype),
+        ),
+        OpKind.PAD: PadHandler(
+            context,
+            PadEmitter(),
+            builder=_maybe_builder("handle_pad_node", _build_with_dtype),
+        ),
+        OpKind.VIEW: ViewHandler(
+            context,
+            ViewEmitter(),
+            builder=_maybe_builder("handle_view_node", _build_with_dtype),
+        ),
+        OpKind.RESIZE: ResizeHandler(
+            context,
+            ResizeEmitter(),
+            builder=_maybe_builder("handle_resize_node", _build_with_inplace),
+        ),
+        OpKind.EMPTY_STRIDED: EmptyStridedHandler(
+            context,
+            EmptyStridedEmitter(),
+            builder=_maybe_builder("handle_empty_strided_node", _build_with_dtype),
+        ),
+        OpKind.DIAGONAL: DiagonalHandler(
+            context,
+            DiagonalEmitter(),
+            builder=_maybe_builder("handle_diagonal_node", _build_with_dtype),
+        ),
+        OpKind.REDUCTION: ReductionHandler(context, ReductionEmitter()),
+        OpKind.ARG_REDUCTION: ArgReductionHandler(
+            context, ArgReductionEmitter()
+        ),
+        OpKind.SOFTMAX: SoftmaxHandler(
+            context,
+            SoftmaxEmitter(),
+            builder=_maybe_builder("handle_softmax_node", _build_with_dtype),
+        ),
+        OpKind.CUMSUM: CumsumHandler(
+            context,
+            CumsumEmitter(),
+            builder=_maybe_builder("handle_cumsum_node", _build_with_dtype),
+        ),
+        OpKind.EMBEDDING: EmbeddingHandler(
+            context,
+            EmbeddingEmitter(),
+            builder=_maybe_builder("handle_embedding_node", _build_with_dtype),
+        ),
+        OpKind.EMBEDDING_BAG: EmbeddingBagHandler(
+            context,
+            EmbeddingBagEmitter(),
+            builder=_maybe_builder("handle_embedding_bag_node", _build_with_dtype),
+        ),
+        OpKind.GATHER: GatherHandler(
+            context,
+            GatherEmitter(),
+            builder=_maybe_builder("handle_gather_node", _build_with_dtype),
+        ),
+        OpKind.CONCAT: ConcatHandler(
+            context,
+            ConcatEmitter(),
+            builder=_maybe_builder("handle_concat_node", _build_with_dtype),
+        ),
+        OpKind.POOL2D: Pool2dHandler(
+            context,
+            Pool2dEmitter(),
+            builder=_maybe_builder("handle_pool2d_node", _build_with_dtype),
+        ),
+        OpKind.POOL3D: Pool3dHandler(
+            context,
+            Pool3dEmitter(),
+            builder=_maybe_builder("handle_pool3d_node", _build_with_dtype),
+        ),
+        OpKind.POOL2D_BACKWARD: Pool2dBackwardHandler(
+            context,
+            Pool2dBackwardEmitter(),
+            builder=_maybe_builder(
+                "handle_pool2d_backward_node", _build_with_dtype
+            ),
+        ),
+        OpKind.POOL1D: Pool1dHandler(
+            context,
+            Pool1dEmitter(),
+            builder=_maybe_builder("handle_pool1d_node", _build_with_dtype),
+        ),
+        OpKind.COL2IM: Col2imHandler(
+            context,
+            Col2imEmitter(),
+            builder=_maybe_builder("handle_col2im_node", _build_with_dtype),
+        ),
+        OpKind.BATCH_NORM: BatchNormHandler(
+            context,
+            BatchNormEmitter(),
+            builder=_maybe_builder("handle_batch_norm_node", _build_with_scalar),
+        ),
+        OpKind.PDIST: PdistHandler(
+            context,
+            PdistEmitter(),
+            builder=_maybe_builder("handle_pdist_node", _build_with_dtype),
+        ),
+        OpKind.CDIST: CdistHandler(
+            context,
+            CdistEmitter(),
+            builder=_maybe_builder("handle_cdist_node", _build_with_dtype),
+        ),
+        OpKind.CONV1D: Conv1dHandler(
+            context,
+            Conv1dEmitter(),
+            builder=_maybe_builder("handle_conv1d_node", _build_with_dtype),
+        ),
+        OpKind.CONV2D: Conv2dHandler(
+            context,
+            Conv2dEmitter(),
+            builder=_maybe_builder("handle_conv2d_node", _build_with_dtype),
+        ),
+        OpKind.ADDMM: AddmmHandler(
+            context,
+            AddmmEmitter(),
+            builder=_maybe_builder("handle_addmm_like_node", _build_with_inplace),
+        ),
+        OpKind.ADDBMM: AddbmmHandler(
+            context,
+            AddbmmEmitter(),
+            builder=_maybe_builder("handle_addmm_like_node", _build_with_inplace),
+        ),
+        OpKind.ADDMV: AddmvHandler(
+            context,
+            AddmvEmitter(),
+            builder=_maybe_builder("handle_addmm_like_node", _build_with_inplace),
+        ),
+        OpKind.ADDR: AddrHandler(
+            context,
+            AddrEmitter(),
+            builder=_maybe_builder("handle_addmm_like_node", _build_with_inplace),
+        ),
+        OpKind.MATMUL: MatmulHandler(context, MatmulEmitter()),
     }

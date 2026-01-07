@@ -13,7 +13,6 @@ from codegen_backend.emitters.base import (
     emit_signature,
 )
 from codegen_backend.kinds import KernelEmitRequest
-from codegen_backend.specs import OpKind
 from codegen_backend.templates import get_template_env
 
 _PARAMETRIC_UNARY_OPS = {
@@ -38,10 +37,14 @@ class ElementwiseEmitter(KindEmitterBase):
         op_spec = req.op_spec
         if op_spec is None:
             raise RefBackendError("elementwise requires op spec")
+        elementwise_kind = req.params.get("elementwise_kind")
+        if elementwise_kind is None:
+            raise RefBackendError("elementwise requires elementwise_kind")
         elementwise_template = get_template_env().get_template(
             "elementwise_kernel.c.j2"
         )
         params = req.params
+        signature_kind = params.get("signature_kind", "unary")
         signature = emit_signature(
             req.node_index,
             op_spec,
@@ -50,6 +53,7 @@ class ElementwiseEmitter(KindEmitterBase):
             req.input_dtypes,
             req.dtype,
             params,
+            signature_kind=signature_kind,
         )
         output_dims = [
             {"dim": dim, "size": size}
@@ -77,7 +81,7 @@ class ElementwiseEmitter(KindEmitterBase):
             "cond_access": None,
             "input_access": None,
         }
-        if op_spec.kind == OpKind.BINARY:
+        if elementwise_kind == "binary":
             if "scalar" in params:
                 a_shape = req.input_shapes[0]
                 a_strides = req.input_strides[0]
@@ -111,7 +115,7 @@ class ElementwiseEmitter(KindEmitterBase):
                     broadcast_contiguous=True,
                     c_type=_input_c_type(req.input_dtypes[1], req.dtype),
                 )
-        elif op_spec.kind == OpKind.WHERE:
+        elif elementwise_kind == "where":
             input_index = 0
             cond_shape = req.input_shapes[input_index]
             cond_strides = req.input_strides[input_index]
@@ -155,7 +159,7 @@ class ElementwiseEmitter(KindEmitterBase):
                     broadcast_contiguous=True,
                     c_type=_input_c_type(req.input_dtypes[input_index], req.dtype),
                 )
-        elif op_spec.kind == OpKind.FILL:
+        elif elementwise_kind == "fill":
             context["fill_value"] = _format_scalar_literal(
                 params["value"], req.dtype
             )
