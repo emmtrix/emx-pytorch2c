@@ -12,7 +12,7 @@ from cli import onnx2c
 from codegen_backend.export import export_generic_c
 
 onnx = pytest.importorskip("onnx")
-onnx2torch = pytest.importorskip("onnx2torch")
+onnx2pytorch = pytest.importorskip("onnx2pytorch")
 
 REFERENCE_DIR = Path(__file__).resolve().parent / "onnx2c_refs"
 ONNX_DIR = Path(__file__).resolve().parent / "onnx2c"
@@ -26,7 +26,7 @@ ONNX_CASES = [
         ONNX_DIR / "test_onnx02_cnn_approx500k_c124_c248_fcin12288.onnx",
         id="onnx02_cnn_approx500k_c124_c248_fcin12288",
         marks=pytest.mark.skip(
-            reason="onnx2torch batchnorm trace hits control flow"
+            reason="onnx2pytorch batchnorm trace hits control flow"
         ),
     ),
     pytest.param(
@@ -41,7 +41,7 @@ ONNX_CASES = [
         ONNX_DIR / "test_onnx05_lstm_approx500k_h144_seq16_in64_out16.onnx",
         id="onnx05_lstm_approx500k_h144_seq16_in64_out16",
         marks=pytest.mark.skip(
-            reason="onnx2torch LSTM converter not implemented"
+            reason="onnx2pytorch LSTM converter not implemented"
         ),
     ),
     pytest.param(
@@ -61,10 +61,13 @@ ONNX_CASES = [
 
 def _onnx_to_source(onnx_path: Path, tmp_path: Path) -> str:
     model = onnx.load(onnx_path)
+    onnx2c._ensure_conv_kernel_shape(onnx, model)
     example_inputs = onnx2c._collect_example_inputs(onnx, model, default_dim=1)
-    torch_module = onnx2torch.convert(model)
+    torch_module = onnx2pytorch.ConvertModel(model)
+    onnx2c._patch_onnx2pytorch_for_fx(onnx2pytorch)
+    onnx2c._disable_inplace_relu(torch_module)
     torch_module.eval()
-    graph_module = onnx2c._trace_module(torch_module)
+    graph_module = onnx2c._trace_module(torch_module, example_inputs)
     out_path = tmp_path / f"{onnx_path.stem}.c"
     return export_generic_c(
         graph_module,

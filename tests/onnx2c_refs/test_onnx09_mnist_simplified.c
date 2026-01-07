@@ -2,7 +2,7 @@
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
-static const float weight_Conv_3_weight[20][1][5][5] = {
+static const float weight_Conv_8_weight[20][1][5][5] = {
     {
         {
             {
@@ -18,7 +18,7 @@ static const float weight_Conv_3_weight[20][1][5][5] = {
     }
 };
 
-static const float weight_Conv_5_weight[12][20][3][3] = {
+static const float weight_Conv_10_weight[12][20][3][3] = {
     {
         {
             {
@@ -39,14 +39,22 @@ static const float weight_Conv_5_weight[12][20][3][3] = {
     }
 };
 
-static const float weight_Gemm_9_weight[10][108] = {
+static const int64_t weight_tensor_constant0[1] = {
+    1
+};
+
+static const int64_t weight_tensor_constant1[1] = {
+    -1
+};
+
+static const float weight_Gemm_network_output_weight[10][108] = {
     {
         -0x1.5ffb6ep-4f, -0x1.36f87dp-4f, -0x1.2bf395p-3f, -0x1.456cc4p-3f, 0x1.5894a3p-6f, -0x1.7af660p-5f, -0x1.1c7d25p-3f, 0x1.3819e1p-4f,
         0x1.1eaf43p-6f, -0x1.1e73d9p-4f, ...
     }
 };
 
-static const float weight_Gemm_9_bias[10] = {
+static const float weight_Gemm_network_output_bias[10] = {
     -0x1.33b636p-2f, 0x1.5cf820p-4f, 0x1.4eb986p-4f, 0x1.404075p-7f, -0x1.639f6ap-4f, 0x1.5646ccp-2f, -0x1.1be03ep-3f, 0x1.0e9310p-7f,
     -0x1.553391p-4f, 0x1.1ae21ep-4f
 };
@@ -155,7 +163,7 @@ void node5_linear_f32(const float input[1][108], const float weight[10][108], co
     }
 }
 
-void ref_codegen_main_f32(const float input_0[1][1][14][14], const float input_1[20][1][5][5], const float input_2[12][20][3][3], const float input_3[10][108], const float input_4[10], float out[1][10]) {
+void ref_codegen_main_f32(const float input_0[1][1][14][14], const float input_1[20][1][5][5], const float input_2[12][20][3][3], const int64_t input_3[1], const int64_t input_4[1], const float input_5[10][108], const float input_6[10], float out[1][10]) {
     float tmp_0[1][20][5][5];
     float tmp_1[1][20][5][5];
     float tmp_2[1][12][3][3];
@@ -164,9 +172,9 @@ void ref_codegen_main_f32(const float input_0[1][1][14][14], const float input_1
     node2_relu_f32(tmp_0, tmp_1);
     node3_conv2d_f32(tmp_1, input_2, tmp_2);
     node4_reshape_f32(tmp_2, tmp_3);
-    node5_linear_f32(tmp_3, input_3, input_4, out);
+    node5_linear_f32(tmp_3, input_5, input_6, out);
 }
 
 void entry(const float* in0, float* out0) {
-    ref_codegen_main_f32(in0, weight_Conv_3_weight, weight_Conv_5_weight, weight_Gemm_9_weight, weight_Gemm_9_bias, out0);
+    ref_codegen_main_f32(in0, weight_Conv_8_weight, weight_Conv_10_weight, weight_tensor_constant0, weight_tensor_constant1, weight_Gemm_network_output_weight, weight_Gemm_network_output_bias, out0);
 }

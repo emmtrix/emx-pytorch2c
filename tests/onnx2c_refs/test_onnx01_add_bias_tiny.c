@@ -2,7 +2,7 @@
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
-static const float weight_initializers_onnx_initializer_0[4] = {
+static const float weight_initializer_b[4] = {
     0x1.4ccccdp-4f, -0x1.4ccccdp-3f, 0x1.19999ap-2f, 0x0.0p+0f
 };
 
@@ -19,5 +19,5 @@ void ref_codegen_main_f32(const float input_0[1][4], const float input_1[4], flo
 }
 
 void entry(const float* in0, float* out0) {
-    ref_codegen_main_f32(in0, weight_initializers_onnx_initializer_0, out0);
+    ref_codegen_main_f32(in0, weight_initializer_b, out0);
 }

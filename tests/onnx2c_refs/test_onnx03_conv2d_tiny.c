@@ -2,7 +2,7 @@
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
-static const float weight_Conv_weight[1][1][3][3] = {
+static const float weight_Conv_out_weight[1][1][3][3] = {
     {
         {
             {
@@ -18,7 +18,7 @@ static const float weight_Conv_weight[1][1][3][3] = {
     }
 };
 
-static const float weight_Conv_bias[1] = {
+static const float weight_Conv_out_bias[1] = {
     0x0.0p+0f
 };
 
@@ -63,5 +63,5 @@ void ref_codegen_main_f32(const float input_0[1][1][5][5], const float input_1[1
 }
 
 void entry(const float* in0, float* out0) {
-    ref_codegen_main_f32(in0, weight_Conv_weight, weight_Conv_bias, out0);
+    ref_codegen_main_f32(in0, weight_Conv_out_weight, weight_Conv_out_bias, out0);
 }

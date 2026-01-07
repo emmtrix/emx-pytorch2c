@@ -24,7 +24,7 @@ emx-pytorch2c generates simple, correct, generic, and easily analyzable C code f
 * Python >= 3.8
 * PyTorch
 * Jinja2
-* Optional (for `cli.onnx2c`): onnx, onnx2torch
+* Optional (for `cli.onnx2c`): onnx, onnx2pytorch
 
 ## Setup
 
@@ -85,10 +85,10 @@ print(result.c_source)
 
 ### 3) ONNX to C via CLI
 
-Requires `onnx` and `onnx2torch`:
+Requires `onnx` and `onnx2pytorch`:
 
 ```bash
-pip install onnx onnx2torch
+pip install onnx onnx2pytorch
 ```
 
 ```bash
