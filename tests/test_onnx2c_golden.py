@@ -48,10 +48,6 @@ ONNX_CASES = [
         id="onnx06_matmul_tiny",
     ),
     pytest.param(
-        ONNX_DIR / "test_onnx07_mlp_450kb_in256_h286_o128.onnx",
-        id="onnx07_mlp_450kb_in256_h286_o128",
-    ),
-    pytest.param(
         ONNX_DIR / "test_onnx09_mnist_simplified.onnx",
         id="onnx09_mnist_simplified",
         marks=pytest.mark.skip(

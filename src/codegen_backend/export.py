@@ -1,4 +1,5 @@
 import re
+import struct
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
@@ -82,11 +83,32 @@ def _lift_get_attr_to_placeholders(
     )
 
 
+def _format_float32_hex(value: float) -> str:
+    bits = struct.unpack("<I", struct.pack("<f", float(value)))[0]
+    sign = "-" if (bits >> 31) else ""
+    exponent = (bits >> 23) & 0xFF
+    mantissa = bits & 0x7FFFFF
+    if exponent == 0 and mantissa == 0:
+        return f"{sign}0x0.0p+0"
+    if exponent == 0xFF:
+        if mantissa == 0:
+            return f"{sign}INFINITY"
+        return "NAN"
+    if exponent == 0:
+        shift = mantissa.bit_length() - 1
+        exponent_val = shift - 149
+        fraction = (mantissa - (1 << shift)) << (23 - shift)
+    else:
+        exponent_val = exponent - 127
+        fraction = mantissa
+    return f"{sign}0x1.{fraction:06x}p{exponent_val:+d}"
+
+
 def _format_weight_value(value: object, dtype: torch.dtype) -> str:
     if dtype is torch.bool:
         return "1" if bool(value) else "0"
     if dtype.is_floating_point:
-        return f"{float(value)!r}f"
+        return f"{_format_float32_hex(float(value))}f"
     return str(int(value))
 
 
