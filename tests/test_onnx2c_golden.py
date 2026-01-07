@@ -68,7 +68,12 @@ def _onnx_to_source(onnx_path: Path, tmp_path: Path) -> str:
     torch_module.eval()
     graph_module = onnx2c._trace_module(torch_module)
     out_path = tmp_path / f"{onnx_path.stem}.c"
-    return export_generic_c(graph_module, example_inputs, str(out_path)).lstrip()
+    return export_generic_c(
+        graph_module,
+        example_inputs,
+        str(out_path),
+        function_name="entry",
+    ).lstrip()
 
 
 def _assert_onnx2c_source_matches(onnx_path: Path, tmp_path: Path) -> None:

@@ -27,6 +27,6 @@ void ref_codegen_main_f32(const float input_0[1][2], const float input_1[2][2], 
     node1_matmul_f32(input_0, input_1, out);
 }
 
-void model_run(const float* in0, float* out0) {
+void entry(const float* in0, float* out0) {
     ref_codegen_main_f32(in0, weight_initializers_onnx_initializer_0, out0);
 }

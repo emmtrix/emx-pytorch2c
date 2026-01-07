@@ -235,6 +235,6 @@ void ref_codegen_main_f32(const float input_0[1][1], const float input_1[1][16],
     node8_add_f32(tmp_6, input_6, out);
 }
 
-void model_run(const float* in0, float* out0) {
+void entry(const float* in0, float* out0) {
     ref_codegen_main_f32(in0, weight_initializers_onnx_initializer_0, weight_initializers_onnx_initializer_1, weight_initializers_onnx_initializer_2, weight_initializers_onnx_initializer_3, weight_initializers_onnx_initializer_4, weight_initializers_onnx_initializer_5, out0);
 }
