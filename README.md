@@ -63,3 +63,7 @@ python -m cli.onnx2c --help
 ```bash
 PYTHONPATH=src pytest -n auto --maxfail=5 -q
 ```
+
+## License
+
+BSD-3-Clause. See [LICENSE](LICENSE).
