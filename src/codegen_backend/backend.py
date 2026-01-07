@@ -2,6 +2,9 @@ import hashlib
 import math
 import numbers
 import operator
+import os
+import shlex
+import shutil
 import tempfile
 from collections.abc import Sequence as ABCSequence
 from fractions import Fraction
@@ -8650,6 +8653,7 @@ def _compile_generic_library(graph: _GenericGraph) -> _GenericLibrary:
 
     compiler = ccompiler.new_compiler()
     distutils_sysconfig.customize_compiler(compiler)
+    _maybe_enable_ccache(compiler)
     compile_args: List[str]
     if compiler.compiler_type == "msvc":
         compile_args = ["/O2"]
@@ -8694,6 +8698,23 @@ def _compile_generic_library(graph: _GenericGraph) -> _GenericLibrary:
     )
     _LIBRARY_CACHE[digest] = compiled
     return compiled
+
+
+def _maybe_enable_ccache(compiler: ccompiler.CCompiler) -> None:
+    if compiler.compiler_type == "msvc":
+        return
+    ccache = os.environ.get("CCACHE") or shutil.which("ccache")
+    if not ccache:
+        return
+    for key in ("compiler", "compiler_so", "compiler_cxx", "compiler_so_cxx"):
+        cmd = compiler.executables.get(key)
+        if not cmd:
+            continue
+        if isinstance(cmd, str):
+            cmd_list = shlex.split(cmd)
+        else:
+            cmd_list = list(cmd)
+        compiler.set_executables(**{key: " ".join([ccache, *cmd_list])})
 
 
 def _validate_runtime_inputs(
