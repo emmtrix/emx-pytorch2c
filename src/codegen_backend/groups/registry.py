@@ -6,6 +6,7 @@ from typing import Dict, Iterable, List, Sequence
 
 from codegen_backend.groups.analysis import GroupAnalyzer
 from codegen_backend.groups.base import OperatorGroupDefinition
+from codegen_backend.groups.context import BackendContextProvider
 from codegen_backend.kinds import HandlerContextProvider, OpKindHandler
 from codegen_backend.registry import _TargetInfo
 from codegen_backend.specs import OpKind, _OpSpec
@@ -26,6 +27,13 @@ class GroupRegistry:
             for factory in group.kind_handler_factories():
                 merged.update(factory.build_handlers(context_provider))
         return merged
+
+    def build_context_provider(self, backend: object) -> HandlerContextProvider:
+        provider: HandlerContextProvider = BackendContextProvider(backend)
+        for group in self.groups:
+            for factory in group.context_provider_factories():
+                provider = factory.build_context_provider(provider, backend)
+        return provider
 
     def build_group_analyzers(self) -> List[GroupAnalyzer]:
         analyzers: List[GroupAnalyzer] = []

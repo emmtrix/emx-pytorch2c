@@ -117,6 +117,14 @@ class HandlerContextProvider(Protocol):
     def tensor(self) -> TensorContext: ...
 
 
+class ContextProviderFactory(Protocol):
+    def build_context_provider(
+        self,
+        base_provider: HandlerContextProvider,
+        backend: object,
+    ) -> HandlerContextProvider: ...
+
+
 class OpKindHandlerFactory(Protocol):
     def build_handlers(
         self, context_provider: HandlerContextProvider

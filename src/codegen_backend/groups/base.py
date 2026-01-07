@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from codegen_backend.groups.analysis import GroupAnalyzer
+from codegen_backend.kinds import ContextProviderFactory
 from codegen_backend.registry import _TargetInfo
 from codegen_backend.specs import _OpSpec
 
@@ -29,6 +30,9 @@ class OperatorGroupDefinition(ABC):
 
     def analyzers(self) -> Sequence[GroupAnalyzer]:
         return self.build_analyzers(self._supported_ops, self._target_registry)
+
+    def context_provider_factories(self) -> Sequence[ContextProviderFactory]:
+        return ()
 
     @abstractmethod
     def build_supported_ops(self) -> Mapping[str, _OpSpec]:
