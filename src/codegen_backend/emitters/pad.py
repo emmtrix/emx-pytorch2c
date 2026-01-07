@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import List
 
+from c_ref_backend.cffi_bindings import RefBackendError
 from codegen_backend.c_types import _format_scalar_literal, _input_c_type
 from codegen_backend.emitters.base import (
     KindEmitterBase,
@@ -16,7 +17,9 @@ from codegen_backend.templates import get_template_env
 
 class PadEmitter(KindEmitterBase):
     def emit(self, req: KernelEmitRequest) -> List[str]:
-        op_node = req.op_node
+        op_spec = req.op_spec
+        if op_spec is None:
+            raise RefBackendError("pad requires op spec")
         input_shape = req.input_shapes[0]
         input_strides = req.input_strides[0]
         input_dtype = req.input_dtypes[0]
@@ -27,7 +30,7 @@ class PadEmitter(KindEmitterBase):
         )
         signature = emit_signature(
             req.node_index,
-            op_node.spec,
+            op_spec,
             output_shape,
             [input_shape],
             [input_dtype],
@@ -51,7 +54,7 @@ class PadEmitter(KindEmitterBase):
                 has_input_shape=False,
             )
             return rendered.strip().splitlines()
-        pad_before = op_node.p("pad_before", ())
+        pad_before = req.params.get("pad_before", ())
         input_access = _emit_strided_access(
             "a",
             [f"in_{dim}" for dim in range(len(input_shape))],
@@ -68,6 +71,6 @@ class PadEmitter(KindEmitterBase):
             output_shape=output_shape,
             input_shape=input_shape,
             pad_before=pad_before,
-            value=_format_scalar_literal(op_node.p("value"), req.dtype),
+            value=_format_scalar_literal(req.params["value"], req.dtype),
         )
         return rendered.strip().splitlines()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import List
 
+from c_ref_backend.cffi_bindings import RefBackendError
 from codegen_backend.c_types import _format_scalar_literal
 from codegen_backend.emitters.base import (
     KindEmitterBase,
@@ -15,10 +16,12 @@ from codegen_backend.kinds import KernelEmitRequest
 
 class ArangeEmitter(KindEmitterBase):
     def emit(self, req: KernelEmitRequest) -> List[str]:
-        op_node = req.op_node
+        op_spec = req.op_spec
+        if op_spec is None:
+            raise RefBackendError("arange requires op spec")
         out_suffix = _format_array_suffix(req.output_shape)
         signature = (
-            f"void node{req.node_index}_{op_node.spec.name}_{req.dtype.suffix}("
+            f"void node{req.node_index}_{op_spec.name}_{req.dtype.suffix}("
             f"{req.dtype.c_type} out{out_suffix}) {{"
         )
         lines = [signature]
@@ -27,8 +30,8 @@ class ArangeEmitter(KindEmitterBase):
         output_access = emit_output_access(
             req.output_shape, req.output_strides, c_type=req.dtype.c_type
         )
-        start = _format_scalar_literal(op_node.p("start"), req.dtype)
-        step = _format_scalar_literal(op_node.p("step"), req.dtype)
+        start = _format_scalar_literal(req.params["start"], req.dtype)
+        step = _format_scalar_literal(req.params["step"], req.dtype)
         index_expr = "i0" if req.output_shape else "0"
         lines.append(
             f"{indent}{output_access} = {start} + ({step} * {index_expr});"

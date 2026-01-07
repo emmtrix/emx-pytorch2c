@@ -1312,19 +1312,23 @@ def _write_softmax_kernel(
 
 def _write_diagonal_kernel(
     node_index: int,
-    op_node: _OpNode,
+    op_spec: _OpSpec,
     input_shape: Sequence[int],
     input_strides: Sequence[int],
     input_dtype: torch.dtype,
     output_shape: Sequence[int],
     output_strides: Sequence[int],
     dtype: _CodegenDType,
+    *,
+    dim1: int,
+    dim2: int,
+    offset: int,
 ) -> List[str]:
     input_suffix = _format_array_suffix(input_shape)
     output_suffix = _format_array_suffix(output_shape)
     input_c_type = _input_c_type(input_dtype, dtype)
     signature = (
-        f"void node{node_index}_{op_node.spec.name}_{dtype.suffix}("
+        f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
         f"const {input_c_type} a{input_suffix}, "
         f"{dtype.c_type} out{output_suffix}) {{"
     )
@@ -1339,9 +1343,9 @@ def _write_diagonal_kernel(
         input_shape,
         input_strides,
         output_shape,
-        dim1=int(op_node.p("dim1")),
-        dim2=int(op_node.p("dim2")),
-        offset=int(op_node.p("offset")),
+        dim1=dim1,
+        dim2=dim2,
+        offset=offset,
         c_type=input_c_type,
     )
     lines.append(f"{indent}{output_access} = {input_access};")
@@ -1424,19 +1428,22 @@ class EmptyStridedEmitter(KindEmitterBase):
 
 class DiagonalEmitter(KindEmitterBase):
     def emit(self, req: KernelEmitRequest) -> List[str]:
-        op_node = req.op_node
+        op_spec = req.op_spec
         dtype = req.dtype
-        if op_node is None or dtype is None:
-            raise RefBackendError("diagonal requires op node and dtype")
+        if op_spec is None or dtype is None:
+            raise RefBackendError("diagonal requires op spec and dtype")
         return _write_diagonal_kernel(
             req.node_index,
-            op_node,
+            op_spec,
             req.input_shapes[0],
             req.input_strides[0],
             req.input_dtypes[0],
             req.output_shape,
             req.output_strides or (),
             dtype,
+            dim1=int(req.params.get("dim1", 0)),
+            dim2=int(req.params.get("dim2", 1)),
+            offset=int(req.params.get("offset", 0)),
         )
 
 

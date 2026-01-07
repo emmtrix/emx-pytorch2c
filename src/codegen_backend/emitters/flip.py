@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import List, Sequence
 
+from c_ref_backend.cffi_bindings import RefBackendError
 from codegen_backend.c_types import _input_c_type
 from codegen_backend.emitters.base import (
     KindEmitterBase,
@@ -44,7 +45,9 @@ def _emit_flip_input_access(
 
 class FlipEmitter(KindEmitterBase):
     def emit(self, req: KernelEmitRequest) -> List[str]:
-        op_node = req.op_node
+        op_spec = req.op_spec
+        if op_spec is None:
+            raise RefBackendError("flip requires op spec")
         input_shape = req.input_shapes[0]
         input_strides = req.input_strides[0]
         input_dtype = req.input_dtypes[0]
@@ -53,7 +56,7 @@ class FlipEmitter(KindEmitterBase):
         lines = [
             emit_signature(
                 req.node_index,
-                op_node.spec,
+                op_spec,
                 output_shape,
                 [input_shape],
                 [input_dtype],
@@ -69,7 +72,7 @@ class FlipEmitter(KindEmitterBase):
             "a",
             input_shape,
             input_strides,
-            op_node.p("dims", ()),
+            req.params.get("dims", ()),
             c_type=_input_c_type(input_dtype, req.dtype),
         )
         lines.append(f"{indent}{output_access} = {input_access};")
