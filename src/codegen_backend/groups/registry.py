@@ -29,7 +29,9 @@ class GroupRegistry:
     def build_group_analyzers(self) -> List[GroupAnalyzer]:
         analyzers: List[GroupAnalyzer] = []
         for group in self.groups:
-            analyzers.extend(group.analyzers())
+            supported_ops = group.supported_ops()
+            target_registry = group.target_registry()
+            analyzers.extend(group.analyzers(supported_ops, target_registry))
         return analyzers
 
     def merged_supported_ops(self) -> Dict[object, _OpSpec]:
