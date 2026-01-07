@@ -14,7 +14,7 @@ emx-pytorch2c generates simple, correct, generic, and easily analyzable C code f
 
 ## Features
 
-* Supported operators (codegen backend): see [`tests/list_aten_core_ops_ref.md`](tests/list_aten_core_ops_ref.md).
+* Supported operators (codegen backend): see [`tests/list_aten_core_ops_ref.md`](tests/list_aten_core_ops_ref.md) for core ops and [`tests/list_aten_ops_ref.md`](tests/list_aten_ops_ref.md) for all ATen ops.
 * `torch.compile` backend for generating generic C code from PyTorch workloads.
 * Export utility for emitting standalone C sources from Python functions.
 * ONNX-to-C conversion via the `cli.onnx2c` command-line interface.

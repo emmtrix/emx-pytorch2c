@@ -107,9 +107,8 @@ def _ops_from_codegen_tests(path: Path) -> Set[str]:
     return ops
 
 
-def _format_row(op_name: str, codegen_supported: bool) -> str:
-    codegen_label = "yes" if codegen_supported else "-"
-    return f"{op_name:40} {codegen_label:7}"
+def _format_support_label(codegen_supported: bool) -> str:
+    return "✅" if codegen_supported else "—"
 
 
 def _summarize_ops(aten_ops: Iterable[str], codegen_ops: Set[str]) -> tuple[int, int]:
@@ -128,21 +127,22 @@ def main() -> None:
         REPO_ROOT / "tests" / "test_codegen_ops.py"
     )
 
-    print(f"{'aten op':40} {'codegen':7}")
-    print("-" * 50)
+    print("# All ATen ops support (codegen backend)")
+    print()
+    print("| aten op | codegen support |")
+    print("| --- | --- |")
     for op_name in aten_ops:
-        print(_format_row(op_name, op_name in codegen_ops))
+        print(f"| `{op_name}` | {_format_support_label(op_name in codegen_ops)} |")
 
     total, supported_codegen = _summarize_ops(aten_ops, codegen_ops)
     unsupported = total - supported_codegen
     codegen_percent = (supported_codegen / total * 100) if total else 0
-    print("\nSummary")
-    print(f"total aten ops: {total}")
-    print(f"supported by codegen: {supported_codegen}")
-    print(f"unsupported by codegen: {unsupported}")
+    print("\n## Summary")
+    print(f"- total aten ops: {total}")
     print(
-        f"supported by codegen: {supported_codegen} / {total} ({codegen_percent:.1f} %)"
+        f"- supported by codegen: {supported_codegen} / {total} ({codegen_percent:.1f} %)"
     )
+    print(f"- unsupported by codegen: {unsupported}")
 
 
 if __name__ == "__main__":
