@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 
 from codegen_backend.ops_registry import _OpRegistry
+from codegen_backend.registry import _TargetInfo, build_target_registry as _base_target_registry
 from codegen_backend.specs import OpKind, _OpSpec
 
 
@@ -23,4 +24,10 @@ def build_supported_ops() -> dict[str, _OpSpec]:
     return registry.build()
 
 
-__all__ = ["build_supported_ops"]
+def build_target_registry(
+    supported_ops: dict[str, _OpSpec],
+) -> dict[object, _TargetInfo]:
+    return _base_target_registry(supported_ops)
+
+
+__all__ = ["build_supported_ops", "build_target_registry"]

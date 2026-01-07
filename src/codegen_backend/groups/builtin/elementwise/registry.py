@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 
 from codegen_backend.ops_registry import _OpRegistry
+from codegen_backend.registry import _TargetInfo, build_target_registry as _base_target_registry
 from codegen_backend.specs import OpKind, _OpSpec
 
 
@@ -1129,4 +1130,16 @@ def build_supported_ops() -> dict[str, _OpSpec]:
     return registry.build()
 
 
-__all__ = ["build_supported_ops"]
+def build_target_registry(
+    supported_ops: dict[str, _OpSpec],
+) -> dict[object, _TargetInfo]:
+    registry = _base_target_registry(supported_ops)
+    if "atan2" in supported_ops:
+        registry[torch.ops.aten.atan2.out] = _TargetInfo(
+            op_spec=supported_ops["atan2"],
+            inplace_arg_index=2,
+        )
+    return registry
+
+
+__all__ = ["build_supported_ops", "build_target_registry"]

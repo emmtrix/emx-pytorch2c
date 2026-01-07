@@ -6,9 +6,12 @@ from typing import List, Mapping, Sequence
 from codegen_backend.groups.analysis import GroupAnalyzer
 from codegen_backend.groups.builtin.reductions.analyzer import ReductionsAnalyzer
 from codegen_backend.groups.builtin.reductions import handlers
+from codegen_backend.groups.builtin.reductions.registry import (
+    build_supported_ops,
+    build_target_registry,
+)
 from codegen_backend.kinds import OpKindHandlerFactory
-from codegen_backend.ops_registry_reductions import build_supported_ops
-from codegen_backend.registry import _TargetInfo, build_target_registry
+from codegen_backend.registry import _TargetInfo
 from codegen_backend.specs import _OpSpec
 
 
