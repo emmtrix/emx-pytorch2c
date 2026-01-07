@@ -1742,37 +1742,7 @@ class MatmulHandler(OpKindHandler):
 
 
 def build_kind_handlers(context: HandlerContext) -> Dict[OpKind, OpKindHandler]:
-    from codegen_backend.emitters.addbmm import AddbmmEmitter
-    from codegen_backend.emitters.addmm import AddmmEmitter
-    from codegen_backend.emitters.addmv import AddmvEmitter
-    from codegen_backend.emitters.addr import AddrEmitter
-    from codegen_backend.emitters.arange import ArangeEmitter
-    from codegen_backend.emitters.argreduction import ArgReductionEmitter
-    from codegen_backend.emitters.batch_norm import BatchNormEmitter
-    from codegen_backend.emitters.cdist import CdistEmitter
-    from codegen_backend.emitters.col2im import Col2imEmitter
-    from codegen_backend.emitters.concat import ConcatEmitter
-    from codegen_backend.emitters.conv1d import Conv1dEmitter
-    from codegen_backend.emitters.conv2d import Conv2dEmitter
-    from codegen_backend.emitters.cumsum import CumsumEmitter
-    from codegen_backend.emitters.diagonal import DiagonalEmitter
-    from codegen_backend.emitters.embedding import EmbeddingEmitter
-    from codegen_backend.emitters.embedding_bag import EmbeddingBagEmitter
-    from codegen_backend.emitters.empty_strided import EmptyStridedEmitter
-    from codegen_backend.emitters.elementwise import ElementwiseEmitter
-    from codegen_backend.emitters.flip import FlipEmitter
-    from codegen_backend.emitters.gather import GatherEmitter
-    from codegen_backend.emitters.matmul import MatmulEmitter
-    from codegen_backend.emitters.pad import PadEmitter
-    from codegen_backend.emitters.pdist import PdistEmitter
-    from codegen_backend.emitters.pool1d import Pool1dEmitter
-    from codegen_backend.emitters.pool2d import Pool2dEmitter
-    from codegen_backend.emitters.pool2d_backward import Pool2dBackwardEmitter
-    from codegen_backend.emitters.pool3d import Pool3dEmitter
-    from codegen_backend.emitters.reduction import ReductionEmitter
-    from codegen_backend.emitters.resize import ResizeEmitter
-    from codegen_backend.emitters.softmax import SoftmaxEmitter
-    from codegen_backend.emitters.view import ViewEmitter
+    from codegen_backend.emitters.registry import build_kind_handler_registry
 
     def _build_with_dtype(func):
         def builder(
@@ -1894,24 +1864,25 @@ def build_kind_handlers(context: HandlerContext) -> Dict[OpKind, OpKindHandler]:
         op_node = handler(node, op_spec, dtype_info, shapes, strides, dtypes)
         return OpNodeBuildResult(op_node)
 
-    elementwise_emitter = ElementwiseEmitter()
-    binary_handler = ElementwiseHandler(
+    registry = build_kind_handler_registry()
+    elementwise_emitter = registry[OpKind.BINARY].emitter_cls()
+    binary_handler = registry[OpKind.BINARY].handler_cls(
         context,
         elementwise_emitter,
         "binary",
     )
-    unary_handler = ElementwiseHandler(
+    unary_handler = registry[OpKind.UNARY].handler_cls(
         context,
         elementwise_emitter,
         "unary",
         builder=_build_to_copy,
     )
-    where_handler = ElementwiseHandler(
+    where_handler = registry[OpKind.WHERE].handler_cls(
         context,
         elementwise_emitter,
         "where",
     )
-    fill_handler = ElementwiseHandler(
+    fill_handler = registry[OpKind.FILL].handler_cls(
         context,
         elementwise_emitter,
         "fill",
@@ -1919,146 +1890,154 @@ def build_kind_handlers(context: HandlerContext) -> Dict[OpKind, OpKindHandler]:
     )
 
     return {
-        OpKind.ARANGE: ArangeHandler(context, ArangeEmitter(), builder=_build_arange),
+        OpKind.ARANGE: registry[OpKind.ARANGE].handler_cls(
+            context,
+            registry[OpKind.ARANGE].emitter_cls(),
+            builder=_build_arange,
+        ),
         OpKind.BINARY: binary_handler,
         OpKind.UNARY: unary_handler,
         OpKind.WHERE: where_handler,
         OpKind.FILL: fill_handler,
-        OpKind.FLIP: FlipHandler(
+        OpKind.FLIP: registry[OpKind.FLIP].handler_cls(
             context,
-            FlipEmitter(),
+            registry[OpKind.FLIP].emitter_cls(),
             builder=_maybe_builder("handle_flip_node", _build_with_dtype),
         ),
-        OpKind.PAD: PadHandler(
+        OpKind.PAD: registry[OpKind.PAD].handler_cls(
             context,
-            PadEmitter(),
+            registry[OpKind.PAD].emitter_cls(),
             builder=_maybe_builder("handle_pad_node", _build_with_dtype),
         ),
-        OpKind.VIEW: ViewHandler(
+        OpKind.VIEW: registry[OpKind.VIEW].handler_cls(
             context,
-            ViewEmitter(),
+            registry[OpKind.VIEW].emitter_cls(),
             builder=_maybe_builder("handle_view_node", _build_with_dtype),
         ),
-        OpKind.RESIZE: ResizeHandler(
+        OpKind.RESIZE: registry[OpKind.RESIZE].handler_cls(
             context,
-            ResizeEmitter(),
+            registry[OpKind.RESIZE].emitter_cls(),
             builder=_maybe_builder("handle_resize_node", _build_with_inplace),
         ),
-        OpKind.EMPTY_STRIDED: EmptyStridedHandler(
+        OpKind.EMPTY_STRIDED: registry[OpKind.EMPTY_STRIDED].handler_cls(
             context,
-            EmptyStridedEmitter(),
+            registry[OpKind.EMPTY_STRIDED].emitter_cls(),
             builder=_maybe_builder("handle_empty_strided_node", _build_with_dtype),
         ),
-        OpKind.DIAGONAL: DiagonalHandler(
+        OpKind.DIAGONAL: registry[OpKind.DIAGONAL].handler_cls(
             context,
-            DiagonalEmitter(),
+            registry[OpKind.DIAGONAL].emitter_cls(),
             builder=_maybe_builder("handle_diagonal_node", _build_with_dtype),
         ),
-        OpKind.REDUCTION: ReductionHandler(context, ReductionEmitter()),
-        OpKind.ARG_REDUCTION: ArgReductionHandler(
-            context, ArgReductionEmitter()
+        OpKind.REDUCTION: registry[OpKind.REDUCTION].handler_cls(
+            context, registry[OpKind.REDUCTION].emitter_cls()
         ),
-        OpKind.SOFTMAX: SoftmaxHandler(
+        OpKind.ARG_REDUCTION: registry[OpKind.ARG_REDUCTION].handler_cls(
+            context, registry[OpKind.ARG_REDUCTION].emitter_cls()
+        ),
+        OpKind.SOFTMAX: registry[OpKind.SOFTMAX].handler_cls(
             context,
-            SoftmaxEmitter(),
+            registry[OpKind.SOFTMAX].emitter_cls(),
             builder=_maybe_builder("handle_softmax_node", _build_with_dtype),
         ),
-        OpKind.CUMSUM: CumsumHandler(
+        OpKind.CUMSUM: registry[OpKind.CUMSUM].handler_cls(
             context,
-            CumsumEmitter(),
+            registry[OpKind.CUMSUM].emitter_cls(),
             builder=_maybe_builder("handle_cumsum_node", _build_with_dtype),
         ),
-        OpKind.EMBEDDING: EmbeddingHandler(
+        OpKind.EMBEDDING: registry[OpKind.EMBEDDING].handler_cls(
             context,
-            EmbeddingEmitter(),
+            registry[OpKind.EMBEDDING].emitter_cls(),
             builder=_maybe_builder("handle_embedding_node", _build_with_dtype),
         ),
-        OpKind.EMBEDDING_BAG: EmbeddingBagHandler(
+        OpKind.EMBEDDING_BAG: registry[OpKind.EMBEDDING_BAG].handler_cls(
             context,
-            EmbeddingBagEmitter(),
+            registry[OpKind.EMBEDDING_BAG].emitter_cls(),
             builder=_maybe_builder("handle_embedding_bag_node", _build_with_dtype),
         ),
-        OpKind.GATHER: GatherHandler(
+        OpKind.GATHER: registry[OpKind.GATHER].handler_cls(
             context,
-            GatherEmitter(),
+            registry[OpKind.GATHER].emitter_cls(),
             builder=_maybe_builder("handle_gather_node", _build_with_dtype),
         ),
-        OpKind.CONCAT: ConcatHandler(
+        OpKind.CONCAT: registry[OpKind.CONCAT].handler_cls(
             context,
-            ConcatEmitter(),
+            registry[OpKind.CONCAT].emitter_cls(),
             builder=_maybe_builder("handle_concat_node", _build_with_dtype),
         ),
-        OpKind.POOL2D: Pool2dHandler(
+        OpKind.POOL2D: registry[OpKind.POOL2D].handler_cls(
             context,
-            Pool2dEmitter(),
+            registry[OpKind.POOL2D].emitter_cls(),
             builder=_maybe_builder("handle_pool2d_node", _build_with_dtype),
         ),
-        OpKind.POOL3D: Pool3dHandler(
+        OpKind.POOL3D: registry[OpKind.POOL3D].handler_cls(
             context,
-            Pool3dEmitter(),
+            registry[OpKind.POOL3D].emitter_cls(),
             builder=_maybe_builder("handle_pool3d_node", _build_with_dtype),
         ),
-        OpKind.POOL2D_BACKWARD: Pool2dBackwardHandler(
+        OpKind.POOL2D_BACKWARD: registry[OpKind.POOL2D_BACKWARD].handler_cls(
             context,
-            Pool2dBackwardEmitter(),
+            registry[OpKind.POOL2D_BACKWARD].emitter_cls(),
             builder=_maybe_builder(
                 "handle_pool2d_backward_node", _build_with_dtype
             ),
         ),
-        OpKind.POOL1D: Pool1dHandler(
+        OpKind.POOL1D: registry[OpKind.POOL1D].handler_cls(
             context,
-            Pool1dEmitter(),
+            registry[OpKind.POOL1D].emitter_cls(),
             builder=_maybe_builder("handle_pool1d_node", _build_with_dtype),
         ),
-        OpKind.COL2IM: Col2imHandler(
+        OpKind.COL2IM: registry[OpKind.COL2IM].handler_cls(
             context,
-            Col2imEmitter(),
+            registry[OpKind.COL2IM].emitter_cls(),
             builder=_maybe_builder("handle_col2im_node", _build_with_dtype),
         ),
-        OpKind.BATCH_NORM: BatchNormHandler(
+        OpKind.BATCH_NORM: registry[OpKind.BATCH_NORM].handler_cls(
             context,
-            BatchNormEmitter(),
+            registry[OpKind.BATCH_NORM].emitter_cls(),
             builder=_maybe_builder("handle_batch_norm_node", _build_with_scalar),
         ),
-        OpKind.PDIST: PdistHandler(
+        OpKind.PDIST: registry[OpKind.PDIST].handler_cls(
             context,
-            PdistEmitter(),
+            registry[OpKind.PDIST].emitter_cls(),
             builder=_maybe_builder("handle_pdist_node", _build_with_dtype),
         ),
-        OpKind.CDIST: CdistHandler(
+        OpKind.CDIST: registry[OpKind.CDIST].handler_cls(
             context,
-            CdistEmitter(),
+            registry[OpKind.CDIST].emitter_cls(),
             builder=_maybe_builder("handle_cdist_node", _build_with_dtype),
         ),
-        OpKind.CONV1D: Conv1dHandler(
+        OpKind.CONV1D: registry[OpKind.CONV1D].handler_cls(
             context,
-            Conv1dEmitter(),
+            registry[OpKind.CONV1D].emitter_cls(),
             builder=_maybe_builder("handle_conv1d_node", _build_with_dtype),
         ),
-        OpKind.CONV2D: Conv2dHandler(
+        OpKind.CONV2D: registry[OpKind.CONV2D].handler_cls(
             context,
-            Conv2dEmitter(),
+            registry[OpKind.CONV2D].emitter_cls(),
             builder=_maybe_builder("handle_conv2d_node", _build_with_dtype),
         ),
-        OpKind.ADDMM: AddmmHandler(
+        OpKind.ADDMM: registry[OpKind.ADDMM].handler_cls(
             context,
-            AddmmEmitter(),
+            registry[OpKind.ADDMM].emitter_cls(),
             builder=_maybe_builder("handle_addmm_like_node", _build_with_inplace),
         ),
-        OpKind.ADDBMM: AddbmmHandler(
+        OpKind.ADDBMM: registry[OpKind.ADDBMM].handler_cls(
             context,
-            AddbmmEmitter(),
+            registry[OpKind.ADDBMM].emitter_cls(),
             builder=_maybe_builder("handle_addmm_like_node", _build_with_inplace),
         ),
-        OpKind.ADDMV: AddmvHandler(
+        OpKind.ADDMV: registry[OpKind.ADDMV].handler_cls(
             context,
-            AddmvEmitter(),
+            registry[OpKind.ADDMV].emitter_cls(),
             builder=_maybe_builder("handle_addmm_like_node", _build_with_inplace),
         ),
-        OpKind.ADDR: AddrHandler(
+        OpKind.ADDR: registry[OpKind.ADDR].handler_cls(
             context,
-            AddrEmitter(),
+            registry[OpKind.ADDR].emitter_cls(),
             builder=_maybe_builder("handle_addmm_like_node", _build_with_inplace),
         ),
-        OpKind.MATMUL: MatmulHandler(context, MatmulEmitter()),
+        OpKind.MATMUL: registry[OpKind.MATMUL].handler_cls(
+            context, registry[OpKind.MATMUL].emitter_cls()
+        ),
     }
