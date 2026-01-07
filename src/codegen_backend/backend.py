@@ -41,8 +41,13 @@ from codegen_backend.kinds import (
     ReductionContext,
     TensorContext,
 )
-from codegen_backend.param_normalize import normalize_int_or_tuple
-from codegen_backend.analysis_helpers import is_out_overload
+from codegen_backend.analysis_helpers import (
+    channels_last_3d_strides,
+    channels_last_strides,
+    is_out_overload,
+    normalize_as_strided_sequence,
+    resolve_scalar_arg,
+)
 from codegen_backend.services import GraphAnalysisService
 from codegen_backend.groups.builtin.elementwise import analysis as elementwise_analysis
 from codegen_backend.groups.builtin.tensor import analysis as tensor_analysis
@@ -51,98 +56,6 @@ from codegen_backend.templates import get_template_env
 
 
 _C_SRC_DIR = Path(__file__).resolve().parents[2] / "csrc"
-
-
-
-def _channels_last_strides(shape: Sequence[int]) -> Tuple[int, ...]:
-    if len(shape) != 4:
-        raise CodegenBackendError("required rank 4 tensor to use channels_last format")
-    batch, channels, height, width = (
-        max(shape[0], 1),
-        max(shape[1], 1),
-        max(shape[2], 1),
-        max(shape[3], 1),
-    )
-    return (
-        height * width * channels,
-        1,
-        width * channels,
-        channels,
-    )
-
-
-def _channels_last_3d_strides(shape: Sequence[int]) -> Tuple[int, ...]:
-    if len(shape) != 5:
-        raise CodegenBackendError(
-            "required rank 5 tensor to use channels_last_3d format"
-        )
-    batch, channels, depth, height, width = (
-        max(shape[0], 1),
-        max(shape[1], 1),
-        max(shape[2], 1),
-        max(shape[3], 1),
-        max(shape[4], 1),
-    )
-    return (
-        depth * height * width * channels,
-        1,
-        height * width * channels,
-        width * channels,
-        channels,
-    )
-
-
-def _normalize_col2im_output_size(
-    op_name: str, value: object
-) -> Tuple[int, int]:
-    if isinstance(value, torch.Size):
-        value = tuple(value)
-    if not isinstance(value, (list, tuple)) or len(value) != 2:
-        raise CodegenBackendError(
-            f"codegen {op_name} expects output_size to be a tuple of two ints"
-        )
-    try:
-        return normalize_int_or_tuple("output_size", value, 2)
-    except ValueError as exc:
-        raise CodegenBackendError(
-            f"codegen {op_name} expects output_size to be a tuple of ints"
-        ) from exc
-
-
-def _resolve_scalar_arg(
-    op_name: str,
-    value: object,
-    scalar_values: Dict[torch.fx.Node, object],
-) -> float | int | bool:
-    if isinstance(value, torch.fx.Node):
-        if value in scalar_values:
-            return _normalize_scalar_value(op_name, scalar_values[value])
-        meta_value = value.meta.get("val")
-        if meta_value is None:
-            meta_value = value.meta.get("example_value")
-        if meta_value is not None:
-            return _normalize_scalar_value(op_name, meta_value)
-        raise CodegenBackendError(f"codegen {op_name} expects a scalar value")
-    return _normalize_scalar_value(op_name, value)
-
-
-def _normalize_as_strided_sequence(
-    op_name: str, value: object, arg_name: str
-) -> Tuple[int, ...]:
-    if isinstance(value, torch.Size):
-        seq = tuple(value)
-    elif isinstance(value, ABCSequence) and not isinstance(value, (str, bytes)):
-        seq = value
-    else:
-        raise CodegenBackendError(
-            f"codegen {op_name} expects {arg_name} to be a sequence"
-        )
-    try:
-        return tuple(int(operator.index(item)) for item in seq)
-    except TypeError as exc:
-        raise CodegenBackendError(
-            f"codegen {op_name} expects {arg_name} entries to be int-like"
-        ) from exc
 
 
 def _resolve_alias(
@@ -2195,8 +2108,8 @@ def _handle_batch_norm_node(
                 f"codegen {op_spec.name} supports only torch.float32"
             )
     try:
-        _ = float(_resolve_scalar_arg(op_spec.name, momentum, scalar_values))
-        eps_value = float(_resolve_scalar_arg(op_spec.name, eps, scalar_values))
+        _ = float(resolve_scalar_arg(op_spec.name, momentum, scalar_values))
+        eps_value = float(resolve_scalar_arg(op_spec.name, eps, scalar_values))
     except (TypeError, ValueError) as exc:
         raise CodegenBackendError(
             f"codegen {op_spec.name} expects eps to be a float"
@@ -2961,8 +2874,8 @@ def _handle_view_node(
             raise CodegenBackendError(
                 "codegen as_strided expects storage_offset to be an int"
             )
-        size_tuple = _normalize_as_strided_sequence(op_spec.name, size, "size")
-        stride_tuple = _normalize_as_strided_sequence(
+        size_tuple = normalize_as_strided_sequence(op_spec.name, size, "size")
+        stride_tuple = normalize_as_strided_sequence(
             op_spec.name, stride, "stride"
         )
         if len(size_tuple) != len(stride_tuple):
@@ -3263,9 +3176,9 @@ def _handle_resize_node(
     if memory_format is None or memory_format is torch.contiguous_format:
         output_strides = _contiguous_strides(output_shape)
     elif memory_format is torch.channels_last:
-        output_strides = _channels_last_strides(output_shape)
+        output_strides = channels_last_strides(output_shape)
     elif memory_format is torch.channels_last_3d:
-        output_strides = _channels_last_3d_strides(output_shape)
+        output_strides = channels_last_3d_strides(output_shape)
     else:
         raise CodegenBackendError("Unsupported memory formatPreserve")
     strides[node] = output_strides
