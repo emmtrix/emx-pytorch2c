@@ -209,3 +209,10 @@ def parse_col2im_args(
             "codegen col2im expects input, output_size, kernel_size, dilation, padding, and stride"
         )
     return input_arg, output_size, kernel_size, dilation, padding, stride
+
+
+__all__ = [
+    "parse_col2im_args",
+    "parse_conv1d_args",
+    "parse_conv2d_args",
+]

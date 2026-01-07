@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from codegen_backend.emitters.base import KindEmitter
     from codegen_backend.emitters.registry import KindHandlerRegistration
     from codegen_backend.graph import _GenericGraph, _OpNode
-    from codegen_backend.groups.builtin.reductions.args import ReductionsArgParser
+    from codegen_backend.groups.builtin.reductions.parsing import ReductionsArgParser
     from codegen_backend.specs import _OpSpec
     from codegen_backend.services import GraphAnalysisService
 

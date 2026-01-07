@@ -22,6 +22,15 @@ from codegen_backend.indexing import (
     _emit_strided_access,
     _format_strided_access,
 )
+from codegen_backend.groups.builtin.reductions.parsing import ReductionsArgParser
+from codegen_backend.groups.builtin.tensor.parsing import (
+    parse_addmm_like_args,
+    parse_cumsum_args,
+    parse_diagonal_args,
+    parse_gather_args,
+    parse_linear_args,
+    parse_resize_size,
+)
 from codegen_backend.groups.registry import get_group_registry
 from codegen_backend.kinds import OpNodeBuildResult
 from codegen_backend.analysis_helpers import (
@@ -36,6 +45,11 @@ from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.graph_builder import GraphBuilder
 from codegen_backend.ops_parsing import _parse_where_inputs
 from codegen_backend.parser import Parser
+from codegen_backend.parsing.common import (
+    parse_constant_bool,
+    parse_constant_float,
+    parse_constant_int,
+)
 from codegen_backend.services import GraphAnalysisService
 from codegen_backend.specs import OpKind, _OpSpec
 from codegen_backend.templates import get_template_env
@@ -115,136 +129,6 @@ def _normalize_param(normalizer: Callable[..., Any], *args: Any, **kwargs: Any) 
         raise CodegenBackendError(str(exc)) from exc
 
 
-def _constant_error_message(
-    op_name: str, name: str, expected_type: type, *, node_error: bool = False
-) -> str:
-    if expected_type is int:
-        return f"codegen {op_name} expects {name} to be an int"
-    if expected_type is bool:
-        return f"codegen {op_name} expects {name} to be a bool"
-    if expected_type is float:
-        if node_error:
-            return f"codegen {op_name} expects {name} to be constant"
-        return f"codegen {op_name} expects {name} to be numeric"
-    raise ValueError(f"Unsupported expected type: {expected_type}")
-
-
-def resolve_node_constant(
-    value: object,
-    expected_type: type,
-    *,
-    fallback_meta_keys: Tuple[str, ...] = ("val", "example_value"),
-    allow_scalar_tensor: bool = False,
-    op_name: str,
-    name: str,
-) -> object:
-    type_error_message = _constant_error_message(op_name, name, expected_type)
-    node_error_message = _constant_error_message(
-        op_name, name, expected_type, node_error=True
-    )
-    if isinstance(value, torch.fx.Node):
-        for key in fallback_meta_keys:
-            if key in value.meta:
-                value = value.meta[key]
-                break
-        else:
-            keys_list = ", ".join(fallback_meta_keys)
-            raise CodegenBackendError(
-                f"{node_error_message}; missing node.meta for keys: {keys_list}"
-            )
-    if allow_scalar_tensor and isinstance(value, torch.Tensor):
-        if value.numel() != 1:
-            raise CodegenBackendError(type_error_message)
-        value = value.item()
-    if expected_type is int:
-        if isinstance(value, bool):
-            raise CodegenBackendError(type_error_message)
-        if isinstance(value, str):
-            try:
-                return int(value)
-            except ValueError as exc:
-                raise CodegenBackendError(type_error_message) from exc
-        if isinstance(value, float):
-            if value.is_integer():
-                return int(value)
-            raise CodegenBackendError(type_error_message)
-        try:
-            return operator.index(value)
-        except TypeError as exc:
-            raise CodegenBackendError(type_error_message) from exc
-    if expected_type is bool:
-        if isinstance(value, bool):
-            return value
-        raise CodegenBackendError(type_error_message)
-    if expected_type is float:
-        if isinstance(value, bool):
-            return float(value)
-        if isinstance(value, (int, float)):
-            return float(value)
-        raise CodegenBackendError(type_error_message)
-    raise ValueError(f"Unsupported expected type: {expected_type}")
-
-
-def _parse_constant_float(op_name: str, name: str, value: object) -> float:
-    return resolve_node_constant(value, float, op_name=op_name, name=name)
-
-
-def _parse_constant_int(op_name: str, name: str, value: object) -> int:
-    return resolve_node_constant(
-        value,
-        int,
-        allow_scalar_tensor=True,
-        op_name=op_name,
-        name=name,
-    )
-
-
-def _parse_constant_bool(op_name: str, name: str, value: object) -> bool:
-    return resolve_node_constant(
-        value,
-        bool,
-        allow_scalar_tensor=True,
-        op_name=op_name,
-        name=name,
-    )
-
-
-def _parse_bitwise_scalar(
-    op_name: str, value: object, dtype: torch.dtype
-) -> object:
-    if isinstance(value, torch.fx.Node):
-        meta_value = value.meta.get("val") or value.meta.get("example_value")
-        if meta_value is None:
-            raise CodegenBackendError(
-                f"codegen {op_name} expects scalar to be constant"
-            )
-        return _parse_bitwise_scalar(op_name, meta_value, dtype)
-    if isinstance(value, torch.Tensor):
-        if value.numel() != 1:
-            raise CodegenBackendError(
-                f"codegen {op_name} expects scalar to be a single value"
-            )
-        return _parse_bitwise_scalar(op_name, value.item(), dtype)
-    if dtype is torch.bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, float):
-            if not value.is_integer():
-                raise CodegenBackendError(
-                    f"codegen {op_name} expects scalar to be a boolean value"
-                )
-            return bool(int(value))
-        try:
-            return bool(operator.index(value))
-        except TypeError as exc:
-            raise CodegenBackendError(
-                f"codegen {op_name} expects scalar to be a boolean value"
-            ) from exc
-    if isinstance(value, bool):
-        return int(value)
-    return _parse_constant_int(op_name, "scalar", value)
-
-
 def _parse_parametric_unary_args(
     op_name: str, node: torch.fx.Node
 ) -> Tuple[torch.fx.Node, Dict[str, object]]:
@@ -294,13 +178,13 @@ def _parse_parametric_unary_args(
             raise CodegenBackendError(
                 f"codegen elu got unexpected kwargs: {sorted(extra)}"
             )
-        params["alpha"] = _parse_constant_float(
+        params["alpha"] = parse_constant_float(
             op_name, "alpha", params.get("alpha", 1.0)
         )
-        params["scale"] = _parse_constant_float(
+        params["scale"] = parse_constant_float(
             op_name, "scale", params.get("scale", 1.0)
         )
-        params["input_scale"] = _parse_constant_float(
+        params["input_scale"] = parse_constant_float(
             op_name, "input_scale", params.get("input_scale", 1.0)
         )
         return input_node, params
@@ -320,7 +204,7 @@ def _parse_parametric_unary_args(
             raise CodegenBackendError(
                 f"codegen leaky_relu got unexpected kwargs: {sorted(extra)}"
             )
-        params["negative_slope"] = _parse_constant_float(
+        params["negative_slope"] = parse_constant_float(
             op_name, "negative_slope", params.get("negative_slope", 0.01)
         )
         return input_node, params
@@ -346,10 +230,10 @@ def _parse_parametric_unary_args(
             raise CodegenBackendError(
                 f"codegen softplus got unexpected kwargs: {sorted(extra)}"
             )
-        params["beta"] = _parse_constant_float(
+        params["beta"] = parse_constant_float(
             op_name, "beta", params.get("beta", 1.0)
         )
-        params["threshold"] = _parse_constant_float(
+        params["threshold"] = parse_constant_float(
             op_name, "threshold", params.get("threshold", 20.0)
         )
         return input_node, params
@@ -374,11 +258,11 @@ def _parse_parametric_unary_args(
                 f"codegen clamp got unexpected kwargs: {sorted(extra)}"
             )
         if params.get("min_val") is not None:
-            params["min_val"] = _parse_constant_float(
+            params["min_val"] = parse_constant_float(
                 op_name, "min", params["min_val"]
             )
         if params.get("max_val") is not None:
-            params["max_val"] = _parse_constant_float(
+            params["max_val"] = parse_constant_float(
                 op_name, "max", params["max_val"]
             )
         return input_node, params
@@ -402,308 +286,14 @@ def _parse_parametric_unary_args(
             raise CodegenBackendError(
                 f"codegen hardtanh got unexpected kwargs: {sorted(extra)}"
             )
-        params["min_val"] = _parse_constant_float(
+        params["min_val"] = parse_constant_float(
             op_name, "min_val", params.get("min_val", -1.0)
         )
-        params["max_val"] = _parse_constant_float(
+        params["max_val"] = parse_constant_float(
             op_name, "max_val", params.get("max_val", 1.0)
         )
         return input_node, params
     raise CodegenBackendError(f"Unsupported parametric op: {op_name}")
-
-
-def _parse_diagonal_args(
-    op_name: str, node: torch.fx.Node, input_shape: Sequence[int]
-) -> Tuple[int, int, int]:
-    if not node.args:
-        raise CodegenBackendError(f"codegen {op_name} expects one input")
-    if len(node.args) > 4:
-        raise CodegenBackendError(f"codegen {op_name} expects at most four inputs")
-    offset = node.args[1] if len(node.args) > 1 else 0
-    dim1 = node.args[2] if len(node.args) > 2 else 0
-    dim2 = node.args[3] if len(node.args) > 3 else 1
-    if node.kwargs:
-        if "offset" in node.kwargs:
-            if len(node.args) > 1:
-                raise _error_kwarg_specified_once(op_name, "offset")
-            offset = node.kwargs["offset"]
-        if "dim1" in node.kwargs:
-            if len(node.args) > 2:
-                raise _error_kwarg_specified_once(op_name, "dim1")
-            dim1 = node.kwargs["dim1"]
-        if "dim2" in node.kwargs:
-            if len(node.args) > 3:
-                raise _error_kwarg_specified_once(op_name, "dim2")
-            dim2 = node.kwargs["dim2"]
-        extra = set(node.kwargs) - {"offset", "dim1", "dim2"}
-        if extra:
-            raise CodegenBackendError(
-                f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
-            )
-    offset_value = _parse_constant_int(op_name, "offset", offset)
-    dim1_value = _parse_constant_int(op_name, "dim1", dim1)
-    dim2_value = _parse_constant_int(op_name, "dim2", dim2)
-    rank = len(input_shape)
-    if rank < 2:
-        raise CodegenBackendError(f"codegen {op_name} expects input rank >= 2")
-    if dim1_value < 0:
-        dim1_value += rank
-    if dim2_value < 0:
-        dim2_value += rank
-    if dim1_value < 0 or dim1_value >= rank:
-        raise CodegenBackendError(f"codegen {op_name} dim1 is out of range")
-    if dim2_value < 0 or dim2_value >= rank:
-        raise CodegenBackendError(f"codegen {op_name} dim2 is out of range")
-    if dim1_value == dim2_value:
-        raise CodegenBackendError(f"codegen {op_name} expects dim1 != dim2")
-    return offset_value, dim1_value, dim2_value
-
-
-def _parse_cumsum_args(
-    op_name: str, node: torch.fx.Node, input_shape: Sequence[int]
-) -> Tuple[int, torch.dtype | None]:
-    if not node.args:
-        raise CodegenBackendError(f"codegen {op_name} expects one input")
-    if len(node.args) > 3:
-        raise CodegenBackendError(
-            f"codegen {op_name} expects at most three inputs (self, dim, dtype)"
-        )
-    dim = node.args[1] if len(node.args) > 1 else None
-    dtype = node.args[2] if len(node.args) > 2 else None
-    if node.kwargs:
-        if "dim" in node.kwargs:
-            if dim is not None:
-                raise _error_kwarg_specified_once(op_name, "dim")
-            dim = node.kwargs["dim"]
-        if "dtype" in node.kwargs:
-            if dtype is not None:
-                raise _error_kwarg_specified_once(op_name, "dtype")
-            dtype = node.kwargs["dtype"]
-        extra = set(node.kwargs) - {"dim", "dtype"}
-        if extra:
-            raise CodegenBackendError(
-                f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
-            )
-    if dim is None:
-        raise CodegenBackendError(f"codegen {op_name} expects dim to be an int")
-    if isinstance(dim, (tuple, list)):
-        raise CodegenBackendError(f"codegen {op_name} expects dim to be an int")
-    dim_value = _parse_constant_int(op_name, "dim", dim)
-    rank = len(input_shape)
-    if rank == 0:
-        if dim_value not in (-1, 0):
-            raise CodegenBackendError(f"codegen {op_name} dim is out of range")
-        dim_value = 0
-    else:
-        if dim_value < 0:
-            dim_value += rank
-        if dim_value < 0 or dim_value >= rank:
-            raise CodegenBackendError(f"codegen {op_name} dim is out of range")
-    if dtype is not None:
-        if isinstance(dtype, torch.fx.Node):
-            meta_value = dtype.meta.get("val") or dtype.meta.get("example_value")
-            if meta_value is None:
-                raise CodegenBackendError(
-                    f"codegen {op_name} expects dtype to be torch.float32, torch.int8, or torch.int32"
-                )
-            dtype = meta_value
-        if dtype not in (torch.float32, torch.int8, torch.int32):
-            raise CodegenBackendError(
-                f"codegen {op_name} expects dtype to be torch.float32, torch.int8, or torch.int32"
-            )
-    return dim_value, dtype
-
-
-def _parse_gather_args(
-    node: torch.fx.Node,
-) -> Tuple[object, object, object, object]:
-    if len(node.args) > 4:
-        raise CodegenBackendError("codegen gather expects at most four inputs")
-    if not node.args:
-        raise CodegenBackendError("codegen gather expects input, dim, and index")
-    input_arg = node.args[0]
-    dim = node.args[1] if len(node.args) > 1 else None
-    index = node.args[2] if len(node.args) > 2 else None
-    sparse_grad = node.args[3] if len(node.args) > 3 else None
-    if node.kwargs:
-        if "dim" in node.kwargs:
-            if dim is not None:
-                raise _error_kwarg_specified_once("gather", "dim")
-            dim = node.kwargs["dim"]
-        if "index" in node.kwargs:
-            if index is not None:
-                raise _error_kwarg_specified_once("gather", "index")
-            index = node.kwargs["index"]
-        if "sparse_grad" in node.kwargs:
-            if sparse_grad is not None:
-                raise _error_kwarg_specified_once("gather", "sparse_grad")
-            sparse_grad = node.kwargs["sparse_grad"]
-        extra = set(node.kwargs) - {"dim", "index", "sparse_grad"}
-        if extra:
-            raise CodegenBackendError(
-                f"codegen gather got unexpected kwargs: {sorted(extra)}"
-            )
-    if dim is None or index is None:
-        raise CodegenBackendError("codegen gather expects dim and index arguments")
-    if sparse_grad is None:
-        sparse_grad = False
-    return input_arg, dim, index, sparse_grad
-
-
-def _parse_embedding_args(
-    node: torch.fx.Node,
-) -> Tuple[object, object, int, bool, bool]:
-    op_name = "embedding"
-    if len(node.args) < 2:
-        raise CodegenBackendError(f"codegen {op_name} expects weight and indices")
-    if len(node.args) > 5:
-        raise CodegenBackendError(
-            f"codegen {op_name} expects at most five arguments"
-        )
-    weight = node.args[0]
-    indices = node.args[1]
-    padding_idx = node.args[2] if len(node.args) > 2 else -1
-    scale_grad_by_freq = node.args[3] if len(node.args) > 3 else False
-    sparse = node.args[4] if len(node.args) > 4 else False
-    if node.kwargs:
-        if "padding_idx" in node.kwargs:
-            if len(node.args) > 2:
-                raise _error_kwarg_specified_once(op_name, "padding_idx")
-            padding_idx = node.kwargs["padding_idx"]
-        if "scale_grad_by_freq" in node.kwargs:
-            if len(node.args) > 3:
-                raise _error_kwarg_specified_once(op_name, "scale_grad_by_freq")
-            scale_grad_by_freq = node.kwargs["scale_grad_by_freq"]
-        if "sparse" in node.kwargs:
-            if len(node.args) > 4:
-                raise _error_kwarg_specified_once(op_name, "sparse")
-            sparse = node.kwargs["sparse"]
-        extra = set(node.kwargs) - {
-            "padding_idx",
-            "scale_grad_by_freq",
-            "sparse",
-        }
-        if extra:
-            raise CodegenBackendError(
-                f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
-            )
-    padding_idx_value = _parse_constant_int(op_name, "padding_idx", padding_idx)
-    scale_grad_value = _parse_constant_bool(
-        op_name, "scale_grad_by_freq", scale_grad_by_freq
-    )
-    sparse_value = _parse_constant_bool(op_name, "sparse", sparse)
-    return weight, indices, padding_idx_value, scale_grad_value, sparse_value
-
-
-def _parse_embedding_bag_args(
-    node: torch.fx.Node,
-) -> Tuple[object, object, object, bool, int, bool, object, bool, int]:
-    op_name = "_embedding_bag"
-    if len(node.args) < 3:
-        raise CodegenBackendError(
-            f"codegen {op_name} expects weight, indices, and offsets"
-        )
-    if len(node.args) > 9:
-        raise CodegenBackendError(
-            f"codegen {op_name} expects at most nine arguments"
-        )
-    weight = node.args[0]
-    indices = node.args[1]
-    offsets = node.args[2]
-    scale_grad_by_freq = node.args[3] if len(node.args) > 3 else False
-    mode = node.args[4] if len(node.args) > 4 else 0
-    sparse = node.args[5] if len(node.args) > 5 else False
-    per_sample_weights = node.args[6] if len(node.args) > 6 else None
-    include_last_offset = node.args[7] if len(node.args) > 7 else False
-    padding_idx = node.args[8] if len(node.args) > 8 else -1
-    if node.kwargs:
-        if "scale_grad_by_freq" in node.kwargs:
-            if len(node.args) > 3:
-                raise _error_kwarg_specified_once(op_name, "scale_grad_by_freq")
-            scale_grad_by_freq = node.kwargs["scale_grad_by_freq"]
-        if "mode" in node.kwargs:
-            if len(node.args) > 4:
-                raise _error_kwarg_specified_once(op_name, "mode")
-            mode = node.kwargs["mode"]
-        if "sparse" in node.kwargs:
-            if len(node.args) > 5:
-                raise _error_kwarg_specified_once(op_name, "sparse")
-            sparse = node.kwargs["sparse"]
-        if "per_sample_weights" in node.kwargs:
-            if len(node.args) > 6:
-                raise _error_kwarg_specified_once(op_name, "per_sample_weights")
-            per_sample_weights = node.kwargs["per_sample_weights"]
-        if "include_last_offset" in node.kwargs:
-            if len(node.args) > 7:
-                raise _error_kwarg_specified_once(op_name, "include_last_offset")
-            include_last_offset = node.kwargs["include_last_offset"]
-        if "padding_idx" in node.kwargs:
-            if len(node.args) > 8:
-                raise _error_kwarg_specified_once(op_name, "padding_idx")
-            padding_idx = node.kwargs["padding_idx"]
-        extra = set(node.kwargs) - {
-            "scale_grad_by_freq",
-            "mode",
-            "sparse",
-            "per_sample_weights",
-            "include_last_offset",
-            "padding_idx",
-        }
-        if extra:
-            raise CodegenBackendError(
-                f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
-            )
-    scale_grad_value = _parse_constant_bool(
-        op_name, "scale_grad_by_freq", scale_grad_by_freq
-    )
-    mode_value = _parse_constant_int(op_name, "mode", mode)
-    sparse_value = _parse_constant_bool(op_name, "sparse", sparse)
-    include_last_offset_value = _parse_constant_bool(
-        op_name, "include_last_offset", include_last_offset
-    )
-    padding_idx_value = _parse_constant_int(op_name, "padding_idx", padding_idx)
-    return (
-        weight,
-        indices,
-        offsets,
-        scale_grad_value,
-        mode_value,
-        sparse_value,
-        per_sample_weights,
-        include_last_offset_value,
-        padding_idx_value,
-    )
-
-
-def _parse_addmm_like_scalar(
-    op_name: str, name: str, value: object | None
-) -> float:
-    if value is None:
-        return 1.0
-    if isinstance(value, torch.fx.Node):
-        meta_value = value.meta.get("val") or value.meta.get("example_value")
-        if meta_value is None:
-            raise CodegenBackendError(f"codegen {op_name} expects {name} to be a number")
-        return _parse_addmm_like_scalar(op_name, name, meta_value)
-    if isinstance(value, bool):
-        raise CodegenBackendError(f"codegen {op_name} expects {name} to be a number")
-    if isinstance(value, torch.Tensor):
-        if value.numel() != 1:
-            raise CodegenBackendError(f"codegen {op_name} expects {name} to be a number")
-        return float(value.item())
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError as exc:
-            raise CodegenBackendError(
-                f"codegen {op_name} expects {name} to be a number"
-            ) from exc
-    try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
-        raise CodegenBackendError(
-            f"codegen {op_name} expects {name} to be a number"
-        ) from exc
 
 
 def _validate_addmm_like_scalars(
@@ -715,640 +305,6 @@ def _validate_addmm_like_scalars(
                 raise CodegenBackendError(
                     f"codegen {op_name} expects {name} to be an integer for integral tensors"
                 )
-
-
-def _parse_addmm_like_args(
-    op_name: str, node: torch.fx.Node
-) -> Tuple[Sequence[torch.fx.Node], float, float]:
-    if len(node.args) < 3:
-        raise CodegenBackendError(f"codegen {op_name} expects at least three inputs")
-    if len(node.args) > 5:
-        raise CodegenBackendError(f"codegen {op_name} expects at most five inputs")
-    input_node, mat1_node, mat2_node = node.args[:3]
-    beta = node.args[3] if len(node.args) > 3 else None
-    alpha = node.args[4] if len(node.args) > 4 else None
-    if node.kwargs:
-        if "beta" in node.kwargs:
-            if beta is not None:
-                raise _error_kwarg_specified_once(op_name, "beta")
-            beta = node.kwargs["beta"]
-        if "alpha" in node.kwargs:
-            if alpha is not None:
-                raise _error_kwarg_specified_once(op_name, "alpha")
-            alpha = node.kwargs["alpha"]
-        extra = set(node.kwargs) - {"beta", "alpha"}
-        if extra:
-            raise CodegenBackendError(
-                f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
-            )
-    return (
-        (input_node, mat1_node, mat2_node),
-        _parse_addmm_like_scalar(op_name, "alpha", alpha),
-        _parse_addmm_like_scalar(op_name, "beta", beta),
-    )
-
-
-def _parse_linear_args(
-    op_name: str, node: torch.fx.Node
-) -> Tuple[object, object, object | None]:
-    if len(node.args) < 2:
-        raise CodegenBackendError(f"codegen {op_name} expects at least two inputs")
-    if len(node.args) > 3:
-        raise CodegenBackendError(f"codegen {op_name} expects at most three inputs")
-    input_node, weight_node = node.args[:2]
-    bias = node.args[2] if len(node.args) > 2 else None
-    if node.kwargs:
-        if "bias" in node.kwargs:
-            if bias is not None:
-                raise _error_kwarg_specified_once(op_name, "bias")
-            bias = node.kwargs["bias"]
-        extra = set(node.kwargs) - {"bias"}
-        if extra:
-            raise CodegenBackendError(
-                f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
-            )
-    return input_node, weight_node, bias
-
-
-def _parse_concat_args(
-    node: torch.fx.Node,
-) -> Tuple[Sequence[torch.fx.Node], int]:
-    if not node.args:
-        raise CodegenBackendError("codegen cat expects a tensor list input")
-    if len(node.args) > 2:
-        raise CodegenBackendError("codegen cat expects at most two inputs")
-    tensors_arg = node.args[0]
-    dim = node.args[1] if len(node.args) > 1 else None
-    if node.kwargs:
-        if "dim" in node.kwargs:
-            if dim is not None:
-                raise _error_kwarg_specified_once("cat", "dim")
-            dim = node.kwargs["dim"]
-        extra = set(node.kwargs) - {"dim"}
-        if extra:
-            raise CodegenBackendError(
-                f"codegen cat got unexpected kwargs: {sorted(extra)}"
-            )
-    if isinstance(dim, torch.fx.Node):
-        raise CodegenBackendError("codegen cat expects dim to be an int")
-    if dim is None:
-        dim_value = 0
-    else:
-        try:
-            dim_value = operator.index(dim)
-        except TypeError as exc:
-            raise CodegenBackendError("codegen cat expects dim to be an int") from exc
-    if not isinstance(tensors_arg, (list, tuple)) or not tensors_arg:
-        raise CodegenBackendError("codegen cat expects a non-empty tensor list input")
-    for item in tensors_arg:
-        if not isinstance(item, torch.fx.Node):
-            raise _error_expected_tensor("cat")
-    return list(tensors_arg), dim_value
-
-
-def _parse_conv2d_args(
-    node: torch.fx.Node,
-) -> Tuple[
-    torch.fx.Node,
-    torch.fx.Node,
-    object,
-    object,
-    object,
-    object,
-    object,
-    object,
-    object,
-]:
-    args = list(node.args)
-    kwargs = dict(node.kwargs)
-    if len(args) < 2 or len(args) > 9:
-        raise CodegenBackendError("codegen conv2d expects convolution arguments")
-    input_arg = args[0]
-    weight_arg = args[1]
-    bias = None
-    stride = 1
-    padding = 0
-    dilation = 1
-    groups = 1
-    transposed = False
-    output_padding: object = (0, 0)
-    remaining = args[2:]
-    if len(args) <= 7:
-        if len(remaining) >= 1:
-            bias = remaining[0]
-        if len(remaining) >= 2:
-            stride = remaining[1]
-        if len(remaining) >= 3:
-            padding = remaining[2]
-        if len(remaining) >= 4:
-            dilation = remaining[3]
-        if len(remaining) >= 5:
-            groups = remaining[4]
-    elif len(args) in {8, 9}:
-        if len(args) == 8:
-            (
-                stride,
-                padding,
-                dilation,
-                transposed,
-                output_padding,
-                groups,
-            ) = remaining
-        else:
-            (
-                bias,
-                stride,
-                padding,
-                dilation,
-                transposed,
-                output_padding,
-                groups,
-            ) = remaining
-
-    if kwargs:
-        extra = set(kwargs) - {
-            "bias",
-            "stride",
-            "padding",
-            "dilation",
-            "groups",
-            "transposed",
-            "output_padding",
-        }
-        if extra:
-            raise CodegenBackendError(
-                f"codegen conv2d got unexpected kwargs: {sorted(extra)}"
-            )
-        if "bias" in kwargs:
-            bias = kwargs["bias"]
-        if "stride" in kwargs:
-            stride = kwargs["stride"]
-        if "padding" in kwargs:
-            padding = kwargs["padding"]
-        if "dilation" in kwargs:
-            dilation = kwargs["dilation"]
-        if "groups" in kwargs:
-            groups = kwargs["groups"]
-        if "transposed" in kwargs:
-            transposed = kwargs["transposed"]
-        if "output_padding" in kwargs:
-            output_padding = kwargs["output_padding"]
-
-    return (
-        input_arg,
-        weight_arg,
-        bias,
-        stride,
-        padding,
-        dilation,
-        transposed,
-        output_padding,
-        groups,
-    )
-
-
-def _parse_conv1d_args(
-    node: torch.fx.Node,
-) -> Tuple[
-    torch.fx.Node,
-    torch.fx.Node,
-    object,
-    object,
-    object,
-    object,
-    object,
-]:
-    args = list(node.args)
-    kwargs = dict(node.kwargs)
-    if len(args) < 2 or len(args) > 7:
-        raise CodegenBackendError("codegen conv1d expects convolution arguments")
-    input_arg = args[0]
-    weight_arg = args[1]
-    bias = None
-    stride = 1
-    padding = 0
-    dilation = 1
-    groups = 1
-    remaining = args[2:]
-    if len(remaining) >= 1:
-        bias = remaining[0]
-    if len(remaining) >= 2:
-        stride = remaining[1]
-    if len(remaining) >= 3:
-        padding = remaining[2]
-    if len(remaining) >= 4:
-        dilation = remaining[3]
-    if len(remaining) >= 5:
-        groups = remaining[4]
-
-    if kwargs:
-        extra = set(kwargs) - {"bias", "stride", "padding", "dilation", "groups"}
-        if extra:
-            raise CodegenBackendError(
-                f"codegen conv1d got unexpected kwargs: {sorted(extra)}"
-            )
-        if "bias" in kwargs:
-            bias = kwargs["bias"]
-        if "stride" in kwargs:
-            stride = kwargs["stride"]
-        if "padding" in kwargs:
-            padding = kwargs["padding"]
-        if "dilation" in kwargs:
-            dilation = kwargs["dilation"]
-        if "groups" in kwargs:
-            groups = kwargs["groups"]
-
-    return (input_arg, weight_arg, bias, stride, padding, dilation, groups)
-
-
-def _parse_col2im_args(
-    node: torch.fx.Node,
-) -> Tuple[torch.fx.Node, object, object, object, object, object]:
-    args = list(node.args)
-    kwargs = dict(node.kwargs)
-    if len(args) < 1 or len(args) > 6:
-        raise CodegenBackendError(
-            "codegen col2im expects input, output_size, kernel_size, dilation, padding, and stride"
-        )
-    input_arg = args[0] if len(args) >= 1 else None
-    output_size = args[1] if len(args) >= 2 else None
-    kernel_size = args[2] if len(args) >= 3 else None
-    dilation = args[3] if len(args) >= 4 else None
-    padding = args[4] if len(args) >= 5 else None
-    stride = args[5] if len(args) >= 6 else None
-    if kwargs:
-        extra = set(kwargs) - {
-            "output_size",
-            "kernel_size",
-            "dilation",
-            "padding",
-            "stride",
-        }
-        if extra:
-            raise CodegenBackendError(
-                f"codegen col2im got unexpected kwargs: {sorted(extra)}"
-            )
-        if "output_size" in kwargs:
-            output_size = kwargs["output_size"]
-        if "kernel_size" in kwargs:
-            kernel_size = kwargs["kernel_size"]
-        if "dilation" in kwargs:
-            dilation = kwargs["dilation"]
-        if "padding" in kwargs:
-            padding = kwargs["padding"]
-        if "stride" in kwargs:
-            stride = kwargs["stride"]
-    if (
-        input_arg is None
-        or output_size is None
-        or kernel_size is None
-        or dilation is None
-        or padding is None
-        or stride is None
-    ):
-        raise CodegenBackendError(
-            "codegen col2im expects input, output_size, kernel_size, dilation, padding, and stride"
-        )
-    return input_arg, output_size, kernel_size, dilation, padding, stride
-
-
-def _parse_max_pool1d_args(
-    node: torch.fx.Node,
-) -> Tuple[torch.fx.Node, object, object, object, object, object]:
-    args = list(node.args)
-    kwargs = dict(node.kwargs)
-    if len(args) < 2 or len(args) > 6:
-        raise CodegenBackendError("codegen max_pool1d expects pooling arguments")
-    input_arg = args[0]
-    kernel_size = args[1]
-    stride = None
-    padding = 0
-    dilation = 1
-    ceil_mode = False
-    remaining = args[2:]
-    if len(remaining) >= 1:
-        stride = remaining[0]
-    if len(remaining) >= 2:
-        padding = remaining[1]
-    if len(remaining) >= 3:
-        dilation = remaining[2]
-    if len(remaining) >= 4:
-        ceil_mode = remaining[3]
-    if kwargs:
-        extra = set(kwargs) - {
-            "kernel_size",
-            "stride",
-            "padding",
-            "dilation",
-            "ceil_mode",
-        }
-        if extra:
-            raise CodegenBackendError(
-                f"codegen max_pool1d got unexpected kwargs: {sorted(extra)}"
-            )
-        if "kernel_size" in kwargs:
-            kernel_size = kwargs["kernel_size"]
-        if "stride" in kwargs:
-            stride = kwargs["stride"]
-        if "padding" in kwargs:
-            padding = kwargs["padding"]
-        if "dilation" in kwargs:
-            dilation = kwargs["dilation"]
-        if "ceil_mode" in kwargs:
-            ceil_mode = kwargs["ceil_mode"]
-    return input_arg, kernel_size, stride, padding, dilation, ceil_mode
-
-
-def _parse_avg_pool1d_args(
-    node: torch.fx.Node,
-) -> Tuple[torch.fx.Node, object, object, object, object, object, object]:
-    args = list(node.args)
-    kwargs = dict(node.kwargs)
-    if len(args) < 2 or len(args) > 7:
-        raise CodegenBackendError("codegen avg_pool1d expects pooling arguments")
-    input_arg = args[0]
-    kernel_size = args[1]
-    stride = None
-    padding = 0
-    ceil_mode = False
-    count_include_pad = False
-    divisor_override = None
-    remaining = args[2:]
-    if len(remaining) >= 1:
-        stride = remaining[0]
-    if len(remaining) >= 2:
-        padding = remaining[1]
-    if len(remaining) >= 3:
-        ceil_mode = remaining[2]
-    if len(remaining) >= 4:
-        count_include_pad = remaining[3]
-    if len(remaining) >= 5:
-        divisor_override = remaining[4]
-    if kwargs:
-        extra = set(kwargs) - {
-            "kernel_size",
-            "stride",
-            "padding",
-            "ceil_mode",
-            "count_include_pad",
-            "divisor_override",
-        }
-        if extra:
-            raise CodegenBackendError(
-                f"codegen avg_pool1d got unexpected kwargs: {sorted(extra)}"
-            )
-        if "kernel_size" in kwargs:
-            kernel_size = kwargs["kernel_size"]
-        if "stride" in kwargs:
-            stride = kwargs["stride"]
-        if "padding" in kwargs:
-            padding = kwargs["padding"]
-        if "ceil_mode" in kwargs:
-            ceil_mode = kwargs["ceil_mode"]
-        if "count_include_pad" in kwargs:
-            count_include_pad = kwargs["count_include_pad"]
-        if "divisor_override" in kwargs:
-            divisor_override = kwargs["divisor_override"]
-    return (
-        input_arg,
-        kernel_size,
-        stride,
-        padding,
-        ceil_mode,
-        count_include_pad,
-        divisor_override,
-    )
-
-
-def _parse_adaptive_avg_pool1d_args(
-    node: torch.fx.Node,
-) -> Tuple[torch.fx.Node, object]:
-    args = list(node.args)
-    kwargs = dict(node.kwargs)
-    if len(args) < 2 or len(args) > 2:
-        raise CodegenBackendError(
-            "codegen adaptive_avg_pool1d expects input and output_size"
-        )
-    input_arg = args[0]
-    output_size = args[1]
-    if kwargs:
-        if "output_size" in kwargs:
-            if len(args) > 1:
-                raise _error_kwarg_specified_once(
-                    "adaptive_avg_pool1d", "output_size"
-                )
-            output_size = kwargs["output_size"]
-        extra = set(kwargs) - {"output_size"}
-        if extra:
-            raise CodegenBackendError(
-                "codegen adaptive_avg_pool1d got unexpected kwargs: "
-                f"{sorted(extra)}"
-            )
-    return input_arg, output_size
-
-
-def _parse_adaptive_avg_pool2d_args(
-    node: torch.fx.Node,
-) -> Tuple[torch.fx.Node, object]:
-    args = list(node.args)
-    kwargs = dict(node.kwargs)
-    if len(args) < 2 or len(args) > 2:
-        raise CodegenBackendError(
-            "codegen adaptive_avg_pool2d expects input and output_size"
-        )
-    input_arg = args[0]
-    output_size = args[1]
-    if kwargs:
-        if "output_size" in kwargs:
-            if len(args) > 1:
-                raise _error_kwarg_specified_once(
-                    "adaptive_avg_pool2d", "output_size"
-                )
-            output_size = kwargs["output_size"]
-        extra = set(kwargs) - {"output_size"}
-        if extra:
-            raise CodegenBackendError(
-                "codegen adaptive_avg_pool2d got unexpected kwargs: "
-                f"{sorted(extra)}"
-            )
-    return input_arg, output_size
-
-
-def _parse_adaptive_avg_pool3d_args(
-    node: torch.fx.Node,
-) -> Tuple[torch.fx.Node, object]:
-    args = list(node.args)
-    kwargs = dict(node.kwargs)
-    if len(args) < 2 or len(args) > 2:
-        raise CodegenBackendError(
-            "codegen adaptive_avg_pool3d expects input and output_size"
-        )
-    input_arg = args[0]
-    output_size = args[1]
-    if kwargs:
-        if "output_size" in kwargs:
-            if len(args) > 1:
-                raise _error_kwarg_specified_once(
-                    "adaptive_avg_pool3d", "output_size"
-                )
-            output_size = kwargs["output_size"]
-        extra = set(kwargs) - {"output_size"}
-        if extra:
-            raise CodegenBackendError(
-                "codegen adaptive_avg_pool3d got unexpected kwargs: "
-                f"{sorted(extra)}"
-            )
-    return input_arg, output_size
-
-
-def _parse_adaptive_avg_pool2d_backward_args(
-    node: torch.fx.Node,
-) -> Tuple[torch.fx.Node, torch.fx.Node]:
-    args = list(node.args)
-    kwargs = dict(node.kwargs)
-    if len(args) != 2:
-        raise CodegenBackendError(
-            "codegen adaptive_avg_pool2d_backward expects grad_output and input"
-        )
-    if kwargs:
-        raise CodegenBackendError(
-            "codegen adaptive_avg_pool2d_backward expects no keyword arguments"
-        )
-    grad_output = args[0]
-    input_arg = args[1]
-    return grad_output, input_arg
-
-
-def _parse_max_pool2d_args(
-    node: torch.fx.Node,
-) -> Tuple[torch.fx.Node, object, object, object, object, object]:
-    args = list(node.args)
-    kwargs = dict(node.kwargs)
-    if len(args) > 6:
-        raise CodegenBackendError("codegen max_pool2d expects pooling arguments")
-    input_arg = args[0] if len(args) > 0 else None
-    kernel_size = None
-    stride = None
-    padding = 0
-    dilation = 1
-    ceil_mode = False
-    remaining = args[1:]
-    has_kernel_size = len(remaining) >= 1
-    has_stride = len(remaining) >= 2
-    has_padding = len(remaining) >= 3
-    has_dilation = len(remaining) >= 4
-    has_ceil_mode = len(remaining) >= 5
-    if has_kernel_size:
-        kernel_size = remaining[0]
-    if has_stride:
-        stride = remaining[1]
-    if has_padding:
-        padding = remaining[2]
-    if has_dilation:
-        dilation = remaining[3]
-    if has_ceil_mode:
-        ceil_mode = remaining[4]
-    if kwargs:
-        extra = set(kwargs) - {
-            "input",
-            "kernel_size",
-            "stride",
-            "padding",
-            "dilation",
-            "ceil_mode",
-        }
-        if extra:
-            raise CodegenBackendError(
-                f"codegen max_pool2d got unexpected kwargs: {sorted(extra)}"
-            )
-        if "input" in kwargs:
-            if input_arg is not None:
-                raise _error_kwarg_specified_once("max_pool2d", "input")
-            input_arg = kwargs["input"]
-        if "kernel_size" in kwargs:
-            if has_kernel_size:
-                raise _error_kwarg_specified_once("max_pool2d", "kernel_size")
-            kernel_size = kwargs["kernel_size"]
-        if "stride" in kwargs:
-            if has_stride:
-                raise _error_kwarg_specified_once("max_pool2d", "stride")
-            stride = kwargs["stride"]
-        if "padding" in kwargs:
-            if has_padding:
-                raise _error_kwarg_specified_once("max_pool2d", "padding")
-            padding = kwargs["padding"]
-        if "dilation" in kwargs:
-            if has_dilation:
-                raise _error_kwarg_specified_once("max_pool2d", "dilation")
-            dilation = kwargs["dilation"]
-        if "ceil_mode" in kwargs:
-            if has_ceil_mode:
-                raise _error_kwarg_specified_once("max_pool2d", "ceil_mode")
-            ceil_mode = kwargs["ceil_mode"]
-    if input_arg is None or kernel_size is None:
-        raise CodegenBackendError("codegen max_pool2d expects pooling arguments")
-    return input_arg, kernel_size, stride, padding, dilation, ceil_mode
-
-
-def _parse_avg_pool2d_args(
-    node: torch.fx.Node,
-) -> Tuple[torch.fx.Node, object, object, object, object, object, object]:
-    args = list(node.args)
-    kwargs = dict(node.kwargs)
-    if len(args) < 2 or len(args) > 7:
-        raise CodegenBackendError("codegen avg_pool2d expects pooling arguments")
-    input_arg = args[0]
-    kernel_size = args[1]
-    stride = None
-    padding = 0
-    ceil_mode = False
-    count_include_pad = True
-    divisor_override = None
-    remaining = args[2:]
-    if len(remaining) >= 1:
-        stride = remaining[0]
-    if len(remaining) >= 2:
-        padding = remaining[1]
-    if len(remaining) >= 3:
-        ceil_mode = remaining[2]
-    if len(remaining) >= 4:
-        count_include_pad = remaining[3]
-    if len(remaining) >= 5:
-        divisor_override = remaining[4]
-    if kwargs:
-        extra = set(kwargs) - {
-            "kernel_size",
-            "stride",
-            "padding",
-            "ceil_mode",
-            "count_include_pad",
-            "divisor_override",
-        }
-        if extra:
-            raise CodegenBackendError(
-                f"codegen avg_pool2d got unexpected kwargs: {sorted(extra)}"
-            )
-        if "kernel_size" in kwargs:
-            kernel_size = kwargs["kernel_size"]
-        if "stride" in kwargs:
-            stride = kwargs["stride"]
-        if "padding" in kwargs:
-            padding = kwargs["padding"]
-        if "ceil_mode" in kwargs:
-            ceil_mode = kwargs["ceil_mode"]
-        if "count_include_pad" in kwargs:
-            count_include_pad = kwargs["count_include_pad"]
-        if "divisor_override" in kwargs:
-            divisor_override = kwargs["divisor_override"]
-    return (
-        input_arg,
-        kernel_size,
-        stride,
-        padding,
-        ceil_mode,
-        count_include_pad,
-        divisor_override,
-    )
 
 
 def _handle_flip_node(
@@ -1707,7 +663,7 @@ def _handle_addmm_like_node(
     kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _OpNode:
     op_name = op_spec.name
-    input_nodes, alpha, beta = _parse_addmm_like_args(op_name, node)
+    input_nodes, alpha, beta = parse_addmm_like_args(op_name, node)
     input_shapes = []
     for arg in input_nodes:
         if not isinstance(arg, torch.fx.Node):
@@ -1751,7 +707,7 @@ def _handle_linear_node(
     dtypes: Dict[torch.fx.Node, torch.dtype],
     kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _OpNode:
-    input_arg, weight_arg, bias_arg = _parse_linear_args(op_spec.name, node)
+    input_arg, weight_arg, bias_arg = parse_linear_args(op_spec.name, node)
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
         raise _error_expected_tensor(op_spec.name)
     if not isinstance(weight_arg, torch.fx.Node) or weight_arg not in shapes:
@@ -1804,7 +760,7 @@ def _handle_diagonal_node(
         raise CodegenBackendError(
             f"codegen {op_spec.name} expects inputs to share the graph dtype"
         )
-    offset, dim1, dim2 = _parse_diagonal_args(
+    offset, dim1, dim2 = parse_diagonal_args(
         op_spec.name, node, shapes[input_arg]
     )
     op_node = _OpNode(
@@ -1843,7 +799,7 @@ def _handle_cumsum_node(
         raise CodegenBackendError(
             f"codegen {op_spec.name} expects inputs to share the graph dtype"
         )
-    dim, dtype_override = _parse_cumsum_args(
+    dim, dtype_override = parse_cumsum_args(
         op_spec.name, node, shapes[input_arg]
     )
     output_dtype = dtype_override or dtype_info.torch_dtype
@@ -1988,7 +944,7 @@ def _handle_gather_node(
     dtypes: Dict[torch.fx.Node, torch.dtype],
     kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _OpNode:
-    input_arg, dim, index, sparse_grad = _parse_gather_args(node)
+    input_arg, dim, index, sparse_grad = parse_gather_args(node)
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
         raise _error_expected_tensor(op_spec.name)
     if not isinstance(index, torch.fx.Node) or index not in shapes:
@@ -2013,7 +969,7 @@ def _handle_gather_node(
         raise CodegenBackendError(
             "codegen gather expects index to have the same rank as input"
         )
-    dim_value = _parse_constant_int(op_spec.name, "dim", dim)
+    dim_value = parse_constant_int(op_spec.name, "dim", dim)
     if dim_value < 0:
         dim_value += len(input_shape)
     if dim_value < 0 or dim_value >= len(input_shape):
@@ -2189,46 +1145,6 @@ def _handle_fill_node(
     return op_node
 
 
-def _parse_arange_dtype(
-    op_name: str,
-    dtype: torch.dtype | None,
-    dtype_info: _CodegenDType | None,
-    start: float | int | bool,
-    end: float | int | bool,
-    step: float | int | bool,
-) -> _CodegenDType:
-    if dtype is None:
-        if any(
-            not isinstance(value, numbers.Integral)
-            for value in (start, end, step)
-        ):
-            dtype = torch.get_default_dtype()
-        else:
-            dtype = torch.int32
-    if dtype is torch.bool:
-        raise CodegenBackendError(
-            f"codegen {op_name} supports only numeric dtypes"
-        )
-    dtype_spec = _CODEGEN_DTYPES.get(dtype)
-    if dtype_spec is None:
-        supported = ", ".join(
-            f"torch.{supported_dtype.name}"
-            for supported_dtype in _CODEGEN_DTYPES
-            if supported_dtype is not torch.bool
-        )
-        raise CodegenBackendError(
-            f"codegen {op_name} supports only {supported}"
-        )
-    if (
-        dtype_info is not None
-        and dtype_spec.torch_dtype is not dtype_info.torch_dtype
-    ):
-        raise CodegenBackendError(
-            f"codegen {op_name} expects dtype to match the graph dtype"
-        )
-    return dtype_spec
-
-
 def _handle_view_node(
     node: torch.fx.Node,
     op_spec: _OpSpec,
@@ -2359,7 +1275,7 @@ def _handle_view_node(
         unknown_dim = None
         known_product = 1
         for dim in shape_values:
-            dim_value = _parse_constant_int(op_spec.name, "shape", dim)
+            dim_value = parse_constant_int(op_spec.name, "shape", dim)
             if dim_value == -1:
                 if unknown_dim is not None:
                     raise CodegenBackendError(
@@ -2434,7 +1350,7 @@ def _handle_view_node(
                     )
             if dim is None:
                 raise CodegenBackendError("codegen squeeze expects dim to be an int")
-            dim_value = _parse_constant_int(op_spec.name, "dim", dim)
+            dim_value = parse_constant_int(op_spec.name, "dim", dim)
             if dim_value < 0:
                 dim_value += len(input_shape)
             if dim_value < 0 or dim_value >= len(input_shape):
@@ -2464,7 +1380,7 @@ def _handle_view_node(
                 raise CodegenBackendError("codegen squeeze expects dim to be a list")
             dim_values = []
             for dim in dims:
-                dim_value = _parse_constant_int(op_spec.name, "dim", dim)
+                dim_value = parse_constant_int(op_spec.name, "dim", dim)
                 if dim_value < 0:
                     dim_value += len(input_shape)
                 if dim_value < 0 or dim_value >= len(input_shape):
@@ -2500,40 +1416,6 @@ def _handle_view_node(
     raise CodegenBackendError(f"Unsupported view op: {op_spec.name}")
 
 
-def _parse_resize_size(op_name: str, size_value: object) -> Tuple[int, ...]:
-    if isinstance(size_value, torch.Size):
-        size_value = tuple(size_value)
-    if isinstance(size_value, (list, tuple)):
-        try:
-            return tuple(int(operator.index(item)) for item in size_value)
-        except TypeError:
-            try:
-                return tuple(int(item) for item in size_value)
-            except TypeError as exc:
-                raise CodegenBackendError(
-                    f"codegen {op_name} expects size values to be integers"
-                ) from exc
-    raise CodegenBackendError(f"codegen {op_name} expects size to be a sequence")
-
-
-def _parse_empty_strided_stride(
-    op_name: str, stride_value: object
-) -> Tuple[int, ...]:
-    if isinstance(stride_value, torch.Size):
-        stride_value = tuple(stride_value)
-    if isinstance(stride_value, (list, tuple)):
-        try:
-            return tuple(int(operator.index(item)) for item in stride_value)
-        except TypeError:
-            try:
-                return tuple(int(item) for item in stride_value)
-            except TypeError as exc:
-                raise CodegenBackendError(
-                    f"codegen {op_name} expects stride values to be integers"
-                ) from exc
-    raise CodegenBackendError(f"codegen {op_name} expects stride to be a sequence")
-
-
 def _handle_resize_node(
     node: torch.fx.Node,
     op_spec: _OpSpec,
@@ -2562,7 +1444,7 @@ def _handle_resize_node(
         raise CodegenBackendError(
             "codegen resize_ expects inputs to share the graph dtype"
         )
-    size = _parse_resize_size(op_spec.name, size_arg)
+    size = parse_resize_size(op_spec.name, size_arg)
     if any(dim < 0 for dim in size):
         raise CodegenBackendError(
             "codegen resize_ expects size values to be non-negative"

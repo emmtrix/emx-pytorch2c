@@ -58,49 +58,7 @@ def parse_max_pool1d_args(
             dilation = kwargs["dilation"]
         if "ceil_mode" in kwargs:
             ceil_mode = kwargs["ceil_mode"]
-    if isinstance(kernel_size, torch.fx.Node) or isinstance(
-        padding, torch.fx.Node
-    ):
-        raise CodegenBackendError(
-            "codegen max_pool1d expects constant kernel, padding, and ceil_mode"
-        )
-    if stride is None:
-        stride = kernel_size
-    if isinstance(stride, torch.fx.Node) or isinstance(
-        dilation, torch.fx.Node
-    ):
-        raise CodegenBackendError(
-            "codegen max_pool1d expects constant stride, padding, and dilation"
-        )
-    if isinstance(ceil_mode, torch.fx.Node):
-        raise CodegenBackendError(
-            "codegen max_pool1d expects ceil_mode to be a bool"
-        )
-    if ceil_mode:
-        raise CodegenBackendError(
-            "codegen max_pool1d expects ceil_mode to be False"
-        )
-    padding_value = normalize_param(
-        normalize_int_or_tuple, "padding", padding, 1
-    )
-    if padding_value[0] < 0:
-        raise CodegenBackendError(
-            "codegen max_pool1d expects padding to be non-negative"
-        )
-    kernel_value = normalize_param(
-        normalize_int_or_tuple, "kernel_size", kernel_size, 1
-    )
-    stride_value = normalize_param(
-        normalize_int_or_tuple, "stride", stride, 1
-    )
-    dilation_value = normalize_param(
-        normalize_int_or_tuple, "dilation", dilation, 1
-    )
-    if kernel_value[0] <= 0 or stride_value[0] <= 0 or dilation_value[0] <= 0:
-        raise CodegenBackendError(
-            "codegen max_pool1d expects positive kernel, stride, and dilation"
-        )
-    return input_arg, kernel_value, stride_value, padding_value, dilation_value, ceil_mode
+    return input_arg, kernel_size, stride, padding, dilation, ceil_mode
 
 
 def parse_avg_pool1d_args(
@@ -153,67 +111,13 @@ def parse_avg_pool1d_args(
             count_include_pad = kwargs["count_include_pad"]
         if "divisor_override" in kwargs:
             divisor_override = kwargs["divisor_override"]
-    if isinstance(kernel_size, torch.fx.Node) or isinstance(
-        padding, torch.fx.Node
-    ):
-        raise CodegenBackendError(
-            "codegen avg_pool1d expects constant kernel, padding, and ceil_mode"
-        )
-    if stride is None:
-        stride = kernel_size
-    if isinstance(stride, torch.fx.Node):
-        raise CodegenBackendError(
-            "codegen avg_pool1d expects constant stride, padding, and dilation"
-        )
-    if isinstance(ceil_mode, torch.fx.Node):
-        raise CodegenBackendError(
-            "codegen avg_pool1d expects ceil_mode to be a bool"
-        )
-    if ceil_mode:
-        raise CodegenBackendError(
-            "codegen avg_pool1d expects ceil_mode to be False"
-        )
-    padding_value = normalize_param(
-        normalize_int_or_tuple, "padding", padding, 1
-    )
-    if padding_value[0] < 0:
-        raise CodegenBackendError(
-            "codegen avg_pool1d expects padding to be non-negative"
-        )
-    kernel_value = normalize_param(
-        normalize_int_or_tuple, "kernel_size", kernel_size, 1
-    )
-    stride_value = normalize_param(
-        normalize_int_or_tuple, "stride", stride, 1
-    )
-    if kernel_value[0] <= 0 or stride_value[0] <= 0:
-        raise CodegenBackendError(
-            "codegen avg_pool1d expects positive kernel and stride"
-        )
-    if isinstance(count_include_pad, bool):
-        count_include_pad_value = count_include_pad
-    elif isinstance(count_include_pad, numbers.Integral):
-        count_include_pad_value = bool(count_include_pad)
-    else:
-        raise CodegenBackendError(
-            "codegen avg_pool1d expects count_include_pad to be a bool"
-        )
-    if divisor_override is not None:
-        if isinstance(divisor_override, torch.fx.Node):
-            raise CodegenBackendError(
-                "codegen avg_pool1d expects divisor_override to be a number"
-            )
-        if not isinstance(divisor_override, numbers.Integral):
-            raise CodegenBackendError(
-                "codegen avg_pool1d expects divisor_override to be an int"
-            )
     return (
         input_arg,
-        kernel_value,
-        stride_value,
-        padding_value,
+        kernel_size,
+        stride,
+        padding,
         ceil_mode,
-        count_include_pad_value,
+        count_include_pad,
         divisor_override,
     )
 
@@ -230,10 +134,17 @@ def parse_adaptive_avg_pool1d_args(
     input_arg = args[0]
     output_size = args[1]
     if kwargs:
-        extra = set(kwargs)
+        if "output_size" in kwargs:
+            if len(args) > 1:
+                raise error_kwarg_specified_once(
+                    "adaptive_avg_pool1d", "output_size"
+                )
+            output_size = kwargs["output_size"]
+        extra = set(kwargs) - {"output_size"}
         if extra:
             raise CodegenBackendError(
-                f"codegen adaptive_avg_pool1d got unexpected kwargs: {sorted(extra)}"
+                "codegen adaptive_avg_pool1d got unexpected kwargs: "
+                f"{sorted(extra)}"
             )
     return input_arg, output_size
 
@@ -250,10 +161,17 @@ def parse_adaptive_avg_pool2d_args(
     input_arg = args[0]
     output_size = args[1]
     if kwargs:
-        extra = set(kwargs)
+        if "output_size" in kwargs:
+            if len(args) > 1:
+                raise error_kwarg_specified_once(
+                    "adaptive_avg_pool2d", "output_size"
+                )
+            output_size = kwargs["output_size"]
+        extra = set(kwargs) - {"output_size"}
         if extra:
             raise CodegenBackendError(
-                f"codegen adaptive_avg_pool2d got unexpected kwargs: {sorted(extra)}"
+                "codegen adaptive_avg_pool2d got unexpected kwargs: "
+                f"{sorted(extra)}"
             )
     return input_arg, output_size
 
@@ -270,10 +188,17 @@ def parse_adaptive_avg_pool3d_args(
     input_arg = args[0]
     output_size = args[1]
     if kwargs:
-        extra = set(kwargs)
+        if "output_size" in kwargs:
+            if len(args) > 1:
+                raise error_kwarg_specified_once(
+                    "adaptive_avg_pool3d", "output_size"
+                )
+            output_size = kwargs["output_size"]
+        extra = set(kwargs) - {"output_size"}
         if extra:
             raise CodegenBackendError(
-                f"codegen adaptive_avg_pool3d got unexpected kwargs: {sorted(extra)}"
+                "codegen adaptive_avg_pool3d got unexpected kwargs: "
+                f"{sorted(extra)}"
             )
     return input_arg, output_size
 
@@ -283,18 +208,16 @@ def parse_adaptive_avg_pool2d_backward_args(
 ) -> Tuple[torch.fx.Node, torch.fx.Node]:
     args = list(node.args)
     kwargs = dict(node.kwargs)
-    if len(args) < 2 or len(args) > 2:
+    if len(args) != 2:
         raise CodegenBackendError(
             "codegen adaptive_avg_pool2d_backward expects grad_output and input"
         )
+    if kwargs:
+        raise CodegenBackendError(
+            "codegen adaptive_avg_pool2d_backward expects no keyword arguments"
+        )
     grad_output = args[0]
     input_arg = args[1]
-    if kwargs:
-        extra = set(kwargs)
-        if extra:
-            raise CodegenBackendError(
-                f"codegen adaptive_avg_pool2d_backward got unexpected kwargs: {sorted(extra)}"
-            )
     return grad_output, input_arg
 
 
@@ -374,14 +297,14 @@ def parse_avg_pool2d_args(
 ) -> Tuple[torch.fx.Node, object, object, object, object, object, object, object]:
     args = list(node.args)
     kwargs = dict(node.kwargs)
-    if len(args) < 2 or len(args) > 8:
+    if len(args) < 2 or len(args) > 7:
         raise CodegenBackendError("codegen avg_pool2d expects pooling arguments")
     input_arg = args[0]
     kernel_size = args[1]
     stride = None
     padding = 0
     ceil_mode = False
-    count_include_pad = False
+    count_include_pad = True
     divisor_override = None
     remaining = args[2:]
     if len(remaining) >= 1:
@@ -419,45 +342,25 @@ def parse_avg_pool2d_args(
             count_include_pad = kwargs["count_include_pad"]
         if "divisor_override" in kwargs:
             divisor_override = kwargs["divisor_override"]
-    if isinstance(kernel_size, torch.fx.Node) or isinstance(
-        padding, torch.fx.Node
-    ):
+    if isinstance(kernel_size, torch.fx.Node):
+        raise CodegenBackendError("codegen avg_pool2d expects kernel_size to be a list")
+    if kernel_size is None:
         raise CodegenBackendError(
-            "codegen avg_pool2d expects constant kernel, padding, and ceil_mode"
+            "codegen avg_pool2d expects kernel_size and stride"
         )
+    kernel_value = normalize_param(kernel_size)
     if stride is None:
-        stride = kernel_size
-    if isinstance(stride, torch.fx.Node):
-        raise CodegenBackendError(
-            "codegen avg_pool2d expects constant stride, padding, and dilation"
-        )
-    if isinstance(ceil_mode, torch.fx.Node):
-        raise CodegenBackendError(
-            "codegen avg_pool2d expects ceil_mode to be a bool"
-        )
-    if ceil_mode:
-        raise CodegenBackendError(
-            "codegen avg_pool2d expects ceil_mode to be False"
-        )
-    padding_value = normalize_param(
-        normalize_int_or_pair, "padding", padding
-    )
-    if padding_value[0] < 0 or padding_value[1] < 0:
-        raise CodegenBackendError(
-            "codegen avg_pool2d expects padding to be non-negative"
-        )
-    kernel_value = normalize_param(
-        normalize_int_or_pair, "kernel_size", kernel_size
-    )
-    stride_value = normalize_param(
-        normalize_int_or_pair, "stride", stride
-    )
-    if (
-        kernel_value[0] <= 0
-        or kernel_value[1] <= 0
-        or stride_value[0] <= 0
-        or stride_value[1] <= 0
-    ):
+        stride_value = kernel_value
+    elif isinstance(stride, torch.fx.Node):
+        raise CodegenBackendError("codegen avg_pool2d expects stride to be a list")
+    else:
+        stride_value = normalize_param(stride)
+    if isinstance(padding, torch.fx.Node):
+        raise CodegenBackendError("codegen avg_pool2d expects padding to be a list")
+    padding_value = normalize_param(padding)
+    if kernel_value[0] <= 0 or kernel_value[1] <= 0:
+        raise CodegenBackendError("codegen avg_pool2d expects positive kernel sizes")
+    if stride_value[0] <= 0 or stride_value[1] <= 0:
         raise CodegenBackendError(
             "codegen avg_pool2d expects positive kernel and stride"
         )
@@ -488,3 +391,15 @@ def parse_avg_pool2d_args(
         divisor_override,
         None,
     )
+
+
+__all__ = [
+    "parse_adaptive_avg_pool1d_args",
+    "parse_adaptive_avg_pool2d_args",
+    "parse_adaptive_avg_pool2d_backward_args",
+    "parse_adaptive_avg_pool3d_args",
+    "parse_avg_pool1d_args",
+    "parse_avg_pool2d_args",
+    "parse_max_pool1d_args",
+    "parse_max_pool2d_args",
+]
