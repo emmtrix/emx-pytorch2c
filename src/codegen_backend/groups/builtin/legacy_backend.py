@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Mapping
+from typing import List, Mapping, Sequence
 
+from codegen_backend.groups.analysis import GroupAnalyzer
 from codegen_backend.kinds import OpKindHandlerFactory
 from codegen_backend.ops_registry_conv import build_supported_ops as build_conv_ops
 from codegen_backend.ops_registry_elementwise import (
@@ -32,6 +33,9 @@ class BaseBackendGroup:
 
     def target_registry(self) -> Mapping[object, _TargetInfo]:
         return {}
+
+    def analyzers(self) -> Sequence[GroupAnalyzer]:
+        return []
 
 
 @dataclass(frozen=True)
@@ -73,6 +77,46 @@ class LegacyBackendGroup:
 
     def target_registry(self) -> Mapping[object, _TargetInfo]:
         return build_target_registry(self.supported_ops())
+
+    def analyzers(self) -> Sequence[GroupAnalyzer]:
+        from codegen_backend.groups.builtin.conv.analyzer import ConvAnalyzer
+        from codegen_backend.groups.builtin.elementwise.analyzer import (
+            ElementwiseAnalyzer,
+        )
+        from codegen_backend.groups.builtin.embedding.analyzer import EmbeddingAnalyzer
+        from codegen_backend.groups.builtin.pooling.analyzer import PoolingAnalyzer
+        from codegen_backend.groups.builtin.reductions.analyzer import ReductionsAnalyzer
+        from codegen_backend.groups.builtin.tensor.analyzer import TensorAnalyzer
+
+        elementwise_ops = build_elementwise_ops()
+        reductions_ops = build_reductions_ops()
+        pooling_ops = build_pooling_ops()
+        conv_ops = build_conv_ops()
+        embedding_ops = build_embedding_ops()
+        tensor_ops = build_tensor_ops()
+        return [
+            ElementwiseAnalyzer(
+                elementwise_ops,
+                build_target_registry(elementwise_ops),
+            ),
+            ReductionsAnalyzer(
+                reductions_ops,
+                build_target_registry(reductions_ops),
+            ),
+            PoolingAnalyzer(
+                pooling_ops,
+                build_target_registry(pooling_ops),
+            ),
+            ConvAnalyzer(conv_ops, build_target_registry(conv_ops)),
+            EmbeddingAnalyzer(
+                embedding_ops,
+                build_target_registry(embedding_ops),
+            ),
+            TensorAnalyzer(
+                tensor_ops,
+                build_target_registry(tensor_ops),
+            ),
+        ]
 
 
 OperatorGroup = LegacyBackendGroup

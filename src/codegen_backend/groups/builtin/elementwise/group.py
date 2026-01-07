@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Mapping
+from typing import List, Mapping, Sequence
 
+from codegen_backend.groups.analysis import GroupAnalyzer
+from codegen_backend.groups.builtin.elementwise.analyzer import ElementwiseAnalyzer
 from codegen_backend.groups.builtin.elementwise import handlers
 from codegen_backend.kinds import OpKindHandlerFactory
 from codegen_backend.ops_registry_elementwise import build_supported_ops
@@ -22,6 +24,11 @@ class ElementwiseGroup:
 
     def target_registry(self) -> Mapping[object, _TargetInfo]:
         return build_target_registry(self.supported_ops())
+
+    def analyzers(self) -> Sequence[GroupAnalyzer]:
+        supported_ops = self.supported_ops()
+        target_registry = build_target_registry(supported_ops)
+        return [ElementwiseAnalyzer(supported_ops, target_registry)]
 
 
 __all__ = ["ElementwiseGroup"]

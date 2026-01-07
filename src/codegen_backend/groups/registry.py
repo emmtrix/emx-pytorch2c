@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List
 
+from codegen_backend.groups.analysis import GroupAnalyzer
 from codegen_backend.groups.base import OperatorGroup
 from codegen_backend.kinds import HandlerContextProvider, OpKindHandler
 from codegen_backend.registry import _TargetInfo
@@ -24,6 +25,12 @@ class GroupRegistry:
             for factory in group.kind_handler_factories():
                 merged.update(factory.build_handlers(context_provider))
         return merged
+
+    def build_group_analyzers(self) -> List[GroupAnalyzer]:
+        analyzers: List[GroupAnalyzer] = []
+        for group in self.groups:
+            analyzers.extend(group.analyzers())
+        return analyzers
 
     def merged_supported_ops(self) -> Dict[object, _OpSpec]:
         merged: Dict[object, _OpSpec] = {}

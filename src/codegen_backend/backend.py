@@ -29,7 +29,8 @@ from codegen_backend.indexing import (
     _emit_strided_access,
     _format_strided_access,
 )
-from codegen_backend.groups.registry import get_group_registry
+from codegen_backend.groups.analysis import GroupAnalyzer
+from codegen_backend.groups.registry import GroupRegistry, get_group_registry
 from codegen_backend.kinds import (
     ConvContext,
     ElementwiseContext,
@@ -3316,7 +3317,7 @@ def _analyze_generic_graph(
     gm: torch.fx.GraphModule,
     example_inputs: Sequence[object],
     *,
-    supported_ops: Dict[str, _OpSpec],
+    group_analyzers: Sequence[GroupAnalyzer],
     target_registry: Dict[object, "_TargetInfo"],
     kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _GenericGraph:
@@ -3374,109 +3375,33 @@ def _analyze_generic_graph(
                         pass
             continue
         if node.op in {"call_function", "call_method"}:
-            if node.op == "call_function" and node.target is operator.getitem:
-                if node.kwargs:
-                    raise CodegenBackendError(
-                        "codegen backend expects getitem to use positional args"
-                    )
-                if len(node.args) != 2:
-                    raise CodegenBackendError(
-                        "codegen backend expects getitem to have two inputs"
-                    )
-                source, index = node.args
-                if not isinstance(source, torch.fx.Node):
-                    raise CodegenBackendError(
-                        "codegen backend expects getitem source to be a tensor op"
-                    )
-                if isinstance(index, torch.fx.Node):
-                    raise CodegenBackendError(
-                        "codegen backend supports only constant getitem indices"
-                    )
-                if index not in (0, 0.0, 1, 1.0, 2, 2.0):
-                    raise CodegenBackendError(
-                        "codegen backend supports only getitem[0], getitem[1], or getitem[2]"
-                    )
-                if source not in shapes:
-                    raise CodegenBackendError(
-                        "codegen backend expects getitem source to be analyzed"
-                    )
-                if source.target not in {
-                    torch.ops.aten._native_batch_norm_legit,
-                    torch.ops.aten._native_batch_norm_legit.default,
-                    torch.ops.aten._native_batch_norm_legit_no_training,
-                    torch.ops.aten._native_batch_norm_legit_no_training.default,
-                    torch.ops.aten._embedding_bag,
-                    torch.ops.aten._embedding_bag.default,
-                }:
-                    raise CodegenBackendError(
-                        "codegen backend supports getitem only for _native_batch_norm_legit* ops"
-                    )
-                if index in (0, 0.0):
-                    alias_map[node] = source
-                    shapes[node] = shapes[source]
-                    strides[node] = strides[source]
-                    dtypes[node] = dtypes[source]
-                else:
-                    shapes[node] = (0,)
-                    strides[node] = _contiguous_strides(shapes[node])
-                    dtypes[node] = dtypes[source]
-                    empty_outputs.add(node)
-                continue
-            if node.op == "call_method":
-                if node.target == "item":
+            handled = False
+            for analyzer in group_analyzers:
+                if not analyzer.match_node(node):
                     continue
-                if node.target not in {
-                    "sum",
-                    "prod",
-                    "mean",
-                    "std",
-                    "any",
-                    "all",
-                    "argmax",
-                    "argmin",
-                    "softmax",
-                    "log_softmax",
-                    "diagonal",
-                    "cumsum",
-                    "clone",
-                }:
-                    raise CodegenBackendError(f"Unsupported call_method: {node.target}")
-                op_spec = supported_ops[node.target]
-                inplace_input = None
-            else:
-                target_info = target_registry.get(node.target)
-                if target_info is None:
-                    raise CodegenBackendError(f"Unsupported call_function: {node.target}")
-                op_spec = target_info.op_spec
-                inplace_input = target_info.inplace_arg_index
-            handler = kind_handlers.get(op_spec.kind)
-            if handler is None:
-                raise CodegenBackendError(
-                    "codegen backend does not support kind "
-                    f"'{op_spec.kind.value}'"
+                result = analyzer.build_op_node(
+                    node,
+                    dtype_info=dtype_info,
+                    shapes=shapes,
+                    strides=strides,
+                    dtypes=dtypes,
+                    scalar_values=scalar_values,
+                    alias_map=alias_map,
+                    empty_outputs=empty_outputs,
+                    kind_handlers=kind_handlers,
                 )
-            build_result = handler.build_op_node(
-                node,
-                op_spec,
-                dtype_info,
-                shapes,
-                strides,
-                dtypes,
-                scalar_values,
-                inplace_input,
-            )
-            if build_result is None:
-                if dtype_info is None:
+                if result.op_node is not None:
+                    op_nodes.append(result.op_node)
+                if result.dtype_info is not None:
+                    dtype_info = result.dtype_info
+                handled = True
+                break
+            if not handled:
+                if node.op == "call_method":
                     raise CodegenBackendError(
-                        "codegen backend requires at least one tensor input or a factory op dtype"
+                        f"Unsupported call_method: {node.target}"
                     )
-                raise CodegenBackendError(
-                    "codegen backend does not support building kind "
-                    f"'{op_spec.kind.value}'"
-                )
-            op_nodes.append(build_result.op_node)
-            if build_result.dtype_info is not None:
-                dtype_info = build_result.dtype_info
+                raise CodegenBackendError(f"Unsupported call_function: {node.target}")
             continue
         if node.op == "output":
             output_node = node
@@ -3766,22 +3691,21 @@ class GraphAnalyzer:
     def __init__(
         self,
         *,
-        supported_ops: Callable[[], Dict[str, _OpSpec]],
-        target_registry: Callable[[], Dict[object, "_TargetInfo"]],
+        group_registry: Callable[[], "GroupRegistry"],
         kind_handlers: Callable[[], Dict[OpKind, "OpKindHandler"]],
     ) -> None:
-        self._supported_ops = supported_ops
-        self._target_registry = target_registry
+        self._group_registry = group_registry
         self._kind_handlers = kind_handlers
 
     def analyze(
         self, gm: torch.fx.GraphModule, example_inputs: Sequence[object]
     ) -> _GenericGraph:
+        group_registry = self._group_registry()
         return _analyze_generic_graph(
             gm,
             example_inputs,
-            supported_ops=self._supported_ops(),
-            target_registry=self._target_registry(),
+            group_analyzers=group_registry.build_group_analyzers(),
+            target_registry=group_registry.merged_target_registry(),
             kind_handlers=self._kind_handlers(),
         )
 
@@ -4197,8 +4121,7 @@ class CodegenBackend:
         self._kind_handlers: Dict[OpKind, "OpKindHandler"] | None = None
         self._analysis_service = GraphAnalysisService(lambda: self.kind_handlers)
         self._graph_analyzer = GraphAnalyzer(
-            supported_ops=lambda: self.supported_ops,
-            target_registry=lambda: self.target_registry,
+            group_registry=lambda: self.group_registry,
             kind_handlers=lambda: self.kind_handlers,
         )
         self._source_writer = SourceWriter(
