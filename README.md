@@ -1,6 +1,6 @@
-# Codegen Backend
+# emx-pytorch2c
 
-This project generates simple, correct, generic, and easily analyzable C code from PyTorch workloads. Performance optimization of the generated C code is explicitly **not** a goal.
+emx-pytorch2c generates simple, correct, generic, and easily analyzable C code from PyTorch workloads. Performance optimization of the generated C code is explicitly **not** a goal.
 
 ## Goals
 
