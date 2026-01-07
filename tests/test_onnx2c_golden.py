@@ -51,9 +51,6 @@ ONNX_CASES = [
     pytest.param(
         ONNX_DIR / "test_onnx09_mnist_simplified.onnx",
         id="onnx09_mnist_simplified",
-        marks=pytest.mark.skip(
-            reason="linear not yet supported in codegen backend"
-        ),
     ),
     pytest.param(
         ONNX_DIR / "test_onnx10_hello.onnx",

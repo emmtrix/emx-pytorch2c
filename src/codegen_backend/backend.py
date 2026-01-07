@@ -1415,6 +1415,28 @@ def _parse_addmm_like_args(
     )
 
 
+def _parse_linear_args(
+    op_name: str, node: torch.fx.Node
+) -> Tuple[object, object, object | None]:
+    if len(node.args) < 2:
+        raise CodegenBackendError(f"codegen {op_name} expects at least two inputs")
+    if len(node.args) > 3:
+        raise CodegenBackendError(f"codegen {op_name} expects at most three inputs")
+    input_node, weight_node = node.args[:2]
+    bias = node.args[2] if len(node.args) > 2 else None
+    if node.kwargs:
+        if "bias" in node.kwargs:
+            if bias is not None:
+                raise _error_kwarg_specified_once(op_name, "bias")
+            bias = node.kwargs["bias"]
+        extra = set(node.kwargs) - {"bias"}
+        if extra:
+            raise CodegenBackendError(
+                f"codegen {op_name} got unexpected kwargs: {sorted(extra)}"
+            )
+    return input_node, weight_node, bias
+
+
 def _parse_concat_args(
     node: torch.fx.Node,
 ) -> Tuple[Sequence[torch.fx.Node], int]:
@@ -2386,6 +2408,49 @@ def _handle_addmm_like_node(
         strides[node] = _contiguous_strides(output_shape)
     return op_node
 
+
+def _handle_linear_node(
+    node: torch.fx.Node,
+    op_spec: _OpSpec,
+    dtype_info: _CodegenDType,
+    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+    strides: Dict[torch.fx.Node, Tuple[int, ...]],
+    dtypes: Dict[torch.fx.Node, torch.dtype],
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
+) -> _OpNode:
+    input_arg, weight_arg, bias_arg = _parse_linear_args(op_spec.name, node)
+    if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    if not isinstance(weight_arg, torch.fx.Node) or weight_arg not in shapes:
+        raise _error_expected_tensor(op_spec.name)
+    input_nodes = [input_arg, weight_arg]
+    input_shapes = [shapes[input_arg], shapes[weight_arg]]
+    if bias_arg is not None:
+        if not isinstance(bias_arg, torch.fx.Node) or bias_arg not in shapes:
+            raise _error_expected_tensor(op_spec.name)
+        input_nodes.append(bias_arg)
+        input_shapes.append(shapes[bias_arg])
+    input_dtypes = [dtypes[arg] for arg in input_nodes]
+    if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
+        raise CodegenBackendError(
+            f"codegen {op_spec.name} expects inputs to share the graph dtype"
+        )
+    op_node = _OpNode(
+        node=node,
+        spec=op_spec,
+        inputs=input_nodes,
+        output_shape=(),
+        inplace_input=None,
+        params={"has_bias": bias_arg is not None},
+    )
+    output_shape = _infer_output_shape(
+        op_node, input_shapes, kind_handlers=kind_handlers
+    )
+    op_node.output_shape = output_shape
+    shapes[node] = output_shape
+    dtypes[node] = dtype_info.torch_dtype
+    strides[node] = _contiguous_strides(output_shape)
+    return op_node
 
 
 def _handle_diagonal_node(
@@ -3808,6 +3873,26 @@ class BackendContext(HandlerContext):
             strides,
             dtypes,
             inplace_input,
+            self._backend.kind_handlers,
+        )
+
+    def handle_linear_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        scalar_values: Dict[torch.fx.Node, object],
+    ) -> _OpNode:
+        return _handle_linear_node(
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
             self._backend.kind_handlers,
         )
 

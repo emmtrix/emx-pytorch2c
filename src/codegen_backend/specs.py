@@ -24,6 +24,7 @@ class OpKind(str, Enum):
     ADDMV = "addmv"
     ADDR = "addr"
     MATMUL = "matmul"
+    LINEAR = "linear"
     CONV1D = "conv1d"
     CONV2D = "conv2d"
     POOL1D = "pool1d"
