@@ -2,32 +2,38 @@ import hashlib
 import math
 import numbers
 import operator
-import os
-import shlex
-import shutil
-import tempfile
 from collections.abc import Sequence as ABCSequence
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from distutils import ccompiler
-from distutils import sysconfig as distutils_sysconfig
 import torch
 import torch.nn.functional as F
-from importlib import resources
-from jinja2 import Environment, FileSystemLoader
 import torch.fx
 from torch.fx.immutable_collections import immutable_list
 
 from c_ref_backend.cffi_bindings import RefBackendError
+from codegen_backend.c_types import (
+    _dtype_to_c_type,
+    _format_scalar_literal,
+    _input_c_type,
+    _normalize_scalar_value,
+)
+from codegen_backend.compile import compile_or_load
 from codegen_backend.dtypes import (
-    _C_TYPE_BY_DTYPE,
     _CODEGEN_DTYPES,
     _CodegenDType,
     _EMBEDDING_INDEX_DTYPES,
     _INTEGER_CODEGEN_DTYPES,
 )
 from codegen_backend.graph import _GenericGraph, _GenericLibrary, _OpNode
+from codegen_backend.indexing import (
+    _contiguous_strides,
+    _emit_strided_access,
+    _format_output_access,
+    _format_strided_access,
+    format_input_access,
+    format_output_access,
+)
 from codegen_backend.kinds import HandlerContext, build_kind_handlers
 from codegen_backend.ops_registry import SUPPORTED_OPS
 from codegen_backend.param_normalize import (
@@ -38,6 +44,7 @@ from codegen_backend.param_normalize import (
 )
 from codegen_backend.registry import TARGET_REGISTRY
 from codegen_backend.specs import _OpSpec
+from codegen_backend.templates import get_template_env
 _BITWISE_OPS = {
     "bitwise_and",
     "bitwise_or",
@@ -68,62 +75,16 @@ _FLOAT_ONLY_UNARY_OPS = {
     "hardtanh",
 }
 
-_TEMPLATE_ENV: Environment | None = None
-
-
-def _get_template_env() -> Environment:
-    global _TEMPLATE_ENV
-    if _TEMPLATE_ENV is None:
-        _TEMPLATE_ENV = Environment(
-            loader=FileSystemLoader(
-                resources.files("codegen_backend") / "templates"
-            ),
-            trim_blocks=True,
-            lstrip_blocks=True,
-        )
-    return _TEMPLATE_ENV
-
-
 def _is_out_overload(target: object) -> bool:
     schema = getattr(target, "_schema", None)
     return schema is not None and schema.overload_name == "out"
 
 
-_LIBRARY_CACHE: Dict[str, object] = {}
 _C_SRC_DIR = Path(__file__).resolve().parents[2] / "csrc"
 
 
 def _format_array_suffix(shape: Sequence[int]) -> str:
     return "".join(f"[{dim}]" for dim in shape) or "[1]"
-
-
-def _broadcast_index_expr(
-    input_shape: Sequence[int], output_shape: Sequence[int]
-) -> str:
-    output_rank = len(output_shape)
-    input_rank = len(input_shape)
-    if input_rank == 0:
-        return "[0]"
-    index_expr = []
-    offset = output_rank - input_rank
-    for input_dim in range(input_rank):
-        output_dim = input_dim + offset
-        if input_shape[input_dim] == 1:
-            index_expr.append("[0]")
-        else:
-            index_expr.append(f"[i{output_dim}]")
-    return "".join(index_expr)
-
-
-def _contiguous_strides(shape: Sequence[int]) -> Tuple[int, ...]:
-    if not shape:
-        return ()
-    strides = [0] * len(shape)
-    stride = 1
-    for dim in range(len(shape) - 1, -1, -1):
-        strides[dim] = stride
-        stride *= max(shape[dim], 1)
-    return tuple(strides)
 
 
 def _channels_last_strides(shape: Sequence[int]) -> Tuple[int, ...]:
@@ -186,126 +147,6 @@ def _normalize_col2im_output_size(
     except ValueError as exc:
         raise RefBackendError(
             f"codegen {op_name} expects output_size to be a tuple of ints"
-        ) from exc
-
-
-def _emit_strided_access(
-    name: str,
-    indices: Sequence[str],
-    strides: Sequence[int],
-    contig: bool,
-    sizes: Optional[Sequence[int]] = None,
-    *,
-    c_type: str = "float",
-) -> str:
-    if contig:
-        return f"{name}{''.join(f'[{idx}]' for idx in indices)}"
-    terms = []
-    for idx_name, stride, size in zip(
-        indices, strides, sizes or [None] * len(indices)
-    ):
-        if size == 1:
-            continue
-        terms.append(f"{idx_name} * {stride}")
-    index_expr = " + ".join(terms) if terms else "0"
-    return f"(({c_type}*){name})[{index_expr}]"
-
-
-def _format_strided_access(
-    name: str,
-    input_shape: Sequence[int],
-    input_strides: Sequence[int],
-    output_shape: Sequence[int],
-    *,
-    c_type: str = "float",
-) -> str:
-    output_rank = len(output_shape)
-    input_rank = len(input_shape)
-    if input_rank == 0:
-        return f"(({c_type}*){name})[0]"
-    offset = output_rank - input_rank
-    indices = [f"i{input_dim + offset}" for input_dim in range(input_rank)]
-    return _emit_strided_access(
-        name,
-        indices,
-        input_strides,
-        contig=False,
-        sizes=input_shape,
-        c_type=c_type,
-    )
-
-
-def _format_output_access(
-    name: str,
-    output_shape: Sequence[int],
-    output_strides: Sequence[int],
-    *,
-    c_type: str = "float",
-) -> str:
-    if not output_shape:
-        return f"(({c_type}*){name})[0]"
-    terms = []
-    for dim, stride in enumerate(output_strides):
-        if output_shape[dim] == 1:
-            continue
-        terms.append(f"i{dim} * {stride}")
-    index_expr = " + ".join(terms) if terms else "0"
-    return f"(({c_type}*){name})[{index_expr}]"
-
-
-def _input_c_type(dtype: torch.dtype, graph_dtype: _CodegenDType) -> str:
-    if dtype is graph_dtype.torch_dtype:
-        return graph_dtype.c_type
-    if dtype is torch.bool:
-        return _C_TYPE_BY_DTYPE[torch.bool]
-    if dtype in _EMBEDDING_INDEX_DTYPES:
-        return _C_TYPE_BY_DTYPE[dtype]
-    raise RefBackendError(
-        "codegen backend supports only torch.float32, torch.int8, torch.int32, torch.int64, or torch.bool tensors"
-    )
-
-
-def _dtype_to_c_type(dtype: torch.dtype, graph_dtype: _CodegenDType) -> str:
-    if dtype is graph_dtype.torch_dtype:
-        return graph_dtype.c_type
-    c_type = _C_TYPE_BY_DTYPE.get(dtype)
-    if c_type is not None:
-        return c_type
-    raise RefBackendError(
-        "codegen backend supports only torch.float32, torch.int8, torch.int32, torch.int64, or torch.bool tensors"
-    )
-
-
-def _is_integer_dtype(dtype: torch.dtype) -> bool:
-    return dtype in _INTEGER_CODEGEN_DTYPES
-
-
-def _format_scalar_literal(value: float, dtype: _CodegenDType) -> str:
-    if dtype.torch_dtype is torch.bool:
-        return str(int(value))
-    if _is_integer_dtype(dtype.torch_dtype):
-        return str(int(value))
-    if dtype.torch_dtype is torch.float32:
-        return f"{float(value)}f"
-    raise RefBackendError(
-        "codegen addmm-like ops support only floating point or integer tensors"
-    )
-
-
-def _normalize_scalar_value(op_name: str, value: object) -> float | int | bool:
-    if isinstance(value, torch.Tensor):
-        if value.numel() != 1:
-            raise RefBackendError(
-                f"codegen {op_name} expects a scalar value"
-            )
-        value = value.item()
-    if isinstance(value, numbers.Number):
-        return value
-    try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
-        raise RefBackendError(
-            f"codegen {op_name} expects a scalar value"
         ) from exc
 
 
@@ -438,13 +279,13 @@ def emit_output_access(
     *,
     c_type: str,
 ) -> str:
-    output_is_contiguous = _is_contiguous(output_shape, output_strides)
-    if output_is_contiguous:
-        output_access = (
-            "".join(f"[i{dim}]" for dim in range(len(output_shape))) or "[0]"
-        )
-        return f"out{output_access}"
-    return _format_output_access("out", output_shape, output_strides, c_type=c_type)
+    return format_output_access(
+        "out",
+        output_shape,
+        output_strides,
+        c_type=c_type,
+        output_is_contiguous=_is_contiguous(output_shape, output_strides),
+    )
 
 
 def emit_input_access(
@@ -456,14 +297,14 @@ def emit_input_access(
     broadcast_contiguous: bool,
     c_type: str,
 ) -> str:
-    if _is_contiguous(input_shape, input_strides):
-        if broadcast_contiguous:
-            return f"{name}{_broadcast_index_expr(input_shape, output_shape)}"
-        return (
-            f"{name}{''.join(f'[i{dim}]' for dim in range(len(output_shape))) or '[0]'}"
-        )
-    return _format_strided_access(
-        name, input_shape, input_strides, output_shape, c_type=c_type
+    return format_input_access(
+        name,
+        input_shape,
+        input_strides,
+        output_shape,
+        broadcast_contiguous=broadcast_contiguous,
+        c_type=c_type,
+        input_is_contiguous=_is_contiguous(input_shape, input_strides),
     )
 
 
@@ -545,7 +386,7 @@ def _write_elementwise_kernel(
     dtype: _CodegenDType,
 ) -> List[str]:
     op_spec = op_node.spec
-    elementwise_template = _get_template_env().get_template(
+    elementwise_template = get_template_env().get_template(
         "elementwise_kernel.c.j2"
     )
     params = op_node.params
@@ -813,7 +654,7 @@ def _write_constant_pad_kernel(
     output_strides: Sequence[int],
     dtype: _CodegenDType,
 ) -> List[str]:
-    pad_template = _get_template_env().get_template(
+    pad_template = get_template_env().get_template(
         "constant_pad_nd_kernel.c.j2"
     )
     signature = emit_signature(
@@ -990,7 +831,7 @@ def _write_matmul_kernel(
     b_strides: Sequence[int],
     dtype: _CodegenDType,
 ) -> List[str]:
-    matmul_template = _get_template_env().get_template("matmul_kernel.c.j2")
+    matmul_template = get_template_env().get_template("matmul_kernel.c.j2")
     a_is_contiguous = _is_contiguous(a_shape, a_strides)
     b_is_contiguous = _is_contiguous(b_shape, b_strides)
     acc_type = dtype.c_type
@@ -1126,7 +967,7 @@ def _write_addmm_kernel(
     alpha: float,
     beta: float,
 ) -> List[str]:
-    addmm_template = _get_template_env().get_template("addmm_kernel.c.j2")
+    addmm_template = get_template_env().get_template("addmm_kernel.c.j2")
     mat1_is_contiguous = _is_contiguous(mat1_shape, mat1_strides)
     mat2_is_contiguous = _is_contiguous(mat2_shape, mat2_strides)
     output_is_contiguous = _is_contiguous(output_shape, output_strides)
@@ -1208,7 +1049,7 @@ def _write_addbmm_kernel(
     alpha: float,
     beta: float,
 ) -> List[str]:
-    addbmm_template = _get_template_env().get_template("addbmm_kernel.c.j2")
+    addbmm_template = get_template_env().get_template("addbmm_kernel.c.j2")
     batch1_is_contiguous = _is_contiguous(batch1_shape, batch1_strides)
     batch2_is_contiguous = _is_contiguous(batch2_shape, batch2_strides)
     output_is_contiguous = _is_contiguous(output_shape, output_strides)
@@ -1291,7 +1132,7 @@ def _write_addmv_kernel(
     alpha: float,
     beta: float,
 ) -> List[str]:
-    addmv_template = _get_template_env().get_template("addmv_kernel.c.j2")
+    addmv_template = get_template_env().get_template("addmv_kernel.c.j2")
     input_is_contiguous = _is_contiguous(input_shape, input_strides)
     mat_is_contiguous = _is_contiguous(mat_shape, mat_strides)
     vec_is_contiguous = _is_contiguous(vec_shape, vec_strides)
@@ -1371,7 +1212,7 @@ def _write_addr_kernel(
     alpha: float,
     beta: float,
 ) -> List[str]:
-    addr_template = _get_template_env().get_template("addr_kernel.c.j2")
+    addr_template = get_template_env().get_template("addr_kernel.c.j2")
     input_is_contiguous = _is_contiguous(input_shape, input_strides)
     vec1_is_contiguous = _is_contiguous(vec1_shape, vec1_strides)
     vec2_is_contiguous = _is_contiguous(vec2_shape, vec2_strides)
@@ -1507,7 +1348,7 @@ def _write_std_kernel(
     *,
     unbiased: bool,
 ) -> List[str]:
-    std_template = _get_template_env().get_template("std_kernel.c.j2")
+    std_template = get_template_env().get_template("std_kernel.c.j2")
     a_is_contiguous = _is_contiguous(input_shape, input_strides)
     input_rank = len(input_shape)
     output_rank = len(output_shape)
@@ -1589,7 +1430,7 @@ def _write_var_kernel(
     *,
     unbiased: bool,
 ) -> List[str]:
-    var_template = _get_template_env().get_template("var_kernel.c.j2")
+    var_template = get_template_env().get_template("var_kernel.c.j2")
     a_is_contiguous = _is_contiguous(input_shape, input_strides)
     input_rank = len(input_shape)
     output_rank = len(output_shape)
@@ -1668,7 +1509,7 @@ def _write_norm_kernel(
     *,
     p_value: float,
 ) -> List[str]:
-    norm_template = _get_template_env().get_template("norm_kernel.c.j2")
+    norm_template = get_template_env().get_template("norm_kernel.c.j2")
     a_is_contiguous = _is_contiguous(input_shape, input_strides)
     input_rank = len(input_shape)
     output_rank = len(output_shape)
@@ -1753,7 +1594,7 @@ def _write_reduction_kernel(
     keepdim: bool,
     dtype: _CodegenDType,
 ) -> List[str]:
-    reduction_template = _get_template_env().get_template("sum_kernel.c.j2")
+    reduction_template = get_template_env().get_template("sum_kernel.c.j2")
     config = _REDUCTION_CONFIG[op_spec.name]
     if dtype.torch_dtype is torch.bool:
         if op_spec.name in {"sum", "mean"}:
@@ -2075,7 +1916,7 @@ def _write_embedding_kernel(
     dtype: _CodegenDType,
     padding_idx: int,
 ) -> List[str]:
-    embedding_template = _get_template_env().get_template(
+    embedding_template = get_template_env().get_template(
         "embedding_kernel.c.j2"
     )
     weight_suffix = _format_array_suffix(weight_shape)
@@ -2159,7 +2000,7 @@ def _write_embedding_bag_kernel(
     padding_idx: int,
     include_last_offset: bool,
 ) -> List[str]:
-    embedding_template = _get_template_env().get_template(
+    embedding_template = get_template_env().get_template(
         "embedding_kernel.c.j2"
     )
     weight_suffix = _format_array_suffix(weight_shape)
@@ -2292,7 +2133,7 @@ def _write_gather_kernel(
     gather_dim: int,
     dtype: _CodegenDType,
 ) -> List[str]:
-    gather_template = _get_template_env().get_template("gather_kernel.c.j2")
+    gather_template = get_template_env().get_template("gather_kernel.c.j2")
     input_suffix = _format_array_suffix(input_shape)
     index_suffix = _format_array_suffix(index_shape)
     out_suffix = _format_array_suffix(output_shape)
@@ -2364,7 +2205,7 @@ def _write_conv2d_kernel(
     template_name = (
         "conv2d_transpose_kernel.c.j2" if transposed else "conv2d_kernel.c.j2"
     )
-    conv2d_template = _get_template_env().get_template(template_name)
+    conv2d_template = get_template_env().get_template(template_name)
     if len(input_shape) == 4:
         has_batch = True
         batch, in_channels, in_h, in_w = input_shape
@@ -2438,7 +2279,7 @@ def _write_pool2d_kernel(
     count_include_pad: bool,
     divisor_override: int | None,
 ) -> List[str]:
-    pool2d_template = _get_template_env().get_template("pool2d_kernel.c.j2")
+    pool2d_template = get_template_env().get_template("pool2d_kernel.c.j2")
     batch, channels, in_h, in_w = input_shape
     out_h, out_w = output_shape[2], output_shape[3]
     k_h, k_w = kernel_size
@@ -2492,7 +2333,7 @@ def _write_pool3d_kernel(
     count_include_pad: bool,
     divisor_override: int | None,
 ) -> List[str]:
-    pool3d_template = _get_template_env().get_template("pool3d_kernel.c.j2")
+    pool3d_template = get_template_env().get_template("pool3d_kernel.c.j2")
     batch, channels, in_d, in_h, in_w = input_shape
     out_d, out_h, out_w = output_shape[2], output_shape[3], output_shape[4]
     k_d, k_h, k_w = kernel_size
@@ -2548,7 +2389,7 @@ def _write_adaptive_avg_pool2d_backward_kernel(
     stride: Tuple[int, int],
     dtype: _CodegenDType,
 ) -> List[str]:
-    pool2d_template = _get_template_env().get_template(
+    pool2d_template = get_template_env().get_template(
         "adaptive_avg_pool2d_backward_kernel.c.j2"
     )
     batch, channels, in_h, in_w = input_shape
@@ -2595,7 +2436,7 @@ def _write_pool1d_kernel(
     count_include_pad: bool,
     divisor_override: int | None,
 ) -> List[str]:
-    pool1d_template = _get_template_env().get_template("pool1d_kernel.c.j2")
+    pool1d_template = get_template_env().get_template("pool1d_kernel.c.j2")
     batch, channels, in_l = input_shape
     out_l = output_shape[2]
     input_suffix = _format_array_suffix(input_shape)
@@ -2639,7 +2480,7 @@ def _write_col2im_kernel(
     out_blocks_h: int,
     out_blocks_w: int,
 ) -> List[str]:
-    col2im_template = _get_template_env().get_template("col2im_kernel.c.j2")
+    col2im_template = get_template_env().get_template("col2im_kernel.c.j2")
     if len(output_shape) == 4:
         batch, channels, out_h, out_w = output_shape
         has_batch = True
@@ -2690,7 +2531,7 @@ def _write_batch_norm_kernel(
     has_weight: bool,
     has_bias: bool,
 ) -> List[str]:
-    batch_norm_template = _get_template_env().get_template(
+    batch_norm_template = get_template_env().get_template(
         "batch_norm_kernel.c.j2"
     )
     batch = input_shape[0]
@@ -2737,7 +2578,7 @@ def _write_pdist_kernel(
     output_shape: Sequence[int],
     dtype: _CodegenDType,
 ) -> List[str]:
-    pdist_template = _get_template_env().get_template("pdist_kernel.c.j2")
+    pdist_template = get_template_env().get_template("pdist_kernel.c.j2")
     n, m = input_shape
     input_suffix = _format_array_suffix(input_shape)
     output_suffix = _format_array_suffix(output_shape)
@@ -2763,7 +2604,7 @@ def _write_cdist_kernel(
     output_shape: Sequence[int],
     dtype: _CodegenDType,
 ) -> List[str]:
-    cdist_template = _get_template_env().get_template("cdist_kernel.c.j2")
+    cdist_template = get_template_env().get_template("cdist_kernel.c.j2")
     n, m = x1_shape
     r, _ = x2_shape
     x1_suffix = _format_array_suffix(x1_shape)
@@ -2798,7 +2639,7 @@ def _write_conv1d_kernel(
     dtype: _CodegenDType,
     has_bias: bool,
 ) -> List[str]:
-    conv1d_template = _get_template_env().get_template("conv1d_kernel.c.j2")
+    conv1d_template = get_template_env().get_template("conv1d_kernel.c.j2")
     batch, in_channels, in_l = input_shape
     out_channels, _, k_l = weight_shape
     out_l = output_shape[2]
@@ -2918,7 +2759,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
         call_lines.append(
             f"node{index}_{op_node.spec.name}_{graph.dtype.suffix}({args});"
         )
-    template = _get_template_env().get_template("generic_source.c.j2")
+    template = get_template_env().get_template("generic_source.c.j2")
     return (
         template.render(
             headers=headers,
@@ -3798,7 +3639,7 @@ def _write_softmax_kernel(
 ) -> List[str]:
     if softmax_dim is None:
         raise RefBackendError("codegen softmax expects a reduction dimension")
-    softmax_template = _get_template_env().get_template("softmax_kernel.c.j2")
+    softmax_template = get_template_env().get_template("softmax_kernel.c.j2")
     rank = len(input_shape)
     input_suffix = _format_array_suffix(input_shape)
     output_suffix = _format_array_suffix(input_shape)
@@ -8199,78 +8040,19 @@ def _analyze_generic_graph(
 def _compile_generic_library(graph: _GenericGraph) -> _GenericLibrary:
     source = _write_generic_source(graph)
     digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
-    cached = _LIBRARY_CACHE.get(digest)
-    if cached is not None:
-        return cached
-
-    build_dir = Path(tempfile.mkdtemp(prefix="codegen_generic_"))
-    c_path = build_dir / "ref_codegen_generic.c"
-    c_path.write_text(source, encoding="utf-8")
-
-    compiler = ccompiler.new_compiler()
-    distutils_sysconfig.customize_compiler(compiler)
-    _maybe_enable_ccache(compiler)
-    compile_args: List[str]
-    if compiler.compiler_type == "msvc":
-        compile_args = ["/O2"]
-    else:
-        compile_args = ["-O3", "-fPIC"]
-    objects = compiler.compile(
-        [str(c_path)],
-        output_dir=str(build_dir),
-        include_dirs=[str(_C_SRC_DIR)],
-        extra_postargs=compile_args,
-    )
-    lib_name = "ref_codegen_generic"
     entry_name = f"ref_codegen_main_{graph.dtype.suffix}"
-    link_args: List[str] = []
-    if compiler.compiler_type == "msvc":
-        link_args = ["/DLL", f"/EXPORT:{entry_name}"]
-    compiler.link_shared_lib(
-        objects,
-        lib_name,
-        output_dir=str(build_dir),
-        extra_postargs=link_args,
-    )
-    so_path = build_dir / compiler.library_filename(lib_name, lib_type="shared")
-
-    import ctypes
-
-    lib = ctypes.CDLL(str(so_path))
-    argtypes = [ctypes.c_void_p for _ in graph.tensor_placeholders]
-    argtypes.append(ctypes.c_void_p)
-    getattr(lib, entry_name).argtypes = argtypes
-    getattr(lib, entry_name).restype = None
-
     input_shapes = tuple(graph.shapes[node] for node in graph.tensor_placeholders)
     input_strides = tuple(graph.strides[node] for node in graph.tensor_placeholders)
-    compiled = _GenericLibrary(
-        so_path=so_path,
-        lib=lib,
+    return compile_or_load(
+        source,
+        digest,
+        entry_name=entry_name,
+        include_dirs=[_C_SRC_DIR],
         input_shapes=input_shapes,
         input_strides=input_strides,
         output_shape=graph.shapes[graph.output_value],
         dtype=graph.dtype,
     )
-    _LIBRARY_CACHE[digest] = compiled
-    return compiled
-
-
-def _maybe_enable_ccache(compiler: ccompiler.CCompiler) -> None:
-    if compiler.compiler_type == "msvc":
-        return
-    ccache = os.environ.get("CCACHE") or shutil.which("ccache")
-    if not ccache:
-        return
-    for key in ("compiler", "compiler_so", "compiler_cxx", "compiler_so_cxx"):
-        cmd = compiler.executables.get(key)
-        if not cmd:
-            continue
-        if isinstance(cmd, str):
-            cmd_list = shlex.split(cmd)
-        else:
-            cmd_list = list(cmd)
-        compiler.set_executables(**{key: " ".join([ccache, *cmd_list])})
 
 
 def _validate_runtime_inputs(
