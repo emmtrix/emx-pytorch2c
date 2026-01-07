@@ -336,7 +336,9 @@ class _BackendElementwiseHandler(ElementwiseHandler):
             params=param_values,
         )
         self.validate(op_node, shape_input_shapes, input_dtypes, dtype_info)
-        output_shape = _infer_output_shape(op_node, shape_input_shapes)
+        output_shape = _infer_output_shape(
+            op_node, shape_input_shapes, kind_handlers=self._ctx.kind_handlers
+        )
         op_node.output_shape = output_shape
         if out_arg is not None and shapes[out_arg] != output_shape:
             raise CodegenBackendError(

@@ -3,13 +3,11 @@ from pathlib import Path
 
 import pytest
 import torch
-from codegen_backend import codegen_generic_backend
-from codegen_backend.backend import (
-    _emit_strided_access,
-    _format_strided_access,
-    get_generic_source,
-)
+from codegen_backend import CodegenBackend
+from codegen_backend.backend import _emit_strided_access, _format_strided_access
+
 REFERENCE_DIR = Path(__file__).resolve().parent / "codegen_refs"
+BACKEND = CodegenBackend()
 
 
 def _assert_codegen_source_matches(
@@ -121,20 +119,20 @@ def max_pool2d_fn(a):
         (
             "add_chain.c",
             add_chain_fn,
-            get_generic_source,
-            codegen_generic_backend,
+            BACKEND.get_generic_source,
+            BACKEND.codegen_generic_backend,
         ),
         (
             "sub_chain.c",
             sub_chain_fn,
-            get_generic_source,
-            codegen_generic_backend,
+            BACKEND.get_generic_source,
+            BACKEND.codegen_generic_backend,
         ),
         (
             "mul_chain.c",
             mul_chain_fn,
-            get_generic_source,
-            codegen_generic_backend,
+            BACKEND.get_generic_source,
+            BACKEND.codegen_generic_backend,
         ),
     ],
 )
@@ -155,9 +153,9 @@ def test_codegen_generic_handles_mixed_ops():
     b = torch.randn(2, 3, dtype=torch.float32)
     c = torch.randn(2, 3, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "mixed_ops.c", get_generic_source, mixed_ops_fn, (a, b, c)
+        "mixed_ops.c", BACKEND.get_generic_source, mixed_ops_fn, (a, b, c)
     )
-    compiled = torch.compile(mixed_ops_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(mixed_ops_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(a, b, c)
     torch.testing.assert_close(result, mixed_ops_fn(a, b, c))
 
@@ -166,9 +164,9 @@ def test_codegen_generic_handles_add_broadcast():
     a = torch.randn(2, 1, 3, dtype=torch.float32)
     b = torch.randn(1, 4, 1, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "add_broadcast.c", get_generic_source, add_broadcast_fn, (a, b)
+        "add_broadcast.c", BACKEND.get_generic_source, add_broadcast_fn, (a, b)
     )
-    compiled = torch.compile(add_broadcast_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(add_broadcast_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(a, b)
     torch.testing.assert_close(result, add_broadcast_fn(a, b))
 
@@ -177,13 +175,13 @@ def test_codegen_generic_handles_strided_inputs():
     base = torch.randn(2, 3, dtype=torch.float32)
     a = base.t()
     b = torch.randn(2, 3, dtype=torch.float32).t()
-    source = get_generic_source(torch.fx.symbolic_trace(add_strided_fn), (a, b))
+    source = BACKEND.get_generic_source(torch.fx.symbolic_trace(add_strided_fn), (a, b))
     assert "((float*)a)" in source
     assert "((float*)b)" in source
     _assert_codegen_source_matches(
-        "add_strided.c", get_generic_source, add_strided_fn, (a, b)
+        "add_strided.c", BACKEND.get_generic_source, add_strided_fn, (a, b)
     )
-    compiled = torch.compile(add_strided_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(add_strided_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(a, b)
     torch.testing.assert_close(result, add_strided_fn(a, b))
 
@@ -193,9 +191,9 @@ def test_codegen_generic_handles_conv2d():
     weight = torch.randn(3, 2, 3, 3, dtype=torch.float32)
     bias = torch.randn(3, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "conv2d.c", get_generic_source, conv2d_fn, (a, weight, bias)
+        "conv2d.c", BACKEND.get_generic_source, conv2d_fn, (a, weight, bias)
     )
-    compiled = torch.compile(conv2d_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(conv2d_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(a, weight, bias)
     torch.testing.assert_close(result, conv2d_fn(a, weight, bias))
 
@@ -203,26 +201,26 @@ def test_codegen_generic_handles_conv2d():
 def test_codegen_generic_handles_max_pool2d():
     a = torch.randn(1, 2, 4, 4, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "max_pool2d.c", get_generic_source, max_pool2d_fn, (a,)
+        "max_pool2d.c", BACKEND.get_generic_source, max_pool2d_fn, (a,)
     )
-    compiled = torch.compile(max_pool2d_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(max_pool2d_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(a)
     torch.testing.assert_close(result, max_pool2d_fn(a))
 
 
 def test_codegen_generic_handles_atan():
     a = torch.randn(2, 3, dtype=torch.float32)
-    _assert_codegen_source_matches("atan.c", get_generic_source, atan_fn, (a,))
-    compiled = torch.compile(atan_fn, backend=codegen_generic_backend)
+    _assert_codegen_source_matches("atan.c", BACKEND.get_generic_source, atan_fn, (a,))
+    compiled = torch.compile(atan_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(a)
     torch.testing.assert_close(result, atan_fn(a))
 
 
 def test_codegen_generic_handles_mish():
     a = torch.randn(2, 3, dtype=torch.float32)
-    source = get_generic_source(torch.fx.symbolic_trace(mish_fn), (a,))
+    source = BACKEND.get_generic_source(torch.fx.symbolic_trace(mish_fn), (a,))
     assert "ref_scalar_f32_mish" in source
-    compiled = torch.compile(mish_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(mish_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(a)
     torch.testing.assert_close(result, mish_fn(a))
 
@@ -232,9 +230,9 @@ def test_codegen_generic_handles_where():
     a = torch.randn(1, 3, dtype=torch.float32)
     b = torch.randn(1, 3, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "where.c", get_generic_source, where_fn, (condition, a, b)
+        "where.c", BACKEND.get_generic_source, where_fn, (condition, a, b)
     )
-    compiled = torch.compile(where_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(where_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(condition, a, b)
     torch.testing.assert_close(result, where_fn(condition, a, b))
 
@@ -243,9 +241,9 @@ def test_codegen_generic_handles_cat():
     a = torch.randn(2, 2, dtype=torch.float32)
     b = torch.randn(2, 1, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "cat.c", get_generic_source, cat_fn, (a, b)
+        "cat.c", BACKEND.get_generic_source, cat_fn, (a, b)
     )
-    compiled = torch.compile(cat_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(cat_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(a, b)
     torch.testing.assert_close(result, cat_fn(a, b))
 
@@ -254,12 +252,12 @@ def test_codegen_generic_supports_inplace_ops():
     a = torch.randn(2, 3, dtype=torch.float32)
     expected = a.clone()
     gm = torch.fx.symbolic_trace(inplace_fn)
-    source = get_generic_source(gm, (a,))
+    source = BACKEND.get_generic_source(gm, (a,))
     assert "node2_add_f32(tmp_0, input_0, tmp_0);" in source
     _assert_codegen_source_matches(
-        "inplace_chain.c", get_generic_source, inplace_fn, (a,)
+        "inplace_chain.c", BACKEND.get_generic_source, inplace_fn, (a,)
     )
-    compiled = torch.compile(inplace_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(inplace_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(a)
     expected_result = inplace_fn(expected)
     torch.testing.assert_close(result, expected_result)
@@ -270,9 +268,9 @@ def test_i32():
     a = torch.randint(0, 5, (2, 3), dtype=torch.int32)
     b = torch.randint(0, 5, (2, 3), dtype=torch.int32)
     _assert_codegen_source_matches(
-        "mul_chain_i32.c", get_generic_source, mul_chain_fn, (a, b, b)
+        "mul_chain_i32.c", BACKEND.get_generic_source, mul_chain_fn, (a, b, b)
     )
-    compiled = torch.compile(mul_chain_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(mul_chain_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(a, b, b)
     torch.testing.assert_close(result, mul_chain_fn(a, b, b))
 
@@ -299,9 +297,9 @@ def test_emit_strided_access_expressions():
 def test_codegen_generic_handles_reduction_global():
     a = torch.randn(2, 3, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "sum_global.c", get_generic_source, reduction_global_fn, (a,)
+        "sum_global.c", BACKEND.get_generic_source, reduction_global_fn, (a,)
     )
-    compiled = torch.compile(reduction_global_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(reduction_global_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(a)
     torch.testing.assert_close(result, reduction_global_fn(a))
 
@@ -309,10 +307,10 @@ def test_codegen_generic_handles_reduction_global():
 def test_codegen_generic_handles_reduction_mean_global():
     a = torch.randn(2, 3, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "mean_global.c", get_generic_source, reduction_mean_global_fn, (a,)
+        "mean_global.c", BACKEND.get_generic_source, reduction_mean_global_fn, (a,)
     )
     compiled = torch.compile(
-        reduction_mean_global_fn, backend=codegen_generic_backend
+        reduction_mean_global_fn, backend=BACKEND.codegen_generic_backend
     )
     result = compiled(a)
     torch.testing.assert_close(result, reduction_mean_global_fn(a))
@@ -321,9 +319,9 @@ def test_codegen_generic_handles_reduction_mean_global():
 def test_codegen_generic_handles_reduction_mean_dim():
     a = torch.randn(2, 3, 4, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "mean_dim.c", get_generic_source, reduction_mean_dim_fn, (a,)
+        "mean_dim.c", BACKEND.get_generic_source, reduction_mean_dim_fn, (a,)
     )
-    compiled = torch.compile(reduction_mean_dim_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(reduction_mean_dim_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(a)
     torch.testing.assert_close(result, reduction_mean_dim_fn(a))
 
@@ -331,9 +329,9 @@ def test_codegen_generic_handles_reduction_mean_dim():
 def test_codegen_generic_handles_reduction_dim():
     a = torch.randn(2, 3, 4, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "sum_dim.c", get_generic_source, reduction_dim_fn, (a,)
+        "sum_dim.c", BACKEND.get_generic_source, reduction_dim_fn, (a,)
     )
-    compiled = torch.compile(reduction_dim_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(reduction_dim_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(a)
     torch.testing.assert_close(result, reduction_dim_fn(a))
 
@@ -341,9 +339,9 @@ def test_codegen_generic_handles_reduction_dim():
 def test_codegen_generic_handles_reduction_keepdim():
     a = torch.randn(2, 3, 4, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "sum_keepdim.c", get_generic_source, reduction_keepdim_fn, (a,)
+        "sum_keepdim.c", BACKEND.get_generic_source, reduction_keepdim_fn, (a,)
     )
-    compiled = torch.compile(reduction_keepdim_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(reduction_keepdim_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(a)
     torch.testing.assert_close(result, reduction_keepdim_fn(a))
 
@@ -352,9 +350,9 @@ def test_codegen_generic_handles_reduction_strided():
     base = torch.randn(3, 4, dtype=torch.float32)
     a = base.t()
     _assert_codegen_source_matches(
-        "sum_strided.c", get_generic_source, reduction_strided_fn, (a,)
+        "sum_strided.c", BACKEND.get_generic_source, reduction_strided_fn, (a,)
     )
-    compiled = torch.compile(reduction_strided_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(reduction_strided_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(a)
     torch.testing.assert_close(result, reduction_strided_fn(a))
 
@@ -363,10 +361,10 @@ def test_codegen_generic_handles_reduction_broadcast_producer():
     a = torch.randn(2, 3, 4, dtype=torch.float32)
     b = torch.randn(1, 4, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "sum_broadcast.c", get_generic_source, reduction_broadcast_fn, (a, b)
+        "sum_broadcast.c", BACKEND.get_generic_source, reduction_broadcast_fn, (a, b)
     )
     compiled = torch.compile(
-        reduction_broadcast_fn, backend=codegen_generic_backend
+        reduction_broadcast_fn, backend=BACKEND.codegen_generic_backend
     )
     result = compiled(a, b)
     torch.testing.assert_close(result, reduction_broadcast_fn(a, b))
@@ -375,9 +373,9 @@ def test_codegen_generic_handles_reduction_broadcast_producer():
 def test_codegen_generic_handles_argmax_dim():
     a = torch.randn(2, 3, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "argmax_dim.c", get_generic_source, argmax_dim_fn, (a,)
+        "argmax_dim.c", BACKEND.get_generic_source, argmax_dim_fn, (a,)
     )
-    compiled = torch.compile(argmax_dim_fn, backend=codegen_generic_backend)
+    compiled = torch.compile(argmax_dim_fn, backend=BACKEND.codegen_generic_backend)
     result = compiled(a)
     torch.testing.assert_close(result, argmax_dim_fn(a))
 
@@ -386,8 +384,8 @@ def test_elementwise_kernel_source_matches_expected():
     a = torch.randn(2, 3, dtype=torch.float32)
     b = torch.randn(2, 3, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "atan_single.c", get_generic_source, atan_fn, (a,)
+        "atan_single.c", BACKEND.get_generic_source, atan_fn, (a,)
     )
     _assert_codegen_source_matches(
-        "add_single.c", get_generic_source, add_broadcast_fn, (a, b)
+        "add_single.c", BACKEND.get_generic_source, add_broadcast_fn, (a, b)
     )

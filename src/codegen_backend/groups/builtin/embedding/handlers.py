@@ -78,7 +78,9 @@ class _BackendEmbeddingHandler(EmbeddingHandler):
             params={"padding_idx": padding_idx},
         )
         output_shape = _infer_output_shape(
-            op_node, [weight_shape, indices_shape]
+            op_node,
+            [weight_shape, indices_shape],
+            kind_handlers=self._ctx.kind_handlers,
         )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
@@ -184,7 +186,9 @@ class _BackendEmbeddingBagHandler(EmbeddingBagHandler):
             },
         )
         output_shape = _infer_output_shape(
-            op_node, [weight_shape, indices_shape, offsets_shape]
+            op_node,
+            [weight_shape, indices_shape, offsets_shape],
+            kind_handlers=self._ctx.kind_handlers,
         )
         op_node.output_shape = output_shape
         shapes[node] = output_shape

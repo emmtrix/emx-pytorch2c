@@ -36,6 +36,9 @@ class KernelEmitRequest:
 
 
 class HandlerContext(Protocol):
+    @property
+    def kind_handlers(self) -> Dict[OpKind, "OpKindHandler"]: ...
+
     def kernel_inputs(self, op_node: "_OpNode") -> List["torch.fx.Node"]: ...
 
     def handle_col2im_node(

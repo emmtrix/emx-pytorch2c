@@ -101,7 +101,9 @@ class _BackendReductionHandler(ReductionHandler):
             params=param_values,
         )
         self.validate(op_node, input_shapes, input_dtypes, dtype_info)
-        output_shape = _infer_output_shape(op_node, input_shapes)
+        output_shape = _infer_output_shape(
+            op_node, input_shapes, kind_handlers=self._ctx.kind_handlers
+        )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
         dtypes[node] = dtype_info.torch_dtype
@@ -172,7 +174,9 @@ class _BackendArgReductionHandler(ArgReductionHandler):
             params={"reduce_all": reduce_all},
         )
         self.validate(op_node, input_shapes, input_dtypes, dtype_info)
-        output_shape = _infer_output_shape(op_node, input_shapes)
+        output_shape = _infer_output_shape(
+            op_node, input_shapes, kind_handlers=self._ctx.kind_handlers
+        )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
         dtypes[node] = torch.int64
