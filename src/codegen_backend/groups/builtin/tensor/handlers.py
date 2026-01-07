@@ -508,24 +508,22 @@ def build_handlers(context: TensorContext) -> Dict[OpKind, OpKindHandler]:
         OpKind.FLIP: FlipHandler(
             context,
             FlipEmitter(),
-            builder=_maybe_builder(context, "handle_flip_node", _build_with_dtype),
+            builder=_build_with_dtype(context, handle_flip_node),
         ),
         OpKind.PAD: PadHandler(
             context,
             PadEmitter(),
-            builder=_maybe_builder(context, "handle_pad_node", _build_with_dtype),
+            builder=_build_with_dtype(context, handle_constant_pad_node),
         ),
         OpKind.VIEW: ViewHandler(
             context,
             ViewEmitter(),
-            builder=_maybe_builder(context, "handle_view_node", _build_with_dtype),
+            builder=_build_with_dtype(context, handle_view_node),
         ),
         OpKind.RESIZE: ResizeHandler(
             context,
             ResizeEmitter(),
-            builder=_maybe_builder(
-                context, "handle_resize_node", _build_with_inplace
-            ),
+            builder=_build_with_inplace(context, handle_resize_node),
         ),
         OpKind.MATMUL: _BackendMatmulHandler(context, MatmulEmitter()),
         OpKind.ADDR: _BackendAddrHandler(context, AddrEmitter()),
@@ -536,76 +534,61 @@ def build_handlers(context: TensorContext) -> Dict[OpKind, OpKindHandler]:
         OpKind.DIAGONAL: DiagonalHandler(
             context,
             DiagonalEmitter(),
-            builder=_maybe_builder(
-                context, "handle_diagonal_node", _build_with_dtype
-            ),
+            builder=_build_with_dtype(context, handle_diagonal_node),
         ),
         OpKind.CUMSUM: CumsumHandler(
             context,
             CumsumEmitter(),
-            builder=_maybe_builder(
-                context, "handle_cumsum_node", _build_with_dtype
-            ),
+            builder=_build_with_dtype(context, handle_cumsum_node),
         ),
         OpKind.GATHER: GatherHandler(
             context,
             GatherEmitter(),
-            builder=_maybe_builder(context, "handle_gather_node", _build_with_dtype),
+            builder=_build_with_dtype(context, handle_gather_node),
         ),
         OpKind.COL2IM: Col2imHandler(
             context,
             Col2imEmitter(),
-            builder=_maybe_builder(context, "handle_col2im_node", _build_with_dtype),
+            builder=_build_col2im_unavailable(),
         ),
         OpKind.BATCH_NORM: BatchNormHandler(
             context,
             BatchNormEmitter(),
-            builder=_maybe_builder(
-                context, "handle_batch_norm_node", _build_with_scalar
-            ),
+            builder=_build_with_scalar(context, handle_batch_norm_node),
         ),
         OpKind.PDIST: PdistHandler(
             context,
             PdistEmitter(),
-            builder=_maybe_builder(context, "handle_pdist_node", _build_with_dtype),
+            builder=_build_with_dtype(context, handle_pdist_node),
         ),
         OpKind.CDIST: CdistHandler(
             context,
             CdistEmitter(),
-            builder=_maybe_builder(context, "handle_cdist_node", _build_with_dtype),
+            builder=_build_with_dtype(context, handle_cdist_node),
         ),
         OpKind.ADDMM: AddmmHandler(
             context,
             AddmmEmitter(),
-            builder=_maybe_builder(
-                context, "handle_addmm_like_node", _build_with_inplace
-            ),
+            builder=_build_with_inplace(context, handle_addmm_like_node),
         ),
         OpKind.LINEAR: LinearHandler(
             context,
             LinearEmitter(),
-            builder=_maybe_builder(
-                context, "handle_linear_node", _build_with_scalar
-            ),
+            builder=_build_with_dtype(context, handle_linear_node),
         ),
         OpKind.ADDBMM: AddbmmHandler(
             context,
             AddbmmEmitter(),
-            builder=_maybe_builder(
-                context, "handle_addmm_like_node", _build_with_inplace
-            ),
+            builder=_build_with_inplace(context, handle_addmm_like_node),
         ),
         OpKind.ADDMV: AddmvHandler(
             context,
             AddmvEmitter(),
-            builder=_maybe_builder(
-                context, "handle_addmm_like_node", _build_with_inplace
-            ),
+            builder=_build_with_inplace(context, handle_addmm_like_node),
         ),
     }
 
-
-def _build_with_dtype(func):
+def _build_with_dtype(context, func):
     def builder(
         node,
         op_spec,
@@ -618,13 +601,21 @@ def _build_with_dtype(func):
     ):
         if dtype_info is None:
             return None
-        op_node = func(node, op_spec, dtype_info, shapes, strides, dtypes)
+        op_node = func(
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            infer_output_shape=context.analysis_service.infer_output_shape,
+        )
         return OpNodeBuildResult(op_node)
 
     return builder
 
 
-def _build_with_scalar(func):
+def _build_with_scalar(context, func):
     def builder(
         node,
         op_spec,
@@ -645,13 +636,14 @@ def _build_with_scalar(func):
             strides,
             dtypes,
             scalar_values,
+            infer_output_shape=context.analysis_service.infer_output_shape,
         )
         return OpNodeBuildResult(op_node)
 
     return builder
 
 
-def _build_with_inplace(func):
+def _build_with_inplace(context, func):
     def builder(
         node,
         op_spec,
@@ -672,17 +664,27 @@ def _build_with_inplace(func):
             strides,
             dtypes,
             inplace_input,
+            infer_output_shape=context.analysis_service.infer_output_shape,
         )
         return OpNodeBuildResult(op_node)
 
     return builder
 
 
-def _maybe_builder(context, method_name, builder_factory):
-    method = getattr(context, method_name, None)
-    if method is None:
-        return None
-    return builder_factory(method)
+def _build_col2im_unavailable():
+    def builder(
+        node,
+        op_spec,
+        dtype_info,
+        shapes,
+        strides,
+        dtypes,
+        scalar_values,
+        inplace_input,
+    ):
+        raise CodegenBackendError("col2im handler is not available")
+
+    return builder
 
 
 class TensorKindHandlerFactory:
