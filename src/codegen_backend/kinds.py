@@ -104,6 +104,17 @@ class HandlerContext(Protocol):
         inplace_input: int | None,
     ) -> "_OpNode": ...
 
+    def handle_linear_node(
+        self,
+        node: "torch.fx.Node",
+        op_spec: "_OpSpec",
+        dtype_info: "_CodegenDType",
+        shapes: Dict["torch.fx.Node", Tuple[int, ...]],
+        strides: Dict["torch.fx.Node", Tuple[int, ...]],
+        dtypes: Dict["torch.fx.Node", "torch.dtype"],
+        scalar_values: Dict["torch.fx.Node", object],
+    ) -> "_OpNode": ...
+
 
     def handle_flip_node(
         self,
@@ -1577,6 +1588,46 @@ class AddmmHandler(OpKindHandler):
         return expected_shape
 
 
+class LinearHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        inputs = op_node.inputs
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            inputs=inputs,
+            params={"has_bias": bool(op_node.p("has_bias", False))},
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        input_shape, weight_shape = input_shapes[:2]
+        if len(input_shape) != 2 or len(weight_shape) != 2:
+            raise CodegenBackendError("codegen linear expects 2D input and weight")
+        if input_shape[1] != weight_shape[1]:
+            raise CodegenBackendError(
+                "codegen linear requires input and weight inner dims to match"
+            )
+        output_shape = (input_shape[0], weight_shape[0])
+        if op_node.p("has_bias", False):
+            bias_shape = input_shapes[2]
+            if (
+                shape_utils.broadcast_output_shape(
+                    op_node.spec.name, bias_shape, output_shape
+                )
+                != output_shape
+            ):
+                raise CodegenBackendError(
+                    "codegen linear expects bias to be broadcastable to output"
+                )
+        return output_shape
+
+
 class AddbmmHandler(OpKindHandler):
     def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
@@ -2036,6 +2087,11 @@ def build_kind_handlers(context: HandlerContext) -> Dict[OpKind, OpKindHandler]:
             context,
             registry[OpKind.ADDMM].emitter_cls(),
             builder=_maybe_builder("handle_addmm_like_node", _build_with_inplace),
+        ),
+        OpKind.LINEAR: registry[OpKind.LINEAR].handler_cls(
+            context,
+            registry[OpKind.LINEAR].emitter_cls(),
+            builder=_maybe_builder("handle_linear_node", _build_with_scalar),
         ),
         OpKind.ADDBMM: registry[OpKind.ADDBMM].handler_cls(
             context,

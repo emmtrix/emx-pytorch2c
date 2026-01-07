@@ -111,6 +111,11 @@ def build_supported_ops() -> dict[str, _OpSpec]:
         torch.ops.aten.matmul,
         torch.ops.aten.matmul.default,
     ).build()
+    registry.register_op("linear", kind=OpKind.LINEAR).targets(
+        torch._C._nn.linear,
+        torch.ops.aten.linear.default,
+        torch.ops.aten.linear,
+    ).build()
     registry.register_op("bmm", kind=OpKind.MATMUL).targets(
         torch.bmm,
         torch.ops.aten.bmm,

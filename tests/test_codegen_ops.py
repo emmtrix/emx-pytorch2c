@@ -210,6 +210,29 @@ def _cdist_sample_filter(sample):
     return True
 
 
+def _linear_sample_filter(sample):
+    if not isinstance(sample.input, torch.Tensor):
+        return False
+    if not sample.args:
+        return False
+    weight = sample.args[0]
+    if not isinstance(weight, torch.Tensor):
+        return False
+    if sample.input.ndim != 2 or weight.ndim != 2:
+        return False
+    if sample.input.shape[1] != weight.shape[1]:
+        return False
+    if len(sample.args) > 1:
+        bias = sample.args[1]
+        if bias is None:
+            return True
+        if not isinstance(bias, torch.Tensor):
+            return False
+        if bias.ndim > 2:
+            return False
+    return True
+
+
 def _sample_matches_constraints(sample, dtype, constraints):
     tensors = _extract_tensors(sample)
     if not tensors:
@@ -388,6 +411,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.addbmm.default,
     torch.ops.aten.addmv.default,
     torch.ops.aten.addr.default,
+    torch.ops.aten.linear.default,
     torch.ops.aten.mm.default,
     torch.ops.aten.matmul.default,
     torch.ops.aten.max_pool1d.default,
@@ -914,6 +938,11 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.addr.default: {
         "equal_nan": True,
+    },
+    torch.ops.aten.linear.default: {
+        "allowed_dtypes": (torch.float32,),
+        "max_ndim": 2,
+        "sample_filter": _linear_sample_filter,
     },
 }
 DEFAULT_CONSTRAINTS = {

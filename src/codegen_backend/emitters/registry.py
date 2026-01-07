@@ -33,6 +33,7 @@ def build_kind_handler_registry() -> Dict[OpKind, KindHandlerRegistration]:
     from codegen_backend.emitters.elementwise import ElementwiseEmitter
     from codegen_backend.emitters.flip import FlipEmitter
     from codegen_backend.emitters.gather import GatherEmitter
+    from codegen_backend.emitters.linear import LinearEmitter
     from codegen_backend.emitters.matmul import MatmulEmitter
     from codegen_backend.emitters.pad import PadEmitter
     from codegen_backend.emitters.pdist import PdistEmitter
@@ -65,6 +66,7 @@ def build_kind_handler_registry() -> Dict[OpKind, KindHandlerRegistration]:
         ElementwiseHandler,
         FlipHandler,
         GatherHandler,
+        LinearHandler,
         MatmulHandler,
         PadHandler,
         PdistHandler,
@@ -103,6 +105,7 @@ def build_kind_handler_registry() -> Dict[OpKind, KindHandlerRegistration]:
             EmbeddingBagHandler, EmbeddingBagEmitter
         ),
         OpKind.GATHER: KindHandlerRegistration(GatherHandler, GatherEmitter),
+        OpKind.LINEAR: KindHandlerRegistration(LinearHandler, LinearEmitter),
         OpKind.CONCAT: KindHandlerRegistration(ConcatHandler, ConcatEmitter),
         OpKind.POOL2D: KindHandlerRegistration(Pool2dHandler, Pool2dEmitter),
         OpKind.POOL3D: KindHandlerRegistration(Pool3dHandler, Pool3dEmitter),
