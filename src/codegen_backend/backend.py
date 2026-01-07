@@ -26,16 +26,44 @@ from codegen_backend.dtypes import (
 )
 from codegen_backend.graph import _GenericGraph, _GenericLibrary, _OpNode
 from codegen_backend.emitters.base import _format_array_suffix, _is_contiguous
+from codegen_backend.emitters.arange import ArangeEmitter
+from codegen_backend.emitters.concat import ConcatEmitter
+from codegen_backend.emitters.conv1d import Conv1dEmitter
+from codegen_backend.emitters.conv2d import Conv2dEmitter
+from codegen_backend.emitters.embedding import EmbeddingEmitter
+from codegen_backend.emitters.embedding_bag import EmbeddingBagEmitter
+from codegen_backend.emitters.empty_strided import EmptyStridedEmitter
 from codegen_backend.emitters.elementwise import (
     _FLOAT_ONLY_UNARY_OPS,
     _PARAMETRIC_UNARY_OPS,
 )
+from codegen_backend.emitters.pool1d import Pool1dEmitter
+from codegen_backend.emitters.pool2d import Pool2dEmitter
+from codegen_backend.emitters.pool2d_backward import Pool2dBackwardEmitter
+from codegen_backend.emitters.pool3d import Pool3dEmitter
+from codegen_backend.emitters.softmax import SoftmaxEmitter
 from codegen_backend.indexing import (
     _contiguous_strides,
     _emit_strided_access,
     _format_strided_access,
 )
-from codegen_backend.kinds import HandlerContext, build_kind_handlers
+from codegen_backend.kinds import (
+    ArangeHandler,
+    ConcatHandler,
+    Conv1dHandler,
+    Conv2dHandler,
+    EmbeddingBagHandler,
+    EmbeddingHandler,
+    EmptyStridedHandler,
+    HandlerContext,
+    OpNodeBuildResult,
+    Pool1dHandler,
+    Pool2dBackwardHandler,
+    Pool2dHandler,
+    Pool3dHandler,
+    SoftmaxHandler,
+    build_kind_handlers,
+)
 from codegen_backend.ops_registry import SUPPORTED_OPS
 from codegen_backend.param_normalize import (
     normalize_bool,
@@ -1985,58 +2013,6 @@ def _parse_avg_pool2d_args(
     )
 
 
-def _handle_concat_node(
-    node: torch.fx.Node,
-    op_spec: _OpSpec,
-    dtype_info: _CodegenDType,
-    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-    strides: Dict[torch.fx.Node, Tuple[int, ...]],
-    dtypes: Dict[torch.fx.Node, torch.dtype],
-) -> _OpNode:
-    input_nodes, concat_dim = _parse_concat_args(node)
-    input_shapes: List[Tuple[int, ...]] = []
-    for arg in input_nodes:
-        if arg not in shapes:
-            raise _error_expected_tensor("cat")
-        input_shapes.append(shapes[arg])
-    if not input_shapes:
-        raise RefBackendError("codegen cat expects a non-empty tensor list input")
-    rank = len(input_shapes[0])
-    if rank == 0:
-        raise RefBackendError("codegen cat expects inputs with rank >= 1")
-    if concat_dim < 0:
-        concat_dim += rank
-    if concat_dim < 0 or concat_dim >= rank:
-        raise RefBackendError("codegen cat dim is out of range")
-    for shape in input_shapes:
-        if len(shape) != rank:
-            raise RefBackendError("codegen cat expects inputs with the same rank")
-        for dim, size in enumerate(shape):
-            if dim == concat_dim:
-                continue
-            if size != input_shapes[0][dim]:
-                raise RefBackendError(
-                    "codegen cat expects input shapes to match except in the concat dimension"
-                )
-    input_dtypes = [dtypes[arg] for arg in input_nodes]
-    if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
-        raise RefBackendError("codegen cat expects inputs to share the graph dtype")
-    op_node = _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=list(input_nodes),
-        output_shape=(),
-        inplace_input=None,
-        params={"dim": concat_dim},
-    )
-    output_shape = _infer_output_shape(op_node, input_shapes)
-    op_node.output_shape = output_shape
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return op_node
-
-
 def _handle_flip_node(
     node: torch.fx.Node,
     op_spec: _OpSpec,
@@ -2085,995 +2061,6 @@ def _handle_flip_node(
     op_node.output_shape = output_shape
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return op_node
-
-
-def _handle_conv1d_node(
-    node: torch.fx.Node,
-    op_spec: _OpSpec,
-    dtype_info: _CodegenDType,
-    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-    strides: Dict[torch.fx.Node, Tuple[int, ...]],
-    dtypes: Dict[torch.fx.Node, torch.dtype],
-) -> _OpNode:
-    (
-        input_arg,
-        weight_arg,
-        bias,
-        stride,
-        padding,
-        dilation,
-        groups,
-    ) = _parse_conv1d_args(node)
-    if not isinstance(input_arg, torch.fx.Node) or not isinstance(
-        weight_arg, torch.fx.Node
-    ):
-        raise _error_expected_tensor("conv1d")
-    bias_node = None
-    if bias is not None:
-        if isinstance(bias, torch.fx.Node):
-            bias_node = bias
-        else:
-            raise RefBackendError("codegen conv1d expects bias to be a tensor")
-    if isinstance(stride, torch.fx.Node) or isinstance(
-        padding, torch.fx.Node
-    ) or isinstance(dilation, torch.fx.Node):
-        raise RefBackendError(
-            "codegen conv1d expects constant stride, padding, and dilation"
-        )
-    if isinstance(groups, torch.fx.Node):
-        raise RefBackendError("codegen conv1d expects constant groups")
-    if dtype_info.torch_dtype is not torch.float32:
-        raise RefBackendError("codegen conv1d supports only torch.float32 tensors")
-    if input_arg not in shapes or weight_arg not in shapes:
-        raise _error_expected_tensor("conv1d")
-    if dtypes[input_arg] is not torch.float32 or dtypes[weight_arg] is not torch.float32:
-        raise RefBackendError("codegen conv1d supports only torch.float32 tensors")
-    if bias_node is not None:
-        if bias_node not in shapes:
-            raise _error_expected_tensor("conv1d")
-        if dtypes[bias_node] is not torch.float32:
-            raise RefBackendError("codegen conv1d supports only torch.float32 tensors")
-    input_shape = shapes[input_arg]
-    weight_shape = shapes[weight_arg]
-    if bias_node is not None:
-        bias_shape = shapes[bias_node]
-        if len(bias_shape) != 1 or bias_shape[0] != weight_shape[0]:
-            raise RefBackendError(
-                "codegen conv1d expects bias shape to match output channels"
-            )
-    if len(input_shape) != 3 or len(weight_shape) != 3:
-        raise RefBackendError("codegen conv1d requires 3D input and weight tensors")
-    stride_value = _normalize_param(normalize_int_or_tuple, "stride", stride, 1)[0]
-    dilation_value = _normalize_param(
-        normalize_int_or_tuple, "dilation", dilation, 1
-    )[0]
-    padding_value = _normalize_param(
-        normalize_padding, "padding", padding, 1, allow_strings=("same", "valid")
-    )
-    if not isinstance(padding_value, str):
-        padding_value = padding_value[0]
-    if stride_value <= 0 or dilation_value <= 0 or (
-        not isinstance(padding_value, str) and padding_value < 0
-    ):
-        raise RefBackendError(
-            "codegen conv1d expects stride and dilation to be positive and padding to be non-negative"
-        )
-    if not isinstance(groups, int) or groups <= 0:
-        raise RefBackendError("codegen conv1d requires positive groups")
-    inputs = (input_arg, weight_arg)
-    if bias_node is not None:
-        inputs = (*inputs, bias_node)
-    op_node = _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=list(inputs),
-        output_shape=(),
-        inplace_input=None,
-        params={
-            "stride": stride_value,
-            "padding": padding_value,
-            "dilation": dilation_value,
-            "groups": groups,
-            "has_bias": bias_node is not None,
-        },
-    )
-    output_shape = _infer_output_shape(op_node, [input_shape, weight_shape])
-    op_node.output_shape = output_shape
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return op_node
-
-
-def _handle_conv2d_node(
-    node: torch.fx.Node,
-    op_spec: _OpSpec,
-    dtype_info: _CodegenDType,
-    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-    strides: Dict[torch.fx.Node, Tuple[int, ...]],
-    dtypes: Dict[torch.fx.Node, torch.dtype],
-) -> _OpNode:
-    (
-        input_arg,
-        weight_arg,
-        bias,
-        stride,
-        padding,
-        dilation,
-        transposed,
-        output_padding,
-        groups,
-    ) = _parse_conv2d_args(node)
-    if not isinstance(input_arg, torch.fx.Node) or not isinstance(
-        weight_arg, torch.fx.Node
-    ):
-        raise _error_expected_tensor("conv2d")
-    bias_node = None
-    if bias is not None:
-        if isinstance(bias, torch.fx.Node):
-            bias_node = bias
-        else:
-            raise RefBackendError("codegen conv2d expects bias to be a tensor")
-    if isinstance(stride, torch.fx.Node) or isinstance(
-        padding, torch.fx.Node
-    ) or isinstance(dilation, torch.fx.Node):
-        raise RefBackendError(
-            "codegen conv2d expects constant stride, padding, and dilation"
-        )
-    if isinstance(transposed, torch.fx.Node):
-        raise RefBackendError("codegen conv2d expects constant transposed value")
-    if isinstance(output_padding, torch.fx.Node):
-        raise RefBackendError("codegen conv2d expects constant output_padding")
-    if isinstance(groups, torch.fx.Node):
-        raise RefBackendError("codegen conv2d expects constant groups")
-    if dtype_info.torch_dtype is not torch.float32:
-        raise RefBackendError("codegen conv2d supports only torch.float32 tensors")
-    if input_arg not in shapes or weight_arg not in shapes:
-        raise _error_expected_tensor("conv2d")
-    if dtypes[input_arg] is not torch.float32 or dtypes[weight_arg] is not torch.float32:
-        raise RefBackendError("codegen conv2d supports only torch.float32 tensors")
-    if bias_node is not None:
-        if bias_node not in shapes:
-            raise _error_expected_tensor("conv2d")
-        if dtypes[bias_node] is not torch.float32:
-            raise RefBackendError("codegen conv2d supports only torch.float32 tensors")
-    input_shape = shapes[input_arg]
-    weight_shape = shapes[weight_arg]
-    if len(weight_shape) != 4:
-        raise RefBackendError("codegen conv2d requires 4D weight tensors")
-    if len(input_shape) not in (3, 4):
-        raise RefBackendError("codegen conv2d requires 3D or 4D input tensors")
-    transposed_value = _normalize_param(
-        normalize_bool, "transposed", transposed
-    )
-    stride_pair = _normalize_param(normalize_int_or_pair, "stride", stride)
-    dilation_pair = _normalize_param(normalize_int_or_pair, "dilation", dilation)
-    padding_value = _normalize_param(
-        normalize_padding, "padding", padding, 2, allow_strings=("same", "valid")
-    )
-    output_padding_pair = _normalize_param(
-        normalize_int_or_pair, "output_padding", output_padding
-    )
-    try:
-        groups_value = operator.index(groups)
-    except TypeError as exc:
-        raise RefBackendError("codegen conv2d expects constant groups") from exc
-    if not transposed_value and output_padding_pair != (0, 0):
-        raise RefBackendError("codegen conv2d expects zero output padding")
-    if transposed_value and isinstance(padding_value, str):
-        raise RefBackendError(
-            "codegen conv2d expects numeric padding for transposed convolutions"
-        )
-    if not isinstance(padding_value, str):
-        padding_pair = padding_value
-    else:
-        padding_pair = padding_value
-    if (
-        stride_pair[0] <= 0
-        or stride_pair[1] <= 0
-        or dilation_pair[0] <= 0
-        or dilation_pair[1] <= 0
-        or (
-            not isinstance(padding_pair, str)
-            and (padding_pair[0] < 0 or padding_pair[1] < 0)
-        )
-    ):
-        raise RefBackendError(
-            "codegen conv2d expects stride and dilation to be positive and padding to be non-negative"
-        )
-    if output_padding_pair[0] < 0 or output_padding_pair[1] < 0:
-        raise RefBackendError(
-            "codegen conv2d expects output_padding to be non-negative"
-        )
-    if groups_value <= 0:
-        raise RefBackendError("codegen conv2d requires positive groups")
-    inputs = (input_arg, weight_arg)
-    if bias_node is not None:
-        inputs = (*inputs, bias_node)
-    op_node = _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=list(inputs),
-        output_shape=(),
-        inplace_input=None,
-        params={
-            "stride": stride_pair,
-            "padding": padding_pair,
-            "dilation": dilation_pair,
-            "groups": groups_value,
-            "transposed": transposed_value,
-            "output_padding": output_padding_pair,
-            "has_bias": bias_node is not None,
-        },
-    )
-    output_shape = _infer_output_shape(op_node, [input_shape, weight_shape])
-    op_node.output_shape = output_shape
-    if bias_node is not None:
-        bias_shape = shapes[bias_node]
-        if len(output_shape) == 4:
-            out_channels = output_shape[1]
-        else:
-            out_channels = output_shape[0]
-        if len(bias_shape) != 1 or bias_shape[0] != out_channels:
-            raise RefBackendError(
-                "codegen conv2d expects bias shape to match output channels"
-            )
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return op_node
-
-
-def _handle_pool1d_node(
-    node: torch.fx.Node,
-    op_spec: _OpSpec,
-    dtype_info: _CodegenDType,
-    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-    strides: Dict[torch.fx.Node, Tuple[int, ...]],
-    dtypes: Dict[torch.fx.Node, torch.dtype],
-) -> _OpNode:
-    if op_spec.name == "adaptive_avg_pool1d":
-        input_arg, output_size = _parse_adaptive_avg_pool1d_args(node)
-        kernel_size = None
-        stride = None
-        padding = 0
-        dilation = 1
-        ceil_mode = False
-        count_include_pad = False
-        divisor_override = None
-    elif op_spec.name == "max_pool1d":
-        (
-            input_arg,
-            kernel_size,
-            stride,
-            padding,
-            dilation,
-            ceil_mode,
-        ) = _parse_max_pool1d_args(node)
-        count_include_pad = False
-        divisor_override = None
-    else:
-        (
-            input_arg,
-            kernel_size,
-            stride,
-            padding,
-            ceil_mode,
-            count_include_pad,
-            divisor_override,
-        ) = _parse_avg_pool1d_args(node)
-        dilation = 1
-    if not isinstance(input_arg, torch.fx.Node):
-        raise _error_expected_tensor(op_spec.name)
-    if input_arg not in shapes:
-        raise _error_expected_tensor(op_spec.name)
-    if dtype_info.torch_dtype is not torch.float32:
-        raise RefBackendError(
-            f"codegen {op_spec.name} supports only torch.float32 tensors"
-        )
-    if dtypes[input_arg] is not torch.float32:
-        raise RefBackendError(
-            f"codegen {op_spec.name} supports only torch.float32 tensors"
-        )
-    if isinstance(kernel_size, torch.fx.Node) or isinstance(
-        padding, torch.fx.Node
-    ) or isinstance(ceil_mode, torch.fx.Node):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects constant kernel, padding, and ceil_mode"
-        )
-    if stride is not None and isinstance(stride, torch.fx.Node):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects constant stride values"
-        )
-    if isinstance(dilation, torch.fx.Node):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects constant dilation values"
-        )
-    if isinstance(count_include_pad, torch.fx.Node) or isinstance(
-        divisor_override, torch.fx.Node
-    ):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects constant pooling options"
-        )
-    input_shape = shapes[input_arg]
-    if len(input_shape) != 3:
-        raise RefBackendError(
-            f"codegen {op_spec.name} requires 3D input tensors"
-        )
-    if not _is_contiguous(input_shape, strides[input_arg]):
-        raise RefBackendError(
-            f"codegen {op_spec.name} requires contiguous input tensors"
-        )
-    if op_spec.name == "adaptive_avg_pool1d":
-        if isinstance(output_size, torch.fx.Node):
-            raise RefBackendError(
-                "codegen adaptive_avg_pool1d expects output_size to be an int"
-            )
-        if isinstance(output_size, (tuple, list)):
-            if len(output_size) != 1:
-                raise RefBackendError(
-                    "codegen adaptive_avg_pool1d expects a single output size"
-                )
-            output_size = output_size[0]
-        if not isinstance(output_size, int):
-            raise RefBackendError(
-                "codegen adaptive_avg_pool1d expects output_size to be an int"
-            )
-        if output_size <= 0:
-            raise RefBackendError(
-                "codegen adaptive_avg_pool1d expects output_size to be positive"
-            )
-        in_l = input_shape[2]
-        if in_l % output_size != 0:
-            raise RefBackendError(
-                "codegen adaptive_avg_pool1d requires input length divisible by output_size"
-            )
-        kernel_value = in_l // output_size
-        stride_value = kernel_value
-        padding_value = 0
-        dilation_value = 1
-    else:
-        kernel_value = _normalize_param(
-            normalize_int_or_tuple, "kernel_size", kernel_size, 1
-        )[0]
-        if stride is None:
-            stride_value = kernel_value
-        else:
-            stride_value = _normalize_param(
-                normalize_int_or_tuple, "stride", stride, 1
-            )[0]
-        padding_value = _normalize_param(
-            normalize_int_or_tuple, "padding", padding, 1
-        )[0]
-        dilation_value = _normalize_param(
-            normalize_int_or_tuple, "dilation", dilation, 1
-        )[0]
-    if (
-        kernel_value <= 0
-        or stride_value <= 0
-        or dilation_value <= 0
-        or padding_value < 0
-    ):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects positive kernel, stride, and dilation with non-negative padding"
-        )
-    if ceil_mode and op_spec.name != "max_pool1d":
-        raise RefBackendError(
-            f"codegen {op_spec.name} does not support ceil_mode"
-        )
-    if isinstance(count_include_pad, bool):
-        count_include_pad_value = count_include_pad
-    elif isinstance(count_include_pad, numbers.Integral):
-        count_include_pad_value = bool(count_include_pad)
-    else:
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects count_include_pad to be a bool"
-        )
-    divisor_override_value = divisor_override
-    if divisor_override is not None:
-        if isinstance(divisor_override, bool) or not isinstance(
-            divisor_override, numbers.Integral
-        ):
-            raise RefBackendError(
-                f"codegen {op_spec.name} expects divisor_override to be a positive int"
-            )
-        divisor_override_value = int(divisor_override)
-        if divisor_override_value <= 0:
-            raise RefBackendError(
-                f"codegen {op_spec.name} expects divisor_override to be a positive int"
-            )
-    if op_spec.name == "avg_pool2d":
-        effective_kh = (kernel_pair[0] - 1) * dilation_pair[0] + 1
-        effective_kw = (kernel_pair[1] - 1) * dilation_pair[1] + 1
-        max_pad_h = effective_kh // 2
-        max_pad_w = effective_kw // 2
-        if padding_pair[0] > max_pad_h or padding_pair[1] > max_pad_w:
-            raise RefBackendError(
-                "codegen avg_pool2d expects padding to be at most half of effective kernel size"
-            )
-    op_node = _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=[input_arg],
-        output_shape=(),
-        inplace_input=None,
-        params={
-            "kernel_size": kernel_value,
-            "stride": stride_value,
-            "padding": padding_value,
-            "dilation": dilation_value,
-            "ceil_mode": bool(ceil_mode),
-            "count_include_pad": count_include_pad_value,
-            "divisor_override": divisor_override_value,
-        },
-    )
-    output_shape = _infer_output_shape(op_node, [input_shape])
-    op_node.output_shape = output_shape
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return op_node
-
-
-def _handle_pool2d_node(
-    node: torch.fx.Node,
-    op_spec: _OpSpec,
-    dtype_info: _CodegenDType,
-    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-    strides: Dict[torch.fx.Node, Tuple[int, ...]],
-    dtypes: Dict[torch.fx.Node, torch.dtype],
-) -> _OpNode:
-    if op_spec.name == "adaptive_avg_pool2d":
-        input_arg, output_size = _parse_adaptive_avg_pool2d_args(node)
-        kernel_size = None
-        stride = None
-        padding = 0
-        dilation = 1
-        ceil_mode = False
-        count_include_pad = False
-        divisor_override = None
-    elif op_spec.name == "max_pool2d":
-        (
-            input_arg,
-            kernel_size,
-            stride,
-            padding,
-            dilation,
-            ceil_mode,
-        ) = _parse_max_pool2d_args(node)
-        count_include_pad = False
-        divisor_override = None
-    else:
-        (
-            input_arg,
-            kernel_size,
-            stride,
-            padding,
-            ceil_mode,
-            count_include_pad,
-            divisor_override,
-        ) = _parse_avg_pool2d_args(node)
-        dilation = 1
-    if not isinstance(input_arg, torch.fx.Node):
-        raise _error_expected_tensor(op_spec.name)
-    if input_arg not in shapes:
-        raise _error_expected_tensor(op_spec.name)
-    if dtype_info.torch_dtype is not torch.float32:
-        raise RefBackendError(
-            f"codegen {op_spec.name} supports only torch.float32 tensors"
-        )
-    if dtypes[input_arg] is not torch.float32:
-        raise RefBackendError(
-            f"codegen {op_spec.name} supports only torch.float32 tensors"
-        )
-    if isinstance(kernel_size, torch.fx.Node) or isinstance(
-        padding, torch.fx.Node
-    ) or isinstance(ceil_mode, torch.fx.Node):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects constant kernel, padding, and ceil_mode"
-        )
-    if stride is not None and isinstance(stride, torch.fx.Node):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects constant stride values"
-        )
-    if isinstance(dilation, torch.fx.Node):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects constant dilation values"
-        )
-    if isinstance(count_include_pad, torch.fx.Node) or isinstance(
-        divisor_override, torch.fx.Node
-    ):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects constant pooling options"
-        )
-    input_shape = shapes[input_arg]
-    if len(input_shape) != 4:
-        raise RefBackendError(
-            f"codegen {op_spec.name} requires 4D input tensors"
-        )
-    if not _is_contiguous(input_shape, strides[input_arg]):
-        raise RefBackendError(
-            f"codegen {op_spec.name} requires contiguous input tensors"
-        )
-    if op_spec.name == "adaptive_avg_pool2d":
-        if isinstance(output_size, torch.fx.Node):
-            raise RefBackendError(
-                "codegen adaptive_avg_pool2d expects output_size to be a tuple of ints"
-            )
-        if isinstance(output_size, torch.Size):
-            output_size = tuple(output_size)
-        if isinstance(output_size, int):
-            output_pair = (output_size, output_size)
-        elif isinstance(output_size, (tuple, list)):
-            if len(output_size) != 2:
-                raise RefBackendError(
-                    "codegen adaptive_avg_pool2d expects output_size to have two values"
-                )
-            output_pair = tuple(output_size)
-        else:
-            raise RefBackendError(
-                "codegen adaptive_avg_pool2d expects output_size to be a tuple of ints"
-            )
-        if not all(isinstance(item, int) for item in output_pair):
-            raise RefBackendError(
-                "codegen adaptive_avg_pool2d expects output_size to be a tuple of ints"
-            )
-        if output_pair[0] <= 0 or output_pair[1] <= 0:
-            raise RefBackendError(
-                "codegen adaptive_avg_pool2d expects output_size to be positive"
-            )
-        in_h, in_w = input_shape[2], input_shape[3]
-        if in_h % output_pair[0] != 0 or in_w % output_pair[1] != 0:
-            raise RefBackendError(
-                "codegen adaptive_avg_pool2d requires input sizes divisible by output_size"
-            )
-        kernel_pair = (in_h // output_pair[0], in_w // output_pair[1])
-        stride_pair = kernel_pair
-        padding_pair = (0, 0)
-        dilation_pair = (1, 1)
-    else:
-        kernel_pair = _normalize_param(
-            normalize_int_or_pair, "kernel_size", kernel_size
-        )
-        if stride is None:
-            stride_pair = kernel_pair
-        else:
-            stride_pair = _normalize_param(normalize_int_or_pair, "stride", stride)
-        padding_pair = _normalize_param(normalize_int_or_pair, "padding", padding)
-        dilation_pair = _normalize_param(normalize_int_or_pair, "dilation", dilation)
-    if (
-        kernel_pair[0] <= 0
-        or kernel_pair[1] <= 0
-        or stride_pair[0] <= 0
-        or stride_pair[1] <= 0
-        or dilation_pair[0] <= 0
-        or dilation_pair[1] <= 0
-        or padding_pair[0] < 0
-        or padding_pair[1] < 0
-    ):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects positive kernel, stride, and dilation with non-negative padding"
-        )
-    if not isinstance(ceil_mode, bool):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects ceil_mode to be a bool"
-        )
-    if not isinstance(count_include_pad, bool):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects count_include_pad to be a bool"
-        )
-    if divisor_override is not None:
-        if not isinstance(divisor_override, int) or divisor_override <= 0:
-            raise RefBackendError(
-                f"codegen {op_spec.name} expects divisor_override to be a positive int"
-            )
-    op_node = _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=[input_arg],
-        output_shape=(),
-        inplace_input=None,
-        params={
-            "kernel_size": kernel_pair,
-            "stride": stride_pair,
-            "padding": padding_pair,
-            "dilation": dilation_pair,
-            "ceil_mode": bool(ceil_mode),
-            "count_include_pad": count_include_pad,
-            "divisor_override": divisor_override,
-        },
-    )
-    output_shape = _infer_output_shape(op_node, [input_shape])
-    op_node.output_shape = output_shape
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return op_node
-
-
-def _handle_pool3d_node(
-    node: torch.fx.Node,
-    op_spec: _OpSpec,
-    dtype_info: _CodegenDType,
-    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-    strides: Dict[torch.fx.Node, Tuple[int, ...]],
-    dtypes: Dict[torch.fx.Node, torch.dtype],
-) -> _OpNode:
-    input_arg, output_size = _parse_adaptive_avg_pool3d_args(node)
-    kernel_size = None
-    stride = None
-    padding = (0, 0, 0)
-    dilation = (1, 1, 1)
-    ceil_mode = False
-    count_include_pad = False
-    divisor_override = None
-    if not isinstance(input_arg, torch.fx.Node):
-        raise _error_expected_tensor(op_spec.name)
-    if input_arg not in shapes:
-        raise _error_expected_tensor(op_spec.name)
-    if dtype_info.torch_dtype is not torch.float32:
-        raise RefBackendError(
-            f"codegen {op_spec.name} supports only torch.float32 tensors"
-        )
-    if dtypes[input_arg] is not torch.float32:
-        raise RefBackendError(
-            f"codegen {op_spec.name} supports only torch.float32 tensors"
-        )
-    if isinstance(kernel_size, torch.fx.Node) or isinstance(
-        padding, torch.fx.Node
-    ) or isinstance(ceil_mode, torch.fx.Node):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects constant kernel, padding, and ceil_mode"
-        )
-    if stride is not None and isinstance(stride, torch.fx.Node):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects constant stride values"
-        )
-    if isinstance(dilation, torch.fx.Node):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects constant dilation values"
-        )
-    if isinstance(count_include_pad, torch.fx.Node) or isinstance(
-        divisor_override, torch.fx.Node
-    ):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects constant pooling options"
-        )
-    input_shape = shapes[input_arg]
-    if len(input_shape) != 5:
-        raise RefBackendError(
-            f"codegen {op_spec.name} requires 5D input tensors"
-        )
-    if not _is_contiguous(input_shape, strides[input_arg]):
-        raise RefBackendError(
-            f"codegen {op_spec.name} requires contiguous input tensors"
-        )
-    if isinstance(output_size, torch.fx.Node):
-        raise RefBackendError(
-            "codegen adaptive_avg_pool3d expects output_size to be a tuple of ints"
-        )
-    if isinstance(output_size, torch.Size):
-        output_size = tuple(output_size)
-    if isinstance(output_size, int):
-        output_triplet = (output_size, output_size, output_size)
-    elif isinstance(output_size, (tuple, list)):
-        if len(output_size) != 3:
-            raise RefBackendError(
-                "codegen adaptive_avg_pool3d expects output_size to have three values"
-            )
-        output_triplet = tuple(output_size)
-    else:
-        raise RefBackendError(
-            "codegen adaptive_avg_pool3d expects output_size to be a tuple of ints"
-        )
-    if not all(isinstance(item, int) for item in output_triplet):
-        raise RefBackendError(
-            "codegen adaptive_avg_pool3d expects output_size to be a tuple of ints"
-        )
-    if (
-        output_triplet[0] <= 0
-        or output_triplet[1] <= 0
-        or output_triplet[2] <= 0
-    ):
-        raise RefBackendError(
-            "codegen adaptive_avg_pool3d expects output_size to be positive"
-        )
-    in_d, in_h, in_w = input_shape[2], input_shape[3], input_shape[4]
-    if (
-        in_d % output_triplet[0] != 0
-        or in_h % output_triplet[1] != 0
-        or in_w % output_triplet[2] != 0
-    ):
-        raise RefBackendError(
-            "codegen adaptive_avg_pool3d requires input sizes divisible by output_size"
-        )
-    kernel_triplet = (
-        in_d // output_triplet[0],
-        in_h // output_triplet[1],
-        in_w // output_triplet[2],
-    )
-    stride_triplet = kernel_triplet
-    padding_triplet = (0, 0, 0)
-    dilation_triplet = (1, 1, 1)
-    if (
-        kernel_triplet[0] <= 0
-        or kernel_triplet[1] <= 0
-        or kernel_triplet[2] <= 0
-        or stride_triplet[0] <= 0
-        or stride_triplet[1] <= 0
-        or stride_triplet[2] <= 0
-        or dilation_triplet[0] <= 0
-        or dilation_triplet[1] <= 0
-        or dilation_triplet[2] <= 0
-        or padding_triplet[0] < 0
-        or padding_triplet[1] < 0
-        or padding_triplet[2] < 0
-    ):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects positive kernel, stride, and dilation with non-negative padding"
-        )
-    if ceil_mode:
-        raise RefBackendError(
-            f"codegen {op_spec.name} does not support ceil_mode"
-        )
-    if not isinstance(count_include_pad, bool):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects count_include_pad to be a bool"
-        )
-    if divisor_override is not None:
-        if not isinstance(divisor_override, int) or divisor_override <= 0:
-            raise RefBackendError(
-                f"codegen {op_spec.name} expects divisor_override to be a positive int"
-            )
-    op_node = _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=[input_arg],
-        output_shape=(),
-        inplace_input=None,
-        params={
-            "kernel_size": kernel_triplet,
-            "stride": stride_triplet,
-            "padding": padding_triplet,
-            "dilation": dilation_triplet,
-            "ceil_mode": bool(ceil_mode),
-            "count_include_pad": count_include_pad,
-            "divisor_override": divisor_override,
-        },
-    )
-    output_shape = _infer_output_shape(op_node, [input_shape])
-    op_node.output_shape = output_shape
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return op_node
-
-
-def _handle_adaptive_avg_pool2d_backward_node(
-    node: torch.fx.Node,
-    op_spec: _OpSpec,
-    dtype_info: _CodegenDType,
-    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-    strides: Dict[torch.fx.Node, Tuple[int, ...]],
-    dtypes: Dict[torch.fx.Node, torch.dtype],
-) -> _OpNode:
-    grad_output, input_arg = _parse_adaptive_avg_pool2d_backward_args(node)
-    if not isinstance(grad_output, torch.fx.Node) or not isinstance(
-        input_arg, torch.fx.Node
-    ):
-        raise _error_expected_tensor(op_spec.name)
-    if grad_output not in shapes or input_arg not in shapes:
-        raise _error_expected_tensor(op_spec.name)
-    if dtype_info.torch_dtype is not torch.float32:
-        raise RefBackendError(
-            "codegen adaptive_avg_pool2d_backward supports only torch.float32 tensors"
-        )
-    if dtypes[grad_output] is not torch.float32 or dtypes[input_arg] is not torch.float32:
-        raise RefBackendError(
-            "codegen adaptive_avg_pool2d_backward supports only torch.float32 tensors"
-        )
-    grad_output_shape = shapes[grad_output]
-    input_shape = shapes[input_arg]
-    if len(grad_output_shape) != 4 or len(input_shape) != 4:
-        raise RefBackendError(
-            "codegen adaptive_avg_pool2d_backward requires 4D input tensors"
-        )
-    if not _is_contiguous(grad_output_shape, strides[grad_output]):
-        raise RefBackendError(
-            "codegen adaptive_avg_pool2d_backward requires contiguous grad_output tensors"
-        )
-    if not _is_contiguous(input_shape, strides[input_arg]):
-        raise RefBackendError(
-            "codegen adaptive_avg_pool2d_backward requires contiguous input tensors"
-        )
-    if grad_output_shape[0] != input_shape[0] or grad_output_shape[1] != input_shape[1]:
-        raise RefBackendError(
-            "codegen adaptive_avg_pool2d_backward requires matching batch and channel sizes"
-        )
-    out_h, out_w = grad_output_shape[2], grad_output_shape[3]
-    in_h, in_w = input_shape[2], input_shape[3]
-    if out_h <= 0 or out_w <= 0:
-        raise RefBackendError(
-            "codegen adaptive_avg_pool2d_backward expects positive output size"
-        )
-    if in_h % out_h != 0 or in_w % out_w != 0:
-        raise RefBackendError(
-            "codegen adaptive_avg_pool2d_backward requires input sizes divisible by output size"
-        )
-    kernel_pair = (in_h // out_h, in_w // out_w)
-    stride_pair = kernel_pair
-    op_node = _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=[grad_output, input_arg],
-        output_shape=(),
-        inplace_input=None,
-        params={
-            "kernel_size": kernel_pair,
-            "stride": stride_pair,
-        },
-    )
-    output_shape = _infer_output_shape(op_node, [grad_output_shape, input_shape])
-    op_node.output_shape = output_shape
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return op_node
-
-
-def _handle_col2im_node(
-    node: torch.fx.Node,
-    op_spec: _OpSpec,
-    dtype_info: _CodegenDType,
-    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-    strides: Dict[torch.fx.Node, Tuple[int, ...]],
-    dtypes: Dict[torch.fx.Node, torch.dtype],
-) -> _OpNode:
-    (
-        input_arg,
-        output_size,
-        kernel_size,
-        dilation,
-        padding,
-        stride,
-    ) = _parse_col2im_args(node)
-    if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
-        raise _error_expected_tensor(op_spec.name)
-    if dtype_info.torch_dtype is not torch.float32:
-        raise RefBackendError(
-            "codegen col2im supports only torch.float32 tensors"
-        )
-    if dtypes[input_arg] is not torch.float32:
-        raise RefBackendError(
-            "codegen col2im supports only torch.float32 tensors"
-        )
-    if (
-        isinstance(output_size, torch.fx.Node)
-        or isinstance(kernel_size, torch.fx.Node)
-        or isinstance(dilation, torch.fx.Node)
-        or isinstance(padding, torch.fx.Node)
-        or isinstance(stride, torch.fx.Node)
-    ):
-        raise RefBackendError(
-            "codegen col2im expects constant output_size, kernel_size, dilation, padding, and stride"
-        )
-    output_pair = _normalize_col2im_output_size(op_spec.name, output_size)
-    kernel_pair = _normalize_param(
-        normalize_int_or_pair, "kernel_size", kernel_size
-    )
-    dilation_pair = _normalize_param(
-        normalize_int_or_pair, "dilation", dilation
-    )
-    padding_pair = _normalize_param(normalize_int_or_pair, "padding", padding)
-    stride_pair = _normalize_param(normalize_int_or_pair, "stride", stride)
-    if (
-        output_pair[0] <= 0
-        or output_pair[1] <= 0
-        or kernel_pair[0] <= 0
-        or kernel_pair[1] <= 0
-        or dilation_pair[0] <= 0
-        or dilation_pair[1] <= 0
-        or stride_pair[0] <= 0
-        or stride_pair[1] <= 0
-        or padding_pair[0] < 0
-        or padding_pair[1] < 0
-    ):
-        raise RefBackendError(
-            "codegen col2im expects positive output_size, kernel_size, stride, and dilation with non-negative padding"
-        )
-    input_shape = shapes[input_arg]
-    if len(input_shape) == 3:
-        batch, col_channels, _ = input_shape
-        has_batch = True
-    elif len(input_shape) == 2:
-        col_channels, _ = input_shape
-        batch = 1
-        has_batch = False
-    else:
-        raise RefBackendError("codegen col2im expects 2D or 3D input tensors")
-    if not _is_contiguous(input_shape, strides[input_arg]):
-        raise RefBackendError("codegen col2im requires contiguous input tensors")
-    op_node = _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=[input_arg],
-        output_shape=(),
-        inplace_input=None,
-        params={
-            "output_size": output_pair,
-            "kernel_size": kernel_pair,
-            "dilation": dilation_pair,
-            "padding": padding_pair,
-            "stride": stride_pair,
-        },
-    )
-    output_shape = _infer_output_shape(op_node, [input_shape])
-    op_node.output_shape = output_shape
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return op_node
-
-
-def _handle_to_copy_node(
-    node: torch.fx.Node,
-    op_spec: _OpSpec,
-    dtype_info: _CodegenDType,
-    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-    strides: Dict[torch.fx.Node, Tuple[int, ...]],
-    dtypes: Dict[torch.fx.Node, torch.dtype],
-) -> _OpNode:
-    if not node.args:
-        raise RefBackendError("codegen _to_copy expects one input")
-    if len(node.args) != 1:
-        raise RefBackendError("codegen _to_copy expects only self as positional arg")
-    input_arg = node.args[0]
-    if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
-        raise _error_expected_tensor("_to_copy")
-    dtype = node.kwargs.get("dtype")
-    layout = node.kwargs.get("layout")
-    device = node.kwargs.get("device")
-    pin_memory = node.kwargs.get("pin_memory")
-    non_blocking = node.kwargs.get("non_blocking", False)
-    memory_format = node.kwargs.get("memory_format")
-    extra = set(node.kwargs) - {
-        "dtype",
-        "layout",
-        "device",
-        "pin_memory",
-        "non_blocking",
-        "memory_format",
-    }
-    if extra:
-        raise RefBackendError(
-            f"codegen _to_copy got unexpected kwargs: {sorted(extra)}"
-        )
-    if isinstance(dtype, torch.fx.Node):
-        raise RefBackendError("codegen _to_copy expects dtype to be a constant")
-    if dtype is not None and dtype is not dtypes[input_arg]:
-        raise RefBackendError("codegen _to_copy does not support dtype conversion")
-    if layout is not None or device is not None or pin_memory is not None:
-        raise RefBackendError("codegen _to_copy does not support layout/device moves")
-    if isinstance(non_blocking, torch.fx.Node) or non_blocking not in (False, 0):
-        raise RefBackendError(
-            "codegen _to_copy expects non_blocking to be False"
-        )
-    if memory_format is not None:
-        raise RefBackendError("codegen _to_copy does not support memory_format")
-    op_node = _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=[input_arg],
-        output_shape=(),
-        inplace_input=None,
-        params={},
-    )
-    output_shape = _infer_output_shape(op_node, [shapes[input_arg]])
-    op_node.output_shape = output_shape
-    shapes[node] = output_shape
-    dtypes[node] = dtypes[input_arg]
     strides[node] = _contiguous_strides(output_shape)
     return op_node
 
@@ -3223,6 +2210,7 @@ def _handle_batch_norm_node(
     return op_node
 
 
+
 def _handle_pdist_node(
     node: torch.fx.Node,
     op_spec: _OpSpec,
@@ -3272,6 +2260,7 @@ def _handle_pdist_node(
     dtypes[node] = dtype_info.torch_dtype
     strides[node] = _contiguous_strides(output_shape)
     return op_node
+
 
 
 def _handle_cdist_node(
@@ -3356,6 +2345,7 @@ def _handle_cdist_node(
     return op_node
 
 
+
 def _handle_addmm_like_node(
     node: torch.fx.Node,
     op_spec: _OpSpec,
@@ -3409,6 +2399,7 @@ def _handle_addmm_like_node(
     return op_node
 
 
+
 def _handle_diagonal_node(
     node: torch.fx.Node,
     op_spec: _OpSpec,
@@ -3442,196 +2433,6 @@ def _handle_diagonal_node(
     dtypes[node] = dtype_info.torch_dtype
     strides[node] = _contiguous_strides(output_shape)
     return op_node
-
-
-def _handle_softmax_node(
-    node: torch.fx.Node,
-    op_spec: _OpSpec,
-    dtype_info: _CodegenDType,
-    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-    strides: Dict[torch.fx.Node, Tuple[int, ...]],
-    dtypes: Dict[torch.fx.Node, torch.dtype],
-) -> _OpNode:
-    if not node.args:
-        raise RefBackendError(f"codegen {op_spec.name} expects one input")
-    input_arg = node.args[0]
-    if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
-        raise _error_expected_tensor(op_spec.name)
-    if dtype_info.torch_dtype is not torch.float32:
-        raise RefBackendError(
-            f"codegen {op_spec.name} supports only torch.float32 tensors"
-        )
-    if dtypes[input_arg] is not torch.float32:
-        raise RefBackendError(
-            f"codegen {op_spec.name} supports only torch.float32 tensors"
-        )
-    dim, dtype = _parse_softmax_args(op_spec.name, node, shapes[input_arg])
-    if dtype is not None and dtype is not torch.float32:
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects dtype to be torch.float32 or None"
-        )
-    output_shape = shapes[input_arg]
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=[input_arg],
-        output_shape=output_shape,
-        inplace_input=None,
-        params={"dim": dim},
-    )
-
-def _handle_embedding_node(
-    node: torch.fx.Node,
-    op_spec: _OpSpec,
-    dtype_info: _CodegenDType,
-    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-    strides: Dict[torch.fx.Node, Tuple[int, ...]],
-    dtypes: Dict[torch.fx.Node, torch.dtype],
-) -> _OpNode:
-    weight, indices, padding_idx, scale_grad_by_freq, sparse = (
-        _parse_embedding_args(node)
-    )
-    if scale_grad_by_freq or sparse:
-        raise RefBackendError(
-            "codegen embedding supports only scale_grad_by_freq=False and sparse=False"
-        )
-    if not isinstance(weight, torch.fx.Node) or weight not in shapes:
-        raise _error_expected_tensor(op_spec.name)
-    if not isinstance(indices, torch.fx.Node) or indices not in shapes:
-        raise _error_expected_tensor(op_spec.name)
-    if dtypes[weight] is not dtype_info.torch_dtype:
-        raise RefBackendError(
-            "codegen embedding expects weight to match the graph dtype"
-        )
-    if dtypes[indices] not in _EMBEDDING_INDEX_DTYPES:
-        raise RefBackendError(
-            "codegen embedding expects indices to have dtype torch.int32 or torch.int64"
-        )
-    weight_shape = shapes[weight]
-    if len(weight_shape) != 2:
-        raise RefBackendError("codegen embedding expects 2D weight tensor")
-    if padding_idx != -1:
-        if padding_idx < 0 or padding_idx >= weight_shape[0]:
-            raise RefBackendError(
-                "codegen embedding expects padding_idx to be -1 or within num_embeddings"
-            )
-    indices_shape = shapes[indices]
-    op_node = _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=[weight, indices],
-        output_shape=(),
-        inplace_input=None,
-        params={"padding_idx": padding_idx},
-    )
-    output_shape = _infer_output_shape(op_node, [weight_shape, indices_shape])
-    op_node.output_shape = output_shape
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return op_node
-
-
-def _handle_embedding_bag_node(
-    node: torch.fx.Node,
-    op_spec: _OpSpec,
-    dtype_info: _CodegenDType,
-    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-    strides: Dict[torch.fx.Node, Tuple[int, ...]],
-    dtypes: Dict[torch.fx.Node, torch.dtype],
-) -> _OpNode:
-    (
-        weight,
-        indices,
-        offsets,
-        scale_grad_by_freq,
-        mode,
-        sparse,
-        per_sample_weights,
-        include_last_offset,
-        padding_idx,
-    ) = _parse_embedding_bag_args(node)
-    if scale_grad_by_freq or sparse:
-        raise RefBackendError(
-            "codegen _embedding_bag supports only scale_grad_by_freq=False and sparse=False"
-        )
-    if per_sample_weights is not None:
-        raise RefBackendError(
-            "codegen _embedding_bag does not support per_sample_weights"
-        )
-    if not isinstance(weight, torch.fx.Node) or weight not in shapes:
-        raise _error_expected_tensor(op_spec.name)
-    if not isinstance(indices, torch.fx.Node) or indices not in shapes:
-        raise _error_expected_tensor(op_spec.name)
-    if not isinstance(offsets, torch.fx.Node) or offsets not in shapes:
-        raise _error_expected_tensor(op_spec.name)
-    if dtype_info.torch_dtype is not torch.float32:
-        raise RefBackendError(
-            "codegen _embedding_bag supports only torch.float32 tensors"
-        )
-    if dtypes[weight] is not dtype_info.torch_dtype:
-        raise RefBackendError(
-            "codegen _embedding_bag expects weight to match the graph dtype"
-        )
-    if dtypes[indices] not in _EMBEDDING_INDEX_DTYPES:
-        raise RefBackendError(
-            "codegen _embedding_bag expects indices to have dtype torch.int32 or torch.int64"
-        )
-    if dtypes[offsets] not in _EMBEDDING_INDEX_DTYPES:
-        raise RefBackendError(
-            "codegen _embedding_bag expects offsets to have dtype torch.int32 or torch.int64"
-        )
-    weight_shape = shapes[weight]
-    if len(weight_shape) != 2:
-        raise RefBackendError("codegen _embedding_bag expects 2D weight tensor")
-    if padding_idx != -1:
-        if padding_idx < 0 or padding_idx >= weight_shape[0]:
-            raise RefBackendError(
-                "codegen _embedding_bag expects padding_idx to be -1 or within num_embeddings"
-            )
-    indices_shape = shapes[indices]
-    if len(indices_shape) != 1:
-        raise RefBackendError("codegen _embedding_bag expects 1D indices tensor")
-    offsets_shape = shapes[offsets]
-    if len(offsets_shape) != 1:
-        raise RefBackendError("codegen _embedding_bag expects 1D offsets tensor")
-    if include_last_offset and offsets_shape[0] == 0:
-        raise RefBackendError(
-            "codegen _embedding_bag expects non-empty offsets when include_last_offset is True"
-        )
-    if mode not in (0, 1):
-        raise RefBackendError(
-            "codegen _embedding_bag supports only mode=0 (sum) or mode=1 (mean)"
-        )
-    bag_count = offsets_shape[0] - 1 if include_last_offset else offsets_shape[0]
-    if bag_count < 0:
-        raise RefBackendError(
-            "codegen _embedding_bag expects offsets to contain at least one entry"
-        )
-    op_node = _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=[weight, indices, offsets],
-        output_shape=(),
-        inplace_input=None,
-        params={
-            "mode": mode,
-            "padding_idx": padding_idx,
-            "include_last_offset": include_last_offset,
-        },
-    )
-    output_shape = _infer_output_shape(
-        op_node, [weight_shape, indices_shape, offsets_shape]
-    )
-    op_node.output_shape = output_shape
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return op_node
-
 
 def _handle_cumsum_node(
     node: torch.fx.Node,
@@ -4027,100 +2828,6 @@ def _parse_arange_dtype(
     return dtype_spec
 
 
-def _handle_arange_node(
-    node: torch.fx.Node,
-    op_spec: _OpSpec,
-    dtype_info: _CodegenDType | None,
-    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-    strides: Dict[torch.fx.Node, Tuple[int, ...]],
-    dtypes: Dict[torch.fx.Node, torch.dtype],
-    scalar_values: Dict[torch.fx.Node, object],
-) -> Tuple[_OpNode, _CodegenDType]:
-    allowed_kwargs = {
-        "start",
-        "end",
-        "dtype",
-        "layout",
-        "device",
-        "pin_memory",
-        "step",
-    }
-    extra = set(node.kwargs) - allowed_kwargs
-    if extra:
-        raise RefBackendError(
-            f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
-        )
-    if node.kwargs.get("layout") is not None:
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects layout to be None"
-        )
-    device = node.kwargs.get("device")
-    if device is not None and device != "cpu" and device != torch.device("cpu"):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects device to be None or cpu"
-        )
-    pin_memory = node.kwargs.get("pin_memory")
-    if pin_memory not in (None, False):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects pin_memory to be False"
-        )
-    start_arg = None
-    end_arg = None
-    step_arg = None
-    if node.args:
-        if len(node.args) > 3:
-            raise RefBackendError(
-                f"codegen {op_spec.name} expects start and end arguments"
-            )
-        start_arg = node.args[0]
-        if len(node.args) > 1:
-            end_arg = node.args[1]
-        if len(node.args) > 2:
-            step_arg = node.args[2]
-    if "start" in node.kwargs:
-        if start_arg is not None:
-            raise _error_kwarg_specified_once(op_spec.name, "start")
-        start_arg = node.kwargs["start"]
-    if "end" in node.kwargs:
-        if end_arg is not None:
-            raise _error_kwarg_specified_once(op_spec.name, "end")
-        end_arg = node.kwargs["end"]
-    if "step" in node.kwargs:
-        if step_arg is not None:
-            raise _error_kwarg_specified_once(op_spec.name, "step")
-        step_arg = node.kwargs["step"]
-    if start_arg is None or end_arg is None:
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects start and end arguments"
-        )
-    if step_arg is None:
-        step_arg = 1
-    start = _resolve_scalar_arg(op_spec.name, start_arg, scalar_values)
-    end = _resolve_scalar_arg(op_spec.name, end_arg, scalar_values)
-    step = _resolve_scalar_arg(op_spec.name, step_arg, scalar_values)
-    for name, value in (("start", start), ("end", end), ("step", step)):
-        if not isinstance(value, numbers.Real):
-            raise RefBackendError(
-                f"codegen {op_spec.name} expects {name} to be an int or float"
-            )
-    dtype_spec = _parse_arange_dtype(
-        op_spec.name, node.kwargs.get("dtype"), dtype_info, start, end, step
-    )
-    op_node = _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=[],
-        output_shape=(),
-        params={"start": start, "end": end, "step": step},
-    )
-    output_shape = _infer_output_shape(op_node, [])
-    op_node.output_shape = output_shape
-    shapes[node] = output_shape
-    dtypes[node] = dtype_spec.torch_dtype
-    strides[node] = _contiguous_strides(output_shape)
-    return op_node, dtype_spec
-
-
 def _handle_view_node(
     node: torch.fx.Node,
     op_spec: _OpSpec,
@@ -4325,89 +3032,6 @@ def _parse_empty_strided_stride(
                     f"codegen {op_name} expects stride values to be integers"
                 ) from exc
     raise RefBackendError(f"codegen {op_name} expects stride to be a sequence")
-
-
-def _handle_empty_strided_node(
-    node: torch.fx.Node,
-    op_spec: _OpSpec,
-    dtype_info: _CodegenDType,
-    shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-    strides: Dict[torch.fx.Node, Tuple[int, ...]],
-    dtypes: Dict[torch.fx.Node, torch.dtype],
-) -> _OpNode:
-    if len(node.args) < 2:
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects size and stride arguments"
-        )
-    if len(node.args) > 7:
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects at most seven arguments"
-        )
-    size_arg, stride_arg = node.args[:2]
-    if isinstance(size_arg, torch.fx.Node) or isinstance(
-        stride_arg, torch.fx.Node
-    ):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects size and stride to be constants"
-        )
-    kwargs = dict(node.kwargs)
-    positional_names = [
-        "dtype",
-        "layout",
-        "device",
-        "pin_memory",
-        "requires_grad",
-    ]
-    for index, name in enumerate(positional_names, start=2):
-        if len(node.args) > index:
-            if name in kwargs:
-                raise _error_kwarg_specified_once(op_spec.name, name)
-            kwargs[name] = node.args[index]
-    extra = set(kwargs) - {
-        "dtype",
-        "layout",
-        "device",
-        "pin_memory",
-        "requires_grad",
-    }
-    if extra:
-        raise RefBackendError(
-            f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
-        )
-    dtype_value = kwargs.get("dtype")
-    if dtype_value is not None and dtype_value is not dtype_info.torch_dtype:
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects dtype to match the graph dtype"
-        )
-    for name in ("layout", "device"):
-        if kwargs.get(name) is not None:
-            raise RefBackendError(
-                f"codegen {op_spec.name} expects {name} to be None"
-            )
-    for name in ("pin_memory", "requires_grad"):
-        if kwargs.get(name) not in (None, False):
-            raise RefBackendError(
-                f"codegen {op_spec.name} expects {name} to be False"
-            )
-    output_shape = _parse_resize_size(op_spec.name, size_arg)
-    output_strides = _parse_empty_strided_stride(op_spec.name, stride_arg)
-    if len(output_shape) != len(output_strides):
-        raise RefBackendError(
-            f"codegen {op_spec.name} expects size and stride to match length"
-        )
-    op_node = _OpNode(
-        node=node,
-        spec=op_spec,
-        inputs=[],
-        output_shape=(),
-        params={"size": output_shape},
-    )
-    output_shape = _infer_output_shape(op_node, [])
-    op_node.output_shape = output_shape
-    shapes[node] = output_shape
-    dtypes[node] = dtype_info.torch_dtype
-    strides[node] = output_strides
-    return op_node
 
 
 def _handle_resize_node(
@@ -5383,8 +4007,8 @@ def get_generic_source(
     return _write_generic_source(graph)
 
 
-class _KindHandlerContext(HandlerContext):
-    def handle_arange_node(
+class _BackendArangeHandler(ArangeHandler):
+    def build_op_node(
         self,
         node: torch.fx.Node,
         op_spec: _OpSpec,
@@ -5393,82 +4017,1361 @@ class _KindHandlerContext(HandlerContext):
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
         scalar_values: Dict[torch.fx.Node, object],
-    ) -> Tuple[_OpNode, _CodegenDType]:
-        return _handle_arange_node(
-            node,
-            op_spec,
-            dtype_info,
-            shapes,
-            strides,
-            dtypes,
-            scalar_values,
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        allowed_kwargs = {
+            "start",
+            "end",
+            "dtype",
+            "layout",
+            "device",
+            "pin_memory",
+            "step",
+        }
+        extra = set(node.kwargs) - allowed_kwargs
+        if extra:
+            raise RefBackendError(
+                f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
+            )
+        if node.kwargs.get("layout") is not None:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects layout to be None"
+            )
+        device = node.kwargs.get("device")
+        if device is not None and device != "cpu" and device != torch.device("cpu"):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects device to be None or cpu"
+            )
+        pin_memory = node.kwargs.get("pin_memory")
+        if pin_memory not in (None, False):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects pin_memory to be False"
+            )
+        start_arg = None
+        end_arg = None
+        step_arg = None
+        if node.args:
+            if len(node.args) > 3:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects start and end arguments"
+                )
+            start_arg = node.args[0]
+            if len(node.args) > 1:
+                end_arg = node.args[1]
+            if len(node.args) > 2:
+                step_arg = node.args[2]
+        if "start" in node.kwargs:
+            if start_arg is not None:
+                raise _error_kwarg_specified_once(op_spec.name, "start")
+            start_arg = node.kwargs["start"]
+        if "end" in node.kwargs:
+            if end_arg is not None:
+                raise _error_kwarg_specified_once(op_spec.name, "end")
+            end_arg = node.kwargs["end"]
+        if "step" in node.kwargs:
+            if step_arg is not None:
+                raise _error_kwarg_specified_once(op_spec.name, "step")
+            step_arg = node.kwargs["step"]
+        if start_arg is None or end_arg is None:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects start and end arguments"
+            )
+        if step_arg is None:
+            step_arg = 1
+        start = _resolve_scalar_arg(op_spec.name, start_arg, scalar_values)
+        end = _resolve_scalar_arg(op_spec.name, end_arg, scalar_values)
+        step = _resolve_scalar_arg(op_spec.name, step_arg, scalar_values)
+        for name, value in (("start", start), ("end", end), ("step", step)):
+            if not isinstance(value, numbers.Real):
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects {name} to be an int or float"
+                )
+        dtype_spec = _parse_arange_dtype(
+            op_spec.name, node.kwargs.get("dtype"), dtype_info, start, end, step
         )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[],
+            output_shape=(),
+            params={"start": start, "end": end, "step": step},
+        )
+        output_shape = _infer_output_shape(op_node, [])
+        op_node.output_shape = output_shape
+        shapes[node] = output_shape
+        dtypes[node] = dtype_spec.torch_dtype
+        strides[node] = _contiguous_strides(output_shape)
+        return OpNodeBuildResult(op_node, dtype_spec)
 
-    def handle_concat_node(
+
+class _BackendConcatHandler(ConcatHandler):
+    def build_op_node(
         self,
         node: torch.fx.Node,
         op_spec: _OpSpec,
-        dtype_info: _CodegenDType,
+        dtype_info: _CodegenDType | None,
         shapes: Dict[torch.fx.Node, Tuple[int, ...]],
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
-    ) -> _OpNode:
-        return _handle_concat_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if dtype_info is None:
+            return None
+        input_nodes, concat_dim = _parse_concat_args(node)
+        input_shapes: List[Tuple[int, ...]] = []
+        for arg in input_nodes:
+            if arg not in shapes:
+                raise _error_expected_tensor("cat")
+            input_shapes.append(shapes[arg])
+        if not input_shapes:
+            raise RefBackendError(
+                "codegen cat expects a non-empty tensor list input"
+            )
+        rank = len(input_shapes[0])
+        if rank == 0:
+            raise RefBackendError("codegen cat expects inputs with rank >= 1")
+        if concat_dim < 0:
+            concat_dim += rank
+        if concat_dim < 0 or concat_dim >= rank:
+            raise RefBackendError("codegen cat dim is out of range")
+        for shape in input_shapes:
+            if len(shape) != rank:
+                raise RefBackendError(
+                    "codegen cat expects inputs with the same rank"
+                )
+            for dim, size in enumerate(shape):
+                if dim == concat_dim:
+                    continue
+                if size != input_shapes[0][dim]:
+                    raise RefBackendError(
+                        "codegen cat expects input shapes to match except in the concat dimension"
+                    )
+        input_dtypes = [dtypes[arg] for arg in input_nodes]
+        if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
+            raise RefBackendError(
+                "codegen cat expects inputs to share the graph dtype"
+            )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=list(input_nodes),
+            output_shape=(),
+            inplace_input=None,
+            params={"dim": concat_dim},
         )
+        output_shape = _infer_output_shape(op_node, input_shapes)
+        op_node.output_shape = output_shape
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        strides[node] = _contiguous_strides(output_shape)
+        return OpNodeBuildResult(op_node)
 
-    def handle_pool1d_node(
+
+class _BackendEmptyStridedHandler(EmptyStridedHandler):
+    def build_op_node(
         self,
         node: torch.fx.Node,
         op_spec: _OpSpec,
-        dtype_info: _CodegenDType,
+        dtype_info: _CodegenDType | None,
         shapes: Dict[torch.fx.Node, Tuple[int, ...]],
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
-    ) -> _OpNode:
-        return _handle_pool1d_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if dtype_info is None:
+            return None
+        if len(node.args) < 2:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects size and stride arguments"
+            )
+        if len(node.args) > 7:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects at most seven arguments"
+            )
+        size_arg, stride_arg = node.args[:2]
+        if isinstance(size_arg, torch.fx.Node) or isinstance(
+            stride_arg, torch.fx.Node
+        ):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects size and stride to be constants"
+            )
+        kwargs = dict(node.kwargs)
+        positional_names = [
+            "dtype",
+            "layout",
+            "device",
+            "pin_memory",
+            "requires_grad",
+        ]
+        for index, name in enumerate(positional_names, start=2):
+            if len(node.args) > index:
+                if name in kwargs:
+                    raise _error_kwarg_specified_once(op_spec.name, name)
+                kwargs[name] = node.args[index]
+        extra = set(kwargs) - {
+            "dtype",
+            "layout",
+            "device",
+            "pin_memory",
+            "requires_grad",
+        }
+        if extra:
+            raise RefBackendError(
+                f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
+            )
+        dtype_value = kwargs.get("dtype")
+        if dtype_value is not None and dtype_value is not dtype_info.torch_dtype:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects dtype to match the graph dtype"
+            )
+        for name in ("layout", "device"):
+            if kwargs.get(name) is not None:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects {name} to be None"
+                )
+        for name in ("pin_memory", "requires_grad"):
+            if kwargs.get(name) not in (None, False):
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects {name} to be False"
+                )
+        output_shape = _parse_resize_size(op_spec.name, size_arg)
+        output_strides = _parse_empty_strided_stride(op_spec.name, stride_arg)
+        if len(output_shape) != len(output_strides):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects size and stride to match length"
+            )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[],
+            output_shape=(),
+            params={"size": output_shape},
         )
+        output_shape = _infer_output_shape(op_node, [])
+        op_node.output_shape = output_shape
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        strides[node] = output_strides
+        return OpNodeBuildResult(op_node)
 
-    def handle_pool2d_node(
+
+class _BackendPool1dHandler(Pool1dHandler):
+    def build_op_node(
         self,
         node: torch.fx.Node,
         op_spec: _OpSpec,
-        dtype_info: _CodegenDType,
+        dtype_info: _CodegenDType | None,
         shapes: Dict[torch.fx.Node, Tuple[int, ...]],
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
-    ) -> _OpNode:
-        return _handle_pool2d_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if dtype_info is None:
+            return None
+        if op_spec.name == "adaptive_avg_pool1d":
+            input_arg, output_size = _parse_adaptive_avg_pool1d_args(node)
+            kernel_size = None
+            stride = None
+            padding = 0
+            dilation = 1
+            ceil_mode = False
+            count_include_pad = False
+            divisor_override = None
+        elif op_spec.name == "max_pool1d":
+            (
+                input_arg,
+                kernel_size,
+                stride,
+                padding,
+                dilation,
+                ceil_mode,
+            ) = _parse_max_pool1d_args(node)
+            count_include_pad = False
+            divisor_override = None
+        else:
+            (
+                input_arg,
+                kernel_size,
+                stride,
+                padding,
+                ceil_mode,
+                count_include_pad,
+                divisor_override,
+            ) = _parse_avg_pool1d_args(node)
+            dilation = 1
+        if not isinstance(input_arg, torch.fx.Node):
+            raise _error_expected_tensor(op_spec.name)
+        if input_arg not in shapes:
+            raise _error_expected_tensor(op_spec.name)
+        if dtype_info.torch_dtype is not torch.float32:
+            raise RefBackendError(
+                f"codegen {op_spec.name} supports only torch.float32 tensors"
+            )
+        if dtypes[input_arg] is not torch.float32:
+            raise RefBackendError(
+                f"codegen {op_spec.name} supports only torch.float32 tensors"
+            )
+        if isinstance(kernel_size, torch.fx.Node) or isinstance(
+            padding, torch.fx.Node
+        ) or isinstance(ceil_mode, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects constant kernel, padding, and ceil_mode"
+            )
+        if stride is not None and isinstance(stride, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects constant stride values"
+            )
+        if isinstance(dilation, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects constant dilation values"
+            )
+        if isinstance(count_include_pad, torch.fx.Node) or isinstance(
+            divisor_override, torch.fx.Node
+        ):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects constant pooling options"
+            )
+        input_shape = shapes[input_arg]
+        if len(input_shape) != 3:
+            raise RefBackendError(
+                f"codegen {op_spec.name} requires 3D input tensors"
+            )
+        if not _is_contiguous(input_shape, strides[input_arg]):
+            raise RefBackendError(
+                f"codegen {op_spec.name} requires contiguous input tensors"
+            )
+        if op_spec.name == "adaptive_avg_pool1d":
+            if isinstance(output_size, torch.fx.Node):
+                raise RefBackendError(
+                    "codegen adaptive_avg_pool1d expects output_size to be an int"
+                )
+            if isinstance(output_size, (tuple, list)):
+                if len(output_size) != 1:
+                    raise RefBackendError(
+                        "codegen adaptive_avg_pool1d expects a single output size"
+                    )
+                output_size = output_size[0]
+            if not isinstance(output_size, int):
+                raise RefBackendError(
+                    "codegen adaptive_avg_pool1d expects output_size to be an int"
+                )
+            if output_size <= 0:
+                raise RefBackendError(
+                    "codegen adaptive_avg_pool1d expects output_size to be positive"
+                )
+            in_l = input_shape[2]
+            if in_l % output_size != 0:
+                raise RefBackendError(
+                    "codegen adaptive_avg_pool1d requires input length divisible by output_size"
+                )
+            kernel_value = in_l // output_size
+            stride_value = kernel_value
+            padding_value = 0
+            dilation_value = 1
+        else:
+            kernel_value = _normalize_param(
+                normalize_int_or_tuple, "kernel_size", kernel_size, 1
+            )[0]
+            if stride is None:
+                stride_value = kernel_value
+            else:
+                stride_value = _normalize_param(
+                    normalize_int_or_tuple, "stride", stride, 1
+                )[0]
+            padding_value = _normalize_param(
+                normalize_int_or_tuple, "padding", padding, 1
+            )[0]
+            dilation_value = _normalize_param(
+                normalize_int_or_tuple, "dilation", dilation, 1
+            )[0]
+        if (
+            kernel_value <= 0
+            or stride_value <= 0
+            or dilation_value <= 0
+            or padding_value < 0
+        ):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects positive kernel, stride, and dilation with non-negative padding"
+            )
+        if ceil_mode and op_spec.name != "max_pool1d":
+            raise RefBackendError(
+                f"codegen {op_spec.name} does not support ceil_mode"
+            )
+        if isinstance(count_include_pad, bool):
+            count_include_pad_value = count_include_pad
+        elif isinstance(count_include_pad, numbers.Integral):
+            count_include_pad_value = bool(count_include_pad)
+        else:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects count_include_pad to be a bool"
+            )
+        divisor_override_value = divisor_override
+        if divisor_override is not None:
+            if isinstance(divisor_override, bool) or not isinstance(
+                divisor_override, numbers.Integral
+            ):
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects divisor_override to be a positive int"
+                )
+            divisor_override_value = int(divisor_override)
+            if divisor_override_value <= 0:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects divisor_override to be a positive int"
+                )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[input_arg],
+            output_shape=(),
+            inplace_input=None,
+            params={
+                "kernel_size": kernel_value,
+                "stride": stride_value,
+                "padding": padding_value,
+                "dilation": dilation_value,
+                "ceil_mode": bool(ceil_mode),
+                "count_include_pad": count_include_pad_value,
+                "divisor_override": divisor_override_value,
+            },
         )
+        output_shape = _infer_output_shape(op_node, [input_shape])
+        op_node.output_shape = output_shape
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        strides[node] = _contiguous_strides(output_shape)
+        return OpNodeBuildResult(op_node)
 
-    def handle_pool3d_node(
+
+class _BackendPool2dHandler(Pool2dHandler):
+    def build_op_node(
         self,
         node: torch.fx.Node,
         op_spec: _OpSpec,
-        dtype_info: _CodegenDType,
+        dtype_info: _CodegenDType | None,
         shapes: Dict[torch.fx.Node, Tuple[int, ...]],
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
-    ) -> _OpNode:
-        return _handle_pool3d_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if dtype_info is None:
+            return None
+        if op_spec.name == "adaptive_avg_pool2d":
+            input_arg, output_size = _parse_adaptive_avg_pool2d_args(node)
+            kernel_size = None
+            stride = None
+            padding = 0
+            dilation = 1
+            ceil_mode = False
+            count_include_pad = False
+            divisor_override = None
+        elif op_spec.name == "max_pool2d":
+            (
+                input_arg,
+                kernel_size,
+                stride,
+                padding,
+                dilation,
+                ceil_mode,
+            ) = _parse_max_pool2d_args(node)
+            count_include_pad = False
+            divisor_override = None
+        else:
+            (
+                input_arg,
+                kernel_size,
+                stride,
+                padding,
+                ceil_mode,
+                count_include_pad,
+                divisor_override,
+            ) = _parse_avg_pool2d_args(node)
+            dilation = 1
+        if not isinstance(input_arg, torch.fx.Node):
+            raise _error_expected_tensor(op_spec.name)
+        if input_arg not in shapes:
+            raise _error_expected_tensor(op_spec.name)
+        if dtype_info.torch_dtype is not torch.float32:
+            raise RefBackendError(
+                f"codegen {op_spec.name} supports only torch.float32 tensors"
+            )
+        if dtypes[input_arg] is not torch.float32:
+            raise RefBackendError(
+                f"codegen {op_spec.name} supports only torch.float32 tensors"
+            )
+        if isinstance(kernel_size, torch.fx.Node) or isinstance(
+            padding, torch.fx.Node
+        ) or isinstance(ceil_mode, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects constant kernel, padding, and ceil_mode"
+            )
+        if stride is not None and isinstance(stride, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects constant stride values"
+            )
+        if isinstance(dilation, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects constant dilation values"
+            )
+        if isinstance(count_include_pad, torch.fx.Node) or isinstance(
+            divisor_override, torch.fx.Node
+        ):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects constant pooling options"
+            )
+        input_shape = shapes[input_arg]
+        if len(input_shape) != 4:
+            raise RefBackendError(
+                f"codegen {op_spec.name} requires 4D input tensors"
+            )
+        if not _is_contiguous(input_shape, strides[input_arg]):
+            raise RefBackendError(
+                f"codegen {op_spec.name} requires contiguous input tensors"
+            )
+        if op_spec.name == "adaptive_avg_pool2d":
+            if isinstance(output_size, torch.fx.Node):
+                raise RefBackendError(
+                    "codegen adaptive_avg_pool2d expects output_size to be a tuple of ints"
+                )
+            if isinstance(output_size, torch.Size):
+                output_size = tuple(output_size)
+            if isinstance(output_size, int):
+                output_pair = (output_size, output_size)
+            elif isinstance(output_size, (tuple, list)):
+                if len(output_size) != 2:
+                    raise RefBackendError(
+                        "codegen adaptive_avg_pool2d expects output_size to have two values"
+                    )
+                output_pair = tuple(output_size)
+            else:
+                raise RefBackendError(
+                    "codegen adaptive_avg_pool2d expects output_size to be a tuple of ints"
+                )
+            if not all(isinstance(item, int) for item in output_pair):
+                raise RefBackendError(
+                    "codegen adaptive_avg_pool2d expects output_size to be a tuple of ints"
+                )
+            if output_pair[0] <= 0 or output_pair[1] <= 0:
+                raise RefBackendError(
+                    "codegen adaptive_avg_pool2d expects output_size to be positive"
+                )
+            in_h, in_w = input_shape[2], input_shape[3]
+            if in_h % output_pair[0] != 0 or in_w % output_pair[1] != 0:
+                raise RefBackendError(
+                    "codegen adaptive_avg_pool2d requires input sizes divisible by output_size"
+                )
+            kernel_pair = (in_h // output_pair[0], in_w // output_pair[1])
+            stride_pair = kernel_pair
+            padding_pair = (0, 0)
+            dilation_pair = (1, 1)
+        else:
+            kernel_pair = _normalize_param(
+                normalize_int_or_pair, "kernel_size", kernel_size
+            )
+            if stride is None:
+                stride_pair = kernel_pair
+            else:
+                stride_pair = _normalize_param(
+                    normalize_int_or_pair, "stride", stride
+                )
+            padding_pair = _normalize_param(
+                normalize_int_or_pair, "padding", padding
+            )
+            dilation_pair = _normalize_param(
+                normalize_int_or_pair, "dilation", dilation
+            )
+        if (
+            kernel_pair[0] <= 0
+            or kernel_pair[1] <= 0
+            or stride_pair[0] <= 0
+            or stride_pair[1] <= 0
+            or dilation_pair[0] <= 0
+            or dilation_pair[1] <= 0
+            or padding_pair[0] < 0
+            or padding_pair[1] < 0
+        ):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects positive kernel, stride, and dilation with non-negative padding"
+            )
+        if not isinstance(ceil_mode, bool):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects ceil_mode to be a bool"
+            )
+        if not isinstance(count_include_pad, bool):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects count_include_pad to be a bool"
+            )
+        if divisor_override is not None:
+            if not isinstance(divisor_override, int) or divisor_override <= 0:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects divisor_override to be a positive int"
+                )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[input_arg],
+            output_shape=(),
+            inplace_input=None,
+            params={
+                "kernel_size": kernel_pair,
+                "stride": stride_pair,
+                "padding": padding_pair,
+                "dilation": dilation_pair,
+                "ceil_mode": bool(ceil_mode),
+                "count_include_pad": count_include_pad,
+                "divisor_override": divisor_override,
+            },
         )
+        output_shape = _infer_output_shape(op_node, [input_shape])
+        op_node.output_shape = output_shape
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        strides[node] = _contiguous_strides(output_shape)
+        return OpNodeBuildResult(op_node)
 
-    def handle_pool2d_backward_node(
+
+class _BackendPool3dHandler(Pool3dHandler):
+    def build_op_node(
         self,
         node: torch.fx.Node,
         op_spec: _OpSpec,
-        dtype_info: _CodegenDType,
+        dtype_info: _CodegenDType | None,
         shapes: Dict[torch.fx.Node, Tuple[int, ...]],
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
-    ) -> _OpNode:
-        return _handle_adaptive_avg_pool2d_backward_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if dtype_info is None:
+            return None
+        input_arg, output_size = _parse_adaptive_avg_pool3d_args(node)
+        kernel_size = None
+        stride = None
+        padding = (0, 0, 0)
+        dilation = (1, 1, 1)
+        ceil_mode = False
+        count_include_pad = False
+        divisor_override = None
+        if not isinstance(input_arg, torch.fx.Node):
+            raise _error_expected_tensor(op_spec.name)
+        if input_arg not in shapes:
+            raise _error_expected_tensor(op_spec.name)
+        if dtype_info.torch_dtype is not torch.float32:
+            raise RefBackendError(
+                f"codegen {op_spec.name} supports only torch.float32 tensors"
+            )
+        if dtypes[input_arg] is not torch.float32:
+            raise RefBackendError(
+                f"codegen {op_spec.name} supports only torch.float32 tensors"
+            )
+        if isinstance(kernel_size, torch.fx.Node) or isinstance(
+            padding, torch.fx.Node
+        ) or isinstance(ceil_mode, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects constant kernel, padding, and ceil_mode"
+            )
+        if stride is not None and isinstance(stride, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects constant stride values"
+            )
+        if isinstance(dilation, torch.fx.Node):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects constant dilation values"
+            )
+        if isinstance(count_include_pad, torch.fx.Node) or isinstance(
+            divisor_override, torch.fx.Node
+        ):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects constant pooling options"
+            )
+        input_shape = shapes[input_arg]
+        if len(input_shape) != 5:
+            raise RefBackendError(
+                f"codegen {op_spec.name} requires 5D input tensors"
+            )
+        if not _is_contiguous(input_shape, strides[input_arg]):
+            raise RefBackendError(
+                f"codegen {op_spec.name} requires contiguous input tensors"
+            )
+        if isinstance(output_size, torch.fx.Node):
+            raise RefBackendError(
+                "codegen adaptive_avg_pool3d expects output_size to be a tuple of ints"
+            )
+        if isinstance(output_size, torch.Size):
+            output_size = tuple(output_size)
+        if isinstance(output_size, int):
+            output_triplet = (output_size, output_size, output_size)
+        elif isinstance(output_size, (tuple, list)):
+            if len(output_size) != 3:
+                raise RefBackendError(
+                    "codegen adaptive_avg_pool3d expects output_size to have three values"
+                )
+            output_triplet = tuple(output_size)
+        else:
+            raise RefBackendError(
+                "codegen adaptive_avg_pool3d expects output_size to be a tuple of ints"
+            )
+        if not all(isinstance(item, int) for item in output_triplet):
+            raise RefBackendError(
+                "codegen adaptive_avg_pool3d expects output_size to be a tuple of ints"
+            )
+        if (
+            output_triplet[0] <= 0
+            or output_triplet[1] <= 0
+            or output_triplet[2] <= 0
+        ):
+            raise RefBackendError(
+                "codegen adaptive_avg_pool3d expects output_size to be positive"
+            )
+        in_d, in_h, in_w = input_shape[2], input_shape[3], input_shape[4]
+        if (
+            in_d % output_triplet[0] != 0
+            or in_h % output_triplet[1] != 0
+            or in_w % output_triplet[2] != 0
+        ):
+            raise RefBackendError(
+                "codegen adaptive_avg_pool3d requires input sizes divisible by output_size"
+            )
+        kernel_triplet = (
+            in_d // output_triplet[0],
+            in_h // output_triplet[1],
+            in_w // output_triplet[2],
         )
+        stride_triplet = kernel_triplet
+        padding_triplet = (0, 0, 0)
+        dilation_triplet = (1, 1, 1)
+        if (
+            kernel_triplet[0] <= 0
+            or kernel_triplet[1] <= 0
+            or kernel_triplet[2] <= 0
+            or stride_triplet[0] <= 0
+            or stride_triplet[1] <= 0
+            or stride_triplet[2] <= 0
+            or dilation_triplet[0] <= 0
+            or dilation_triplet[1] <= 0
+            or dilation_triplet[2] <= 0
+            or padding_triplet[0] < 0
+            or padding_triplet[1] < 0
+            or padding_triplet[2] < 0
+        ):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects positive kernel, stride, and dilation with non-negative padding"
+            )
+        if ceil_mode:
+            raise RefBackendError(
+                f"codegen {op_spec.name} does not support ceil_mode"
+            )
+        if not isinstance(count_include_pad, bool):
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects count_include_pad to be a bool"
+            )
+        if divisor_override is not None:
+            if not isinstance(divisor_override, int) or divisor_override <= 0:
+                raise RefBackendError(
+                    f"codegen {op_spec.name} expects divisor_override to be a positive int"
+                )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[input_arg],
+            output_shape=(),
+            inplace_input=None,
+            params={
+                "kernel_size": kernel_triplet,
+                "stride": stride_triplet,
+                "padding": padding_triplet,
+                "dilation": dilation_triplet,
+                "ceil_mode": bool(ceil_mode),
+                "count_include_pad": count_include_pad,
+                "divisor_override": divisor_override,
+            },
+        )
+        output_shape = _infer_output_shape(op_node, [input_shape])
+        op_node.output_shape = output_shape
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        strides[node] = _contiguous_strides(output_shape)
+        return OpNodeBuildResult(op_node)
 
+
+class _BackendPool2dBackwardHandler(Pool2dBackwardHandler):
+    def build_op_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType | None,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if dtype_info is None:
+            return None
+        grad_output, input_arg = _parse_adaptive_avg_pool2d_backward_args(node)
+        if not isinstance(grad_output, torch.fx.Node) or not isinstance(
+            input_arg, torch.fx.Node
+        ):
+            raise _error_expected_tensor(op_spec.name)
+        if grad_output not in shapes or input_arg not in shapes:
+            raise _error_expected_tensor(op_spec.name)
+        if dtype_info.torch_dtype is not torch.float32:
+            raise RefBackendError(
+                "codegen adaptive_avg_pool2d_backward supports only torch.float32 tensors"
+            )
+        if (
+            dtypes[grad_output] is not torch.float32
+            or dtypes[input_arg] is not torch.float32
+        ):
+            raise RefBackendError(
+                "codegen adaptive_avg_pool2d_backward supports only torch.float32 tensors"
+            )
+        grad_output_shape = shapes[grad_output]
+        input_shape = shapes[input_arg]
+        if len(grad_output_shape) != 4 or len(input_shape) != 4:
+            raise RefBackendError(
+                "codegen adaptive_avg_pool2d_backward requires 4D input tensors"
+            )
+        if not _is_contiguous(grad_output_shape, strides[grad_output]):
+            raise RefBackendError(
+                "codegen adaptive_avg_pool2d_backward requires contiguous grad_output tensors"
+            )
+        if not _is_contiguous(input_shape, strides[input_arg]):
+            raise RefBackendError(
+                "codegen adaptive_avg_pool2d_backward requires contiguous input tensors"
+            )
+        if (
+            grad_output_shape[0] != input_shape[0]
+            or grad_output_shape[1] != input_shape[1]
+        ):
+            raise RefBackendError(
+                "codegen adaptive_avg_pool2d_backward requires matching batch and channel sizes"
+            )
+        out_h, out_w = grad_output_shape[2], grad_output_shape[3]
+        in_h, in_w = input_shape[2], input_shape[3]
+        if out_h <= 0 or out_w <= 0:
+            raise RefBackendError(
+                "codegen adaptive_avg_pool2d_backward expects output size to be positive"
+            )
+        if in_h % out_h != 0 or in_w % out_w != 0:
+            raise RefBackendError(
+                "codegen adaptive_avg_pool2d_backward requires input sizes divisible by output_size"
+            )
+        kernel_pair = (in_h // out_h, in_w // out_w)
+        if kernel_pair[0] <= 0 or kernel_pair[1] <= 0:
+            raise RefBackendError(
+                "codegen adaptive_avg_pool2d_backward expects positive kernel size"
+            )
+        stride_pair = kernel_pair
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[grad_output, input_arg],
+            output_shape=(),
+            inplace_input=None,
+            params={
+                "kernel_size": kernel_pair,
+                "stride": stride_pair,
+            },
+        )
+        output_shape = _infer_output_shape(op_node, [grad_output_shape, input_shape])
+        op_node.output_shape = output_shape
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        strides[node] = _contiguous_strides(output_shape)
+        return OpNodeBuildResult(op_node)
+
+
+class _BackendSoftmaxHandler(SoftmaxHandler):
+    def build_op_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType | None,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if dtype_info is None:
+            return None
+        if not node.args:
+            raise RefBackendError(f"codegen {op_spec.name} expects one input")
+        input_arg = node.args[0]
+        if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
+            raise _error_expected_tensor(op_spec.name)
+        if dtype_info.torch_dtype is not torch.float32:
+            raise RefBackendError(
+                f"codegen {op_spec.name} supports only torch.float32 tensors"
+            )
+        if dtypes[input_arg] is not torch.float32:
+            raise RefBackendError(
+                f"codegen {op_spec.name} supports only torch.float32 tensors"
+            )
+        dim, dtype = _parse_softmax_args(op_spec.name, node, shapes[input_arg])
+        if dtype is not None and dtype is not torch.float32:
+            raise RefBackendError(
+                f"codegen {op_spec.name} expects dtype to be torch.float32 or None"
+            )
+        output_shape = shapes[input_arg]
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        strides[node] = _contiguous_strides(output_shape)
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[input_arg],
+            output_shape=output_shape,
+            inplace_input=None,
+            params={"dim": dim},
+        )
+        return OpNodeBuildResult(op_node)
+
+
+class _BackendEmbeddingHandler(EmbeddingHandler):
+    def build_op_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType | None,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if dtype_info is None:
+            return None
+        weight, indices, padding_idx, scale_grad_by_freq, sparse = (
+            _parse_embedding_args(node)
+        )
+        if scale_grad_by_freq or sparse:
+            raise RefBackendError(
+                "codegen embedding supports only scale_grad_by_freq=False and sparse=False"
+            )
+        if not isinstance(weight, torch.fx.Node) or weight not in shapes:
+            raise _error_expected_tensor(op_spec.name)
+        if not isinstance(indices, torch.fx.Node) or indices not in shapes:
+            raise _error_expected_tensor(op_spec.name)
+        if dtypes[weight] is not dtype_info.torch_dtype:
+            raise RefBackendError(
+                "codegen embedding expects weight to match the graph dtype"
+            )
+        if dtypes[indices] not in _EMBEDDING_INDEX_DTYPES:
+            raise RefBackendError(
+                "codegen embedding expects indices to have dtype torch.int32 or torch.int64"
+            )
+        weight_shape = shapes[weight]
+        if len(weight_shape) != 2:
+            raise RefBackendError("codegen embedding expects 2D weight tensor")
+        if padding_idx != -1:
+            if padding_idx < 0 or padding_idx >= weight_shape[0]:
+                raise RefBackendError(
+                    "codegen embedding expects padding_idx to be -1 or within num_embeddings"
+                )
+        indices_shape = shapes[indices]
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[weight, indices],
+            output_shape=(),
+            inplace_input=None,
+            params={"padding_idx": padding_idx},
+        )
+        output_shape = _infer_output_shape(
+            op_node, [weight_shape, indices_shape]
+        )
+        op_node.output_shape = output_shape
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        strides[node] = _contiguous_strides(output_shape)
+        return OpNodeBuildResult(op_node)
+
+
+class _BackendEmbeddingBagHandler(EmbeddingBagHandler):
+    def build_op_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType | None,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if dtype_info is None:
+            return None
+        (
+            weight,
+            indices,
+            offsets,
+            scale_grad_by_freq,
+            mode,
+            sparse,
+            per_sample_weights,
+            include_last_offset,
+            padding_idx,
+        ) = _parse_embedding_bag_args(node)
+        if scale_grad_by_freq or sparse:
+            raise RefBackendError(
+                "codegen _embedding_bag supports only scale_grad_by_freq=False and sparse=False"
+            )
+        if per_sample_weights is not None:
+            raise RefBackendError(
+                "codegen _embedding_bag does not support per_sample_weights"
+            )
+        if not isinstance(weight, torch.fx.Node) or weight not in shapes:
+            raise _error_expected_tensor(op_spec.name)
+        if not isinstance(indices, torch.fx.Node) or indices not in shapes:
+            raise _error_expected_tensor(op_spec.name)
+        if not isinstance(offsets, torch.fx.Node) or offsets not in shapes:
+            raise _error_expected_tensor(op_spec.name)
+        if dtype_info.torch_dtype is not torch.float32:
+            raise RefBackendError(
+                "codegen _embedding_bag supports only torch.float32 tensors"
+            )
+        if dtypes[weight] is not dtype_info.torch_dtype:
+            raise RefBackendError(
+                "codegen _embedding_bag expects weight to match the graph dtype"
+            )
+        if dtypes[indices] not in _EMBEDDING_INDEX_DTYPES:
+            raise RefBackendError(
+                "codegen _embedding_bag expects indices to have dtype torch.int32 or torch.int64"
+            )
+        if dtypes[offsets] not in _EMBEDDING_INDEX_DTYPES:
+            raise RefBackendError(
+                "codegen _embedding_bag expects offsets to have dtype torch.int32 or torch.int64"
+            )
+        weight_shape = shapes[weight]
+        if len(weight_shape) != 2:
+            raise RefBackendError("codegen _embedding_bag expects 2D weight tensor")
+        if padding_idx != -1:
+            if padding_idx < 0 or padding_idx >= weight_shape[0]:
+                raise RefBackendError(
+                    "codegen _embedding_bag expects padding_idx to be -1 or within num_embeddings"
+                )
+        indices_shape = shapes[indices]
+        if len(indices_shape) != 1:
+            raise RefBackendError("codegen _embedding_bag expects 1D indices tensor")
+        offsets_shape = shapes[offsets]
+        if len(offsets_shape) != 1:
+            raise RefBackendError("codegen _embedding_bag expects 1D offsets tensor")
+        if include_last_offset and offsets_shape[0] == 0:
+            raise RefBackendError(
+                "codegen _embedding_bag expects non-empty offsets when include_last_offset is True"
+            )
+        if mode not in (0, 1):
+            raise RefBackendError(
+                "codegen _embedding_bag supports only mode=0 (sum) or mode=1 (mean)"
+            )
+        bag_count = (
+            offsets_shape[0] - 1 if include_last_offset else offsets_shape[0]
+        )
+        if bag_count < 0:
+            raise RefBackendError(
+                "codegen _embedding_bag expects offsets to contain at least one entry"
+            )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[weight, indices, offsets],
+            output_shape=(),
+            inplace_input=None,
+            params={
+                "mode": mode,
+                "padding_idx": padding_idx,
+                "include_last_offset": include_last_offset,
+            },
+        )
+        output_shape = _infer_output_shape(
+            op_node, [weight_shape, indices_shape, offsets_shape]
+        )
+        op_node.output_shape = output_shape
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        strides[node] = _contiguous_strides(output_shape)
+        return OpNodeBuildResult(op_node)
+
+
+class _BackendConv1dHandler(Conv1dHandler):
+    def build_op_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType | None,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if dtype_info is None:
+            return None
+        (
+            input_arg,
+            weight_arg,
+            bias,
+            stride,
+            padding,
+            dilation,
+            groups,
+        ) = _parse_conv1d_args(node)
+        if not isinstance(input_arg, torch.fx.Node) or not isinstance(
+            weight_arg, torch.fx.Node
+        ):
+            raise _error_expected_tensor("conv1d")
+        bias_node = None
+        if bias is not None:
+            if isinstance(bias, torch.fx.Node):
+                bias_node = bias
+            else:
+                raise RefBackendError("codegen conv1d expects bias to be a tensor")
+        if isinstance(stride, torch.fx.Node) or isinstance(
+            padding, torch.fx.Node
+        ) or isinstance(dilation, torch.fx.Node):
+            raise RefBackendError(
+                "codegen conv1d expects constant stride, padding, and dilation"
+            )
+        if isinstance(groups, torch.fx.Node):
+            raise RefBackendError("codegen conv1d expects constant groups")
+        if dtype_info.torch_dtype is not torch.float32:
+            raise RefBackendError(
+                "codegen conv1d supports only torch.float32 tensors"
+            )
+        if input_arg not in shapes or weight_arg not in shapes:
+            raise _error_expected_tensor("conv1d")
+        if (
+            dtypes[input_arg] is not torch.float32
+            or dtypes[weight_arg] is not torch.float32
+        ):
+            raise RefBackendError(
+                "codegen conv1d supports only torch.float32 tensors"
+            )
+        if bias_node is not None:
+            if bias_node not in shapes:
+                raise _error_expected_tensor("conv1d")
+            if dtypes[bias_node] is not torch.float32:
+                raise RefBackendError(
+                    "codegen conv1d supports only torch.float32 tensors"
+                )
+        input_shape = shapes[input_arg]
+        weight_shape = shapes[weight_arg]
+        if bias_node is not None:
+            bias_shape = shapes[bias_node]
+            if len(bias_shape) != 1 or bias_shape[0] != weight_shape[0]:
+                raise RefBackendError(
+                    "codegen conv1d expects bias shape to match output channels"
+                )
+        if len(input_shape) != 3 or len(weight_shape) != 3:
+            raise RefBackendError(
+                "codegen conv1d requires 3D input and weight tensors"
+            )
+        stride_value = _normalize_param(
+            normalize_int_or_tuple, "stride", stride, 1
+        )[0]
+        dilation_value = _normalize_param(
+            normalize_int_or_tuple, "dilation", dilation, 1
+        )[0]
+        padding_value = _normalize_param(
+            normalize_padding, "padding", padding, 1, allow_strings=("same", "valid")
+        )
+        if not isinstance(padding_value, str):
+            padding_value = padding_value[0]
+        if stride_value <= 0 or dilation_value <= 0 or (
+            not isinstance(padding_value, str) and padding_value < 0
+        ):
+            raise RefBackendError(
+                "codegen conv1d expects stride and dilation to be positive and padding to be non-negative"
+            )
+        if not isinstance(groups, int) or groups <= 0:
+            raise RefBackendError("codegen conv1d requires positive groups")
+        inputs = (input_arg, weight_arg)
+        if bias_node is not None:
+            inputs = (*inputs, bias_node)
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=list(inputs),
+            output_shape=(),
+            inplace_input=None,
+            params={
+                "stride": stride_value,
+                "padding": padding_value,
+                "dilation": dilation_value,
+                "groups": groups,
+                "has_bias": bias_node is not None,
+            },
+        )
+        output_shape = _infer_output_shape(op_node, [input_shape, weight_shape])
+        op_node.output_shape = output_shape
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        strides[node] = _contiguous_strides(output_shape)
+        return OpNodeBuildResult(op_node)
+
+
+class _BackendConv2dHandler(Conv2dHandler):
+    def build_op_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType | None,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if dtype_info is None:
+            return None
+        (
+            input_arg,
+            weight_arg,
+            bias,
+            stride,
+            padding,
+            dilation,
+            transposed,
+            output_padding,
+            groups,
+        ) = _parse_conv2d_args(node)
+        if not isinstance(input_arg, torch.fx.Node) or not isinstance(
+            weight_arg, torch.fx.Node
+        ):
+            raise _error_expected_tensor("conv2d")
+        bias_node = None
+        if bias is not None:
+            if isinstance(bias, torch.fx.Node):
+                bias_node = bias
+            else:
+                raise RefBackendError("codegen conv2d expects bias to be a tensor")
+        if isinstance(stride, torch.fx.Node) or isinstance(
+            padding, torch.fx.Node
+        ) or isinstance(dilation, torch.fx.Node):
+            raise RefBackendError(
+                "codegen conv2d expects constant stride, padding, and dilation"
+            )
+        if isinstance(transposed, torch.fx.Node):
+            raise RefBackendError("codegen conv2d expects constant transposed value")
+        if isinstance(output_padding, torch.fx.Node):
+            raise RefBackendError("codegen conv2d expects constant output_padding")
+        if isinstance(groups, torch.fx.Node):
+            raise RefBackendError("codegen conv2d expects constant groups")
+        if dtype_info.torch_dtype is not torch.float32:
+            raise RefBackendError(
+                "codegen conv2d supports only torch.float32 tensors"
+            )
+        if input_arg not in shapes or weight_arg not in shapes:
+            raise _error_expected_tensor("conv2d")
+        if (
+            dtypes[input_arg] is not torch.float32
+            or dtypes[weight_arg] is not torch.float32
+        ):
+            raise RefBackendError(
+                "codegen conv2d supports only torch.float32 tensors"
+            )
+        if bias_node is not None:
+            if bias_node not in shapes:
+                raise _error_expected_tensor("conv2d")
+            if dtypes[bias_node] is not torch.float32:
+                raise RefBackendError(
+                    "codegen conv2d supports only torch.float32 tensors"
+                )
+        input_shape = shapes[input_arg]
+        weight_shape = shapes[weight_arg]
+        if len(weight_shape) != 4:
+            raise RefBackendError("codegen conv2d requires 4D weight tensors")
+        if bias_node is not None:
+            bias_shape = shapes[bias_node]
+            if len(bias_shape) != 1 or bias_shape[0] != weight_shape[0]:
+                raise RefBackendError(
+                    "codegen conv2d expects bias shape to match output channels"
+                )
+        if len(input_shape) != 4:
+            raise RefBackendError("codegen conv2d requires 4D input tensors")
+        stride_pair = _normalize_param(
+            normalize_int_or_pair, "stride", stride
+        )
+        padding_pair = _normalize_param(
+            normalize_padding, "padding", padding, 2, allow_strings=("same", "valid")
+        )
+        dilation_pair = _normalize_param(
+            normalize_int_or_pair, "dilation", dilation
+        )
+        if isinstance(transposed, bool):
+            transposed_value = transposed
+        elif isinstance(transposed, numbers.Integral):
+            transposed_value = bool(transposed)
+        else:
+            raise RefBackendError(
+                "codegen conv2d expects transposed to be a bool"
+            )
+        output_padding_pair = _normalize_param(
+            normalize_int_or_pair, "output_padding", output_padding
+        )
+        if isinstance(padding_pair, str):
+            if padding_pair not in ("same", "valid"):
+                raise RefBackendError(
+                    "codegen conv2d expects padding to be 'same', 'valid', or an int tuple"
+                )
+        else:
+            if padding_pair[0] < 0 or padding_pair[1] < 0:
+                raise RefBackendError(
+                    "codegen conv2d expects padding to be non-negative"
+                )
+        if stride_pair[0] <= 0 or stride_pair[1] <= 0:
+            raise RefBackendError("codegen conv2d expects stride to be positive")
+        if dilation_pair[0] <= 0 or dilation_pair[1] <= 0:
+            raise RefBackendError("codegen conv2d expects dilation to be positive")
+        if output_padding_pair[0] < 0 or output_padding_pair[1] < 0:
+            raise RefBackendError(
+                "codegen conv2d expects output_padding to be non-negative"
+            )
+        if groups <= 0:
+            raise RefBackendError("codegen conv2d requires positive groups")
+        inputs = (input_arg, weight_arg)
+        if bias_node is not None:
+            inputs = (*inputs, bias_node)
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=list(inputs),
+            output_shape=(),
+            inplace_input=None,
+            params={
+                "stride": stride_pair,
+                "padding": padding_pair,
+                "dilation": dilation_pair,
+                "groups": groups,
+                "transposed": transposed_value,
+                "output_padding": output_padding_pair,
+                "has_bias": bias_node is not None,
+            },
+        )
+        output_shape = _infer_output_shape(op_node, [input_shape, weight_shape])
+        op_node.output_shape = output_shape
+        if bias_node is not None:
+            bias_shape = shapes[bias_node]
+            if len(output_shape) == 4:
+                out_channels = output_shape[1]
+            else:
+                out_channels = output_shape[0]
+            if len(bias_shape) != 1 or bias_shape[0] != out_channels:
+                raise RefBackendError(
+                    "codegen conv2d expects bias shape to match output channels"
+                )
+        shapes[node] = output_shape
+        dtypes[node] = dtype_info.torch_dtype
+        strides[node] = _contiguous_strides(output_shape)
+        return OpNodeBuildResult(op_node)
+
+
+class _KindHandlerContext(HandlerContext):
     def handle_col2im_node(
         self,
         node: torch.fx.Node,
@@ -5528,32 +5431,6 @@ class _KindHandlerContext(HandlerContext):
             node, op_spec, dtype_info, shapes, strides, dtypes
         )
 
-    def handle_conv1d_node(
-        self,
-        node: torch.fx.Node,
-        op_spec: _OpSpec,
-        dtype_info: _CodegenDType,
-        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-        strides: Dict[torch.fx.Node, Tuple[int, ...]],
-        dtypes: Dict[torch.fx.Node, torch.dtype],
-    ) -> _OpNode:
-        return _handle_conv1d_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
-        )
-
-    def handle_conv2d_node(
-        self,
-        node: torch.fx.Node,
-        op_spec: _OpSpec,
-        dtype_info: _CodegenDType,
-        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-        strides: Dict[torch.fx.Node, Tuple[int, ...]],
-        dtypes: Dict[torch.fx.Node, torch.dtype],
-    ) -> _OpNode:
-        return _handle_conv2d_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
-        )
-
     def handle_diagonal_node(
         self,
         node: torch.fx.Node,
@@ -5585,19 +5462,6 @@ class _KindHandlerContext(HandlerContext):
             strides,
             dtypes,
             inplace_input,
-        )
-
-    def handle_softmax_node(
-        self,
-        node: torch.fx.Node,
-        op_spec: _OpSpec,
-        dtype_info: _CodegenDType,
-        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-        strides: Dict[torch.fx.Node, Tuple[int, ...]],
-        dtypes: Dict[torch.fx.Node, torch.dtype],
-    ) -> _OpNode:
-        return _handle_softmax_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
         )
 
     def handle_flip_node(
@@ -5652,32 +5516,6 @@ class _KindHandlerContext(HandlerContext):
             node, op_spec, dtype_info, shapes, strides, dtypes
         )
 
-    def handle_embedding_node(
-        self,
-        node: torch.fx.Node,
-        op_spec: _OpSpec,
-        dtype_info: _CodegenDType,
-        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-        strides: Dict[torch.fx.Node, Tuple[int, ...]],
-        dtypes: Dict[torch.fx.Node, torch.dtype],
-    ) -> _OpNode:
-        return _handle_embedding_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
-        )
-
-    def handle_embedding_bag_node(
-        self,
-        node: torch.fx.Node,
-        op_spec: _OpSpec,
-        dtype_info: _CodegenDType,
-        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-        strides: Dict[torch.fx.Node, Tuple[int, ...]],
-        dtypes: Dict[torch.fx.Node, torch.dtype],
-    ) -> _OpNode:
-        return _handle_embedding_bag_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
-        )
-
     def handle_view_node(
         self,
         node: torch.fx.Node,
@@ -5688,19 +5526,6 @@ class _KindHandlerContext(HandlerContext):
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
         return _handle_view_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
-        )
-
-    def handle_empty_strided_node(
-        self,
-        node: torch.fx.Node,
-        op_spec: _OpSpec,
-        dtype_info: _CodegenDType,
-        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
-        strides: Dict[torch.fx.Node, Tuple[int, ...]],
-        dtypes: Dict[torch.fx.Node, torch.dtype],
-    ) -> _OpNode:
-        return _handle_empty_strided_node(
             node, op_spec, dtype_info, shapes, strides, dtypes
         )
 
@@ -5761,7 +5586,34 @@ class _KindHandlerContext(HandlerContext):
         return _kernel_inputs(op_node)
 
 
-_KIND_HANDLERS = build_kind_handlers(_KindHandlerContext())
+_HANDLER_CONTEXT = _KindHandlerContext()
+_KIND_HANDLERS = build_kind_handlers(_HANDLER_CONTEXT)
+_KIND_HANDLERS.update(
+    {
+        OpKind.ARANGE: _BackendArangeHandler(_HANDLER_CONTEXT, ArangeEmitter()),
+        OpKind.CONCAT: _BackendConcatHandler(_HANDLER_CONTEXT, ConcatEmitter()),
+        OpKind.EMPTY_STRIDED: _BackendEmptyStridedHandler(
+            _HANDLER_CONTEXT, EmptyStridedEmitter()
+        ),
+        OpKind.POOL1D: _BackendPool1dHandler(_HANDLER_CONTEXT, Pool1dEmitter()),
+        OpKind.POOL2D: _BackendPool2dHandler(_HANDLER_CONTEXT, Pool2dEmitter()),
+        OpKind.POOL3D: _BackendPool3dHandler(_HANDLER_CONTEXT, Pool3dEmitter()),
+        OpKind.POOL2D_BACKWARD: _BackendPool2dBackwardHandler(
+            _HANDLER_CONTEXT, Pool2dBackwardEmitter()
+        ),
+        OpKind.SOFTMAX: _BackendSoftmaxHandler(
+            _HANDLER_CONTEXT, SoftmaxEmitter()
+        ),
+        OpKind.EMBEDDING: _BackendEmbeddingHandler(
+            _HANDLER_CONTEXT, EmbeddingEmitter()
+        ),
+        OpKind.EMBEDDING_BAG: _BackendEmbeddingBagHandler(
+            _HANDLER_CONTEXT, EmbeddingBagEmitter()
+        ),
+        OpKind.CONV1D: _BackendConv1dHandler(_HANDLER_CONTEXT, Conv1dEmitter()),
+        OpKind.CONV2D: _BackendConv2dHandler(_HANDLER_CONTEXT, Conv2dEmitter()),
+    }
+)
 
 
 
