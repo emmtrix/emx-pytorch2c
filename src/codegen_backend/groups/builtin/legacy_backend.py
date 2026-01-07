@@ -1,23 +1,35 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Mapping, Sequence
+from typing import Dict, List, Mapping, Sequence
 
 from codegen_backend.groups.analysis import GroupAnalyzer
-from codegen_backend.kinds import OpKindHandlerFactory
-from codegen_backend.ops_registry_conv import build_supported_ops as build_conv_ops
-from codegen_backend.ops_registry_elementwise import (
+from codegen_backend.groups.builtin.conv.registry import (
+    build_supported_ops as build_conv_ops,
+    build_target_registry as build_conv_targets,
+)
+from codegen_backend.groups.builtin.elementwise.registry import (
     build_supported_ops as build_elementwise_ops,
+    build_target_registry as build_elementwise_targets,
 )
-from codegen_backend.ops_registry_embedding import (
+from codegen_backend.groups.builtin.embedding.registry import (
     build_supported_ops as build_embedding_ops,
+    build_target_registry as build_embedding_targets,
 )
-from codegen_backend.ops_registry_pooling import build_supported_ops as build_pooling_ops
-from codegen_backend.ops_registry_reductions import (
+from codegen_backend.groups.builtin.pooling.registry import (
+    build_supported_ops as build_pooling_ops,
+    build_target_registry as build_pooling_targets,
+)
+from codegen_backend.groups.builtin.reductions.registry import (
     build_supported_ops as build_reductions_ops,
+    build_target_registry as build_reductions_targets,
 )
-from codegen_backend.ops_registry_tensor import build_supported_ops as build_tensor_ops
-from codegen_backend.registry import _TargetInfo, build_target_registry
+from codegen_backend.groups.builtin.tensor.registry import (
+    build_supported_ops as build_tensor_ops,
+    build_target_registry as build_tensor_targets,
+)
+from codegen_backend.kinds import OpKindHandlerFactory
+from codegen_backend.registry import _TargetInfo
 from codegen_backend.specs import _OpSpec
 
 
@@ -76,7 +88,14 @@ class LegacyBackendGroup:
         return supported_ops
 
     def target_registry(self) -> Mapping[object, _TargetInfo]:
-        return build_target_registry(self.supported_ops())
+        merged: Dict[object, _TargetInfo] = {}
+        merged.update(build_elementwise_targets(build_elementwise_ops()))
+        merged.update(build_reductions_targets(build_reductions_ops()))
+        merged.update(build_pooling_targets(build_pooling_ops()))
+        merged.update(build_conv_targets(build_conv_ops()))
+        merged.update(build_embedding_targets(build_embedding_ops()))
+        merged.update(build_tensor_targets(build_tensor_ops()))
+        return merged
 
     def analyzers(self) -> Sequence[GroupAnalyzer]:
         from codegen_backend.groups.builtin.conv.analyzer import ConvAnalyzer
@@ -97,24 +116,24 @@ class LegacyBackendGroup:
         return [
             ElementwiseAnalyzer(
                 elementwise_ops,
-                build_target_registry(elementwise_ops),
+                build_elementwise_targets(elementwise_ops),
             ),
             ReductionsAnalyzer(
                 reductions_ops,
-                build_target_registry(reductions_ops),
+                build_reductions_targets(reductions_ops),
             ),
             PoolingAnalyzer(
                 pooling_ops,
-                build_target_registry(pooling_ops),
+                build_pooling_targets(pooling_ops),
             ),
-            ConvAnalyzer(conv_ops, build_target_registry(conv_ops)),
+            ConvAnalyzer(conv_ops, build_conv_targets(conv_ops)),
             EmbeddingAnalyzer(
                 embedding_ops,
-                build_target_registry(embedding_ops),
+                build_embedding_targets(embedding_ops),
             ),
             TensorAnalyzer(
                 tensor_ops,
-                build_target_registry(tensor_ops),
+                build_tensor_targets(tensor_ops),
             ),
         ]
 

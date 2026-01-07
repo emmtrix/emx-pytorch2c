@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Mapping
 
-import torch
-
 from codegen_backend.specs import _OpSpec
 
 
@@ -26,18 +24,13 @@ def build_target_registry(
             registry[target] = _TargetInfo(
                 op_spec=spec, inplace_arg_index=inplace_arg_index
             )
-    if "atan2" in supported_ops:
-        registry[torch.ops.aten.atan2.out] = _TargetInfo(
-            op_spec=supported_ops["atan2"],
-            inplace_arg_index=2,
-        )
     return registry
 
 
 def build_target_registry_from_groups() -> Dict[object, _TargetInfo]:
     from codegen_backend.groups.registry import get_group_registry
 
-    return build_target_registry(get_group_registry().merged_supported_ops())
+    return get_group_registry().merged_target_registry()
 
 
 __all__ = ["_TargetInfo", "build_target_registry", "build_target_registry_from_groups"]
