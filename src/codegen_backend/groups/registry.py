@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Dict, List
 
 from codegen_backend.groups.analysis import GroupAnalyzer
-from codegen_backend.groups.base import OperatorGroup
 from codegen_backend.kinds import HandlerContextProvider, OpKindHandler
 from codegen_backend.registry import _TargetInfo
 from codegen_backend.specs import OpKind, _OpSpec
@@ -12,9 +11,9 @@ from codegen_backend.specs import OpKind, _OpSpec
 
 @dataclass(frozen=True)
 class GroupRegistry:
-    groups: List[OperatorGroup]
+    groups: List[object]
 
-    def register(self, group: OperatorGroup) -> "GroupRegistry":
+    def register(self, group: object) -> "GroupRegistry":
         return GroupRegistry(groups=[*self.groups, group])
 
     def build_kind_handlers(
@@ -54,14 +53,12 @@ def get_group_registry() -> GroupRegistry:
         from codegen_backend.groups.builtin.conv.group import ConvGroup
         from codegen_backend.groups.builtin.elementwise.group import ElementwiseGroup
         from codegen_backend.groups.builtin.embedding.group import EmbeddingGroup
-        from codegen_backend.groups.builtin.legacy_backend import BaseBackendGroup
         from codegen_backend.groups.builtin.pooling.group import PoolingGroup
         from codegen_backend.groups.builtin.reductions.group import ReductionsGroup
         from codegen_backend.groups.builtin.tensor.group import TensorGroup
 
         _GROUP_REGISTRY = GroupRegistry(
             groups=[
-                BaseBackendGroup(),
                 ElementwiseGroup(),
                 ReductionsGroup(),
                 PoolingGroup(),

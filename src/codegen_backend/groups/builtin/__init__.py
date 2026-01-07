@@ -1,3 +1,3 @@
-from codegen_backend.groups.builtin.legacy_backend import LegacyBackendGroup, OperatorGroup
+"""Built-in operator group implementations."""
 
-__all__ = ["LegacyBackendGroup", "OperatorGroup"]
+__all__: list[str] = []
