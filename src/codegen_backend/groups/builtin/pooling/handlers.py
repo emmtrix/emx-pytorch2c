@@ -220,7 +220,9 @@ class _BackendPool1dHandler(Pool1dHandler):
                 "divisor_override": divisor_override_value,
             },
         )
-        output_shape = _infer_output_shape(op_node, [input_shape])
+        output_shape = _infer_output_shape(
+            op_node, [input_shape], kind_handlers=self._ctx.kind_handlers
+        )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
         dtypes[node] = dtype_info.torch_dtype
@@ -414,7 +416,9 @@ class _BackendPool2dHandler(Pool2dHandler):
                 "divisor_override": divisor_override,
             },
         )
-        output_shape = _infer_output_shape(op_node, [input_shape])
+        output_shape = _infer_output_shape(
+            op_node, [input_shape], kind_handlers=self._ctx.kind_handlers
+        )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
         dtypes[node] = dtype_info.torch_dtype
@@ -580,7 +584,9 @@ class _BackendPool3dHandler(Pool3dHandler):
                 "divisor_override": divisor_override,
             },
         )
-        output_shape = _infer_output_shape(op_node, [input_shape])
+        output_shape = _infer_output_shape(
+            op_node, [input_shape], kind_handlers=self._ctx.kind_handlers
+        )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
         dtypes[node] = dtype_info.torch_dtype
@@ -674,7 +680,11 @@ class _BackendPool2dBackwardHandler(Pool2dBackwardHandler):
                 "stride": stride_pair,
             },
         )
-        output_shape = _infer_output_shape(op_node, [grad_output_shape, input_shape])
+        output_shape = _infer_output_shape(
+            op_node,
+            [grad_output_shape, input_shape],
+            kind_handlers=self._ctx.kind_handlers,
+        )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
         dtypes[node] = dtype_info.torch_dtype

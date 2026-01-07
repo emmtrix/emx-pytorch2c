@@ -45,40 +45,6 @@ def _is_out_overload(target: object) -> bool:
 
 _C_SRC_DIR = Path(__file__).resolve().parents[2] / "csrc"
 
-_GROUP_REGISTRY = None
-_SUPPORTED_OPS: Dict[str, _OpSpec] | None = None
-_TARGET_REGISTRY: Dict[object, "_TargetInfo"] | None = None
-_KIND_HANDLERS: Dict[OpKind, "OpKindHandler"] | None = None
-
-
-def _get_group_registry():
-    global _GROUP_REGISTRY
-    if _GROUP_REGISTRY is None:
-        _GROUP_REGISTRY = get_group_registry()
-    return _GROUP_REGISTRY
-
-
-def _get_supported_ops() -> Dict[str, _OpSpec]:
-    global _SUPPORTED_OPS
-    if _SUPPORTED_OPS is None:
-        _SUPPORTED_OPS = _get_group_registry().merged_supported_ops()
-    return _SUPPORTED_OPS
-
-
-def _get_target_registry() -> Dict[object, "_TargetInfo"]:
-    global _TARGET_REGISTRY
-    if _TARGET_REGISTRY is None:
-        _TARGET_REGISTRY = _get_group_registry().merged_target_registry()
-    return _TARGET_REGISTRY
-
-
-def _get_kind_handlers() -> Dict[OpKind, "OpKindHandler"]:
-    global _KIND_HANDLERS
-    if _KIND_HANDLERS is None:
-        _KIND_HANDLERS = _get_group_registry().build_kind_handlers(
-            _HANDLER_CONTEXT
-        )
-    return _KIND_HANDLERS
 
 
 def _channels_last_strides(shape: Sequence[int]) -> Tuple[int, ...]:
@@ -190,7 +156,12 @@ def _kernel_inputs(op_node: _OpNode) -> List[torch.fx.Node]:
     return list(op_node.inputs)
 
 
-def _write_generic_source(graph: _GenericGraph) -> str:
+def _write_generic_source(
+    graph: _GenericGraph,
+    *,
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
+    templates_env: Any,
+) -> str:
     placeholders = graph.tensor_placeholders
     op_nodes = graph.op_nodes
     headers = [
@@ -200,7 +171,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
     ]
     kernels: List[str] = []
     for index, op_node in enumerate(op_nodes, start=1):
-        handler = _get_kind_handlers().get(op_node.spec.kind)
+        handler = kind_handlers.get(op_node.spec.kind)
         if handler is None:
             raise CodegenBackendError(
                 "codegen backend does not support kind "
@@ -259,7 +230,7 @@ def _write_generic_source(graph: _GenericGraph) -> str:
         call_lines.append(
             f"node{index}_{op_node.spec.name}_{graph.dtype.suffix}({args});"
         )
-    template = get_template_env().get_template("generic_source.c.j2")
+    template = templates_env.get_template("generic_source.c.j2")
     return (
         template.render(
             headers=headers,
@@ -343,15 +314,18 @@ def _validate_example_inputs(
 
 def _infer_empty_strided_dtype(
     gm: torch.fx.GraphModule,
+    *,
+    target_registry: Dict[object, "_TargetInfo"],
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _CodegenDType | None:
     dtype_value = None
     for node in gm.graph.nodes:
         if node.op != "call_function":
             continue
-        target_info = _get_target_registry().get(node.target)
+        target_info = target_registry.get(node.target)
         if target_info is None:
             continue
-        handler = _get_kind_handlers().get(target_info.op_spec.kind)
+        handler = kind_handlers.get(target_info.op_spec.kind)
         if handler is None:
             continue
         node_dtype = handler.infer_graph_dtype(node, target_info.op_spec)
@@ -388,9 +362,12 @@ def _unwrap_output_node(output_node: torch.fx.Node) -> Tuple[torch.fx.Node, obje
 
 
 def _infer_output_shape(
-    op_node: _OpNode, input_shapes: Sequence[Tuple[int, ...]]
+    op_node: _OpNode,
+    input_shapes: Sequence[Tuple[int, ...]],
+    *,
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> Tuple[int, ...]:
-    handler = _get_kind_handlers().get(op_node.spec.kind)
+    handler = kind_handlers.get(op_node.spec.kind)
     if handler is None:
         raise CodegenBackendError(
             f"codegen backend does not support kind '{op_node.spec.kind.value}'"
@@ -2026,6 +2003,7 @@ def _handle_flip_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _OpNode:
     if not node.args:
         raise CodegenBackendError(f"codegen {op_spec.name} expects one input")
@@ -2063,7 +2041,9 @@ def _handle_flip_node(
         inplace_input=None,
         params={"dims": normalized_dims},
     )
-    output_shape = _infer_output_shape(op_node, [input_shape])
+    output_shape = _infer_output_shape(
+        op_node, [input_shape], kind_handlers=kind_handlers
+    )
     op_node.output_shape = output_shape
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
@@ -2079,6 +2059,7 @@ def _handle_batch_norm_node(
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
     scalar_values: Dict[torch.fx.Node, object],
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _OpNode:
     has_training_flag = op_spec.name == "_native_batch_norm_legit"
     expected_inputs = 8 if has_training_flag else 7
@@ -2208,7 +2189,9 @@ def _handle_batch_norm_node(
             "has_bias": bias_node is not None,
         },
     )
-    output_shape = _infer_output_shape(op_node, [input_shape])
+    output_shape = _infer_output_shape(
+        op_node, [input_shape], kind_handlers=kind_handlers
+    )
     op_node.output_shape = output_shape
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
@@ -2224,6 +2207,7 @@ def _handle_pdist_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _OpNode:
     if not node.args:
         raise CodegenBackendError("codegen _pdist_forward expects one input")
@@ -2260,7 +2244,9 @@ def _handle_pdist_node(
         inplace_input=None,
         params={},
     )
-    output_shape = _infer_output_shape(op_node, [input_shape])
+    output_shape = _infer_output_shape(
+        op_node, [input_shape], kind_handlers=kind_handlers
+    )
     op_node.output_shape = output_shape
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
@@ -2276,6 +2262,7 @@ def _handle_cdist_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _OpNode:
     if len(node.args) < 3:
         raise CodegenBackendError(
@@ -2343,7 +2330,9 @@ def _handle_cdist_node(
         inplace_input=None,
         params={},
     )
-    output_shape = _infer_output_shape(op_node, [x1_shape, x2_shape])
+    output_shape = _infer_output_shape(
+        op_node, [x1_shape, x2_shape], kind_handlers=kind_handlers
+    )
     op_node.output_shape = output_shape
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
@@ -2360,6 +2349,7 @@ def _handle_addmm_like_node(
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
     inplace_input: int | None,
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _OpNode:
     op_name = op_spec.name
     input_nodes, alpha, beta = _parse_addmm_like_args(op_name, node)
@@ -2384,7 +2374,9 @@ def _handle_addmm_like_node(
         inplace_input=inplace_input,
         params={"alpha": alpha, "beta": beta},
     )
-    output_shape = _infer_output_shape(op_node, input_shapes)
+    output_shape = _infer_output_shape(
+        op_node, input_shapes, kind_handlers=kind_handlers
+    )
     op_node.output_shape = output_shape
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
@@ -2403,6 +2395,7 @@ def _handle_diagonal_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _OpNode:
     if not node.args:
         raise CodegenBackendError(f"codegen {op_spec.name} expects one input")
@@ -2423,7 +2416,9 @@ def _handle_diagonal_node(
         output_shape=(),
         params={"offset": offset, "dim1": dim1, "dim2": dim2},
     )
-    output_shape = _infer_output_shape(op_node, [shapes[input_arg]])
+    output_shape = _infer_output_shape(
+        op_node, [shapes[input_arg]], kind_handlers=kind_handlers
+    )
     op_node.output_shape = output_shape
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
@@ -2437,6 +2432,7 @@ def _handle_cumsum_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _OpNode:
     if not node.args:
         raise CodegenBackendError(f"codegen {op_spec.name} expects one input")
@@ -2465,7 +2461,9 @@ def _handle_cumsum_node(
         inplace_input=None,
         params={"dim": dim},
     )
-    output_shape = _infer_output_shape(op_node, [shapes[input_arg]])
+    output_shape = _infer_output_shape(
+        op_node, [shapes[input_arg]], kind_handlers=kind_handlers
+    )
     op_node.output_shape = output_shape
     shapes[node] = output_shape
     dtypes[node] = output_dtype
@@ -2480,6 +2478,7 @@ def _handle_constant_pad_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _OpNode:
     if not node.args:
         raise CodegenBackendError(
@@ -2572,7 +2571,9 @@ def _handle_constant_pad_node(
             "value": value,
         },
     )
-    output_shape = _infer_output_shape(op_node, [input_shape])
+    output_shape = _infer_output_shape(
+        op_node, [input_shape], kind_handlers=kind_handlers
+    )
     op_node.output_shape = output_shape
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
@@ -2587,6 +2588,7 @@ def _handle_gather_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _OpNode:
     input_arg, dim, index, sparse_grad = _parse_gather_args(node)
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
@@ -2635,7 +2637,9 @@ def _handle_gather_node(
         inplace_input=None,
         params={"dim": dim_value},
     )
-    output_shape = _infer_output_shape(op_node, [input_shape, index_shape])
+    output_shape = _infer_output_shape(
+        op_node, [input_shape, index_shape], kind_handlers=kind_handlers
+    )
     op_node.output_shape = output_shape
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
@@ -2651,6 +2655,7 @@ def _handle_fill_node(
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
     inplace_input: int | None,
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _OpNode:
     if not node.args:
         raise CodegenBackendError(f"codegen {op_spec.name} expects inputs")
@@ -2773,7 +2778,9 @@ def _handle_fill_node(
         inplace_input=inplace_input,
         params={"value": scalar_value},
     )
-    output_shape = _infer_output_shape(op_node, [shapes[input_arg]])
+    output_shape = _infer_output_shape(
+        op_node, [shapes[input_arg]], kind_handlers=kind_handlers
+    )
     op_node.output_shape = output_shape
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
@@ -2831,6 +2838,7 @@ def _handle_view_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _OpNode:
     if not node.args:
         raise CodegenBackendError(f"codegen {op_spec.name} expects one input")
@@ -2905,7 +2913,9 @@ def _handle_view_node(
                 "storage_offset": storage_offset_value,
             },
         )
-        output_shape = _infer_output_shape(op_node, [shapes[input_arg]])
+        output_shape = _infer_output_shape(
+            op_node, [shapes[input_arg]], kind_handlers=kind_handlers
+        )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
         dtypes[node] = dtype_info.torch_dtype
@@ -2987,7 +2997,9 @@ def _handle_view_node(
                 "storage_offset": 0,
             },
         )
-        output_shape = _infer_output_shape(op_node, [input_shape])
+        output_shape = _infer_output_shape(
+            op_node, [input_shape], kind_handlers=kind_handlers
+        )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
         dtypes[node] = dtype_info.torch_dtype
@@ -3038,6 +3050,7 @@ def _handle_resize_node(
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
     inplace_input: int | None,
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _OpNode:
     memory_format = None
     if node.kwargs:
@@ -3075,7 +3088,9 @@ def _handle_resize_node(
         inplace_input=None,
         params={"size": size},
     )
-    output_shape = _infer_output_shape(op_node, [input_shape])
+    output_shape = _infer_output_shape(
+        op_node, [input_shape], kind_handlers=kind_handlers
+    )
     op_node.output_shape = output_shape
     shapes[node] = output_shape
     dtypes[node] = dtype_info.torch_dtype
@@ -3133,13 +3148,22 @@ def _parse_where_inputs(
 
 
 def _analyze_generic_graph(
-    gm: torch.fx.GraphModule, example_inputs: Sequence[object]
+    gm: torch.fx.GraphModule,
+    example_inputs: Sequence[object],
+    *,
+    supported_ops: Dict[str, _OpSpec],
+    target_registry: Dict[object, "_TargetInfo"],
+    kind_handlers: Dict[OpKind, "OpKindHandler"],
 ) -> _GenericGraph:
     tensor_examples = list(_iter_example_tensors(example_inputs))
     if tensor_examples:
         dtype_info = _validate_example_inputs(example_inputs)
     else:
-        dtype_info = _infer_empty_strided_dtype(gm)
+        dtype_info = _infer_empty_strided_dtype(
+            gm,
+            target_registry=target_registry,
+            kind_handlers=kind_handlers,
+        )
     output_node = None
     placeholders: List[torch.fx.Node] = []
     tensor_placeholders: List[torch.fx.Node] = []
@@ -3252,15 +3276,15 @@ def _analyze_generic_graph(
                     "clone",
                 }:
                     raise CodegenBackendError(f"Unsupported call_method: {node.target}")
-                op_spec = _get_supported_ops()[node.target]
+                op_spec = supported_ops[node.target]
                 inplace_input = None
             else:
-                target_info = _get_target_registry().get(node.target)
+                target_info = target_registry.get(node.target)
                 if target_info is None:
                     raise CodegenBackendError(f"Unsupported call_function: {node.target}")
                 op_spec = target_info.op_spec
                 inplace_input = target_info.inplace_arg_index
-            handler = _get_kind_handlers().get(op_spec.kind)
+            handler = kind_handlers.get(op_spec.kind)
             if handler is None:
                 raise CodegenBackendError(
                     "codegen backend does not support kind "
@@ -3358,8 +3382,12 @@ def _analyze_generic_graph(
     )
 
 
-def _compile_generic_library(graph: _GenericGraph) -> _GenericLibrary:
-    source = _write_generic_source(graph)
+def _compile_generic_library(
+    graph: _GenericGraph,
+    *,
+    write_generic_source: Callable[[_GenericGraph], str],
+) -> _GenericLibrary:
+    source = write_generic_source(graph)
     digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
     entry_name = f"ref_codegen_main_{graph.dtype.suffix}"
     input_shapes = tuple(graph.shapes[node] for node in graph.tensor_placeholders)
@@ -3401,9 +3429,15 @@ def _validate_runtime_inputs(
 
 
 def _compile_graph(
-    gm: torch.fx.GraphModule, example_inputs: List[object]
+    gm: torch.fx.GraphModule,
+    example_inputs: List[object],
+    *,
+    analyze_generic_graph: Callable[
+        [torch.fx.GraphModule, Sequence[object]], _GenericGraph
+    ],
+    compile_generic_library: Callable[[_GenericGraph], _GenericLibrary],
 ) -> Callable[..., torch.Tensor]:
-    graph = _analyze_generic_graph(gm, example_inputs)
+    graph = analyze_generic_graph(gm, example_inputs)
     conv_contiguous_indices = tuple(
         sorted(
             {
@@ -3433,8 +3467,8 @@ def _compile_graph(
         if conv_contiguous_indices
         else list(example_inputs)
     )
-    graph = _analyze_generic_graph(gm, normalized_example_inputs)
-    lib = _compile_generic_library(graph)
+    graph = analyze_generic_graph(gm, normalized_example_inputs)
+    lib = compile_generic_library(graph)
     output_structure = graph.output_structure
     output_value = graph.output_value
     output_inplace_input = graph.output_inplace_input
@@ -3447,10 +3481,8 @@ def _compile_graph(
 
     def _recompile(new_inputs: Sequence[object]) -> None:
         nonlocal graph, lib, output_inplace_input
-        graph = _analyze_generic_graph(
-            gm, _normalize_conv_inputs(new_inputs)
-        )
-        lib = _compile_generic_library(graph)
+        graph = analyze_generic_graph(gm, _normalize_conv_inputs(new_inputs))
+        lib = compile_generic_library(graph)
         output_inplace_input = graph.output_inplace_input
 
     def resolve_output(value: object, env: Dict[torch.fx.Node, object]) -> object:
@@ -3506,8 +3538,8 @@ def _compile_graph(
                     analysis_inputs[placeholder_index] = contiguous_inputs[
                         index
                     ]
-            updated_graph = _analyze_generic_graph(gm, analysis_inputs)
-            cached_lib = _compile_generic_library(updated_graph)
+            updated_graph = analyze_generic_graph(gm, analysis_inputs)
+            cached_lib = compile_generic_library(updated_graph)
             library_cache[cache_key] = cached_lib
         lib = cached_lib
         if output_inplace_input is not None:
@@ -3565,14 +3597,14 @@ def _compile_graph(
     return compiled
 
 
-def get_generic_source(
-    gm: torch.fx.GraphModule, example_inputs: Sequence[object]
-) -> str:
-    graph = _analyze_generic_graph(gm, example_inputs)
-    return _write_generic_source(graph)
+class BackendContext(HandlerContext):
+    def __init__(self, backend: "CodegenBackend") -> None:
+        self._backend = backend
 
+    @property
+    def kind_handlers(self) -> Dict[OpKind, "OpKindHandler"]:
+        return self._backend.kind_handlers
 
-class _KindHandlerContext(HandlerContext):
     def handle_col2im_node(
         self,
         node: torch.fx.Node,
@@ -3604,6 +3636,7 @@ class _KindHandlerContext(HandlerContext):
             strides,
             dtypes,
             scalar_values,
+            self._backend.kind_handlers,
         )
 
     def handle_pdist_node(
@@ -3616,7 +3649,13 @@ class _KindHandlerContext(HandlerContext):
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
         return _handle_pdist_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            self._backend.kind_handlers,
         )
 
     def handle_cdist_node(
@@ -3629,7 +3668,13 @@ class _KindHandlerContext(HandlerContext):
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
         return _handle_cdist_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            self._backend.kind_handlers,
         )
 
     def handle_diagonal_node(
@@ -3642,7 +3687,13 @@ class _KindHandlerContext(HandlerContext):
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
         return _handle_diagonal_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            self._backend.kind_handlers,
         )
 
     def handle_addmm_like_node(
@@ -3663,6 +3714,7 @@ class _KindHandlerContext(HandlerContext):
             strides,
             dtypes,
             inplace_input,
+            self._backend.kind_handlers,
         )
 
     def handle_flip_node(
@@ -3675,7 +3727,13 @@ class _KindHandlerContext(HandlerContext):
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
         return _handle_flip_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            self._backend.kind_handlers,
         )
 
     def handle_cumsum_node(
@@ -3688,7 +3746,13 @@ class _KindHandlerContext(HandlerContext):
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
         return _handle_cumsum_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            self._backend.kind_handlers,
         )
 
     def handle_pad_node(
@@ -3701,7 +3765,13 @@ class _KindHandlerContext(HandlerContext):
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
         return _handle_constant_pad_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            self._backend.kind_handlers,
         )
 
     def handle_gather_node(
@@ -3714,7 +3784,13 @@ class _KindHandlerContext(HandlerContext):
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
         return _handle_gather_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            self._backend.kind_handlers,
         )
 
     def handle_view_node(
@@ -3727,7 +3803,13 @@ class _KindHandlerContext(HandlerContext):
         dtypes: Dict[torch.fx.Node, torch.dtype],
     ) -> _OpNode:
         return _handle_view_node(
-            node, op_spec, dtype_info, shapes, strides, dtypes
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            self._backend.kind_handlers,
         )
 
     def handle_fill_node(
@@ -3748,6 +3830,7 @@ class _KindHandlerContext(HandlerContext):
             strides,
             dtypes,
             inplace_input,
+            self._backend.kind_handlers,
         )
 
     def handle_resize_node(
@@ -3768,6 +3851,7 @@ class _KindHandlerContext(HandlerContext):
             strides,
             dtypes,
             inplace_input,
+            self._backend.kind_handlers,
         )
 
     def handle_to_copy_node(
@@ -3787,11 +3871,99 @@ class _KindHandlerContext(HandlerContext):
         return _kernel_inputs(op_node)
 
 
-_HANDLER_CONTEXT = _KindHandlerContext()
+class CodegenBackend:
+    def __init__(
+        self,
+        *,
+        group_registry: object | None = None,
+        templates_env: object | None = None,
+    ) -> None:
+        self.group_registry = (
+            group_registry if group_registry is not None else get_group_registry()
+        )
+        self.templates_env = (
+            templates_env if templates_env is not None else get_template_env()
+        )
+        self._supported_ops: Dict[str, _OpSpec] | None = None
+        self._target_registry: Dict[object, "_TargetInfo"] | None = None
+        self._kind_handlers: Dict[OpKind, "OpKindHandler"] | None = None
+        self._handler_context = BackendContext(self)
 
+    @property
+    def supported_ops(self) -> Dict[str, _OpSpec]:
+        if self._supported_ops is None:
+            self._supported_ops = self.group_registry.merged_supported_ops()
+        return self._supported_ops
+
+    @property
+    def target_registry(self) -> Dict[object, "_TargetInfo"]:
+        if self._target_registry is None:
+            self._target_registry = self.group_registry.merged_target_registry()
+        return self._target_registry
+
+    @property
+    def kind_handlers(self) -> Dict[OpKind, "OpKindHandler"]:
+        if self._kind_handlers is None:
+            self._kind_handlers = self.group_registry.build_kind_handlers(
+                self._handler_context
+            )
+        return self._kind_handlers
+
+    def get_generic_source(
+        self, gm: torch.fx.GraphModule, example_inputs: Sequence[object]
+    ) -> str:
+        graph = self._analyze_generic_graph(gm, example_inputs)
+        return self._write_generic_source(graph)
+
+    def codegen_generic_backend(
+        self, gm: torch.fx.GraphModule, example_inputs: List[object]
+    ) -> Callable[..., torch.Tensor]:
+        return self._compile_graph(gm, example_inputs)
+
+    def _write_generic_source(self, graph: _GenericGraph) -> str:
+        return _write_generic_source(
+            graph,
+            kind_handlers=self.kind_handlers,
+            templates_env=self.templates_env,
+        )
+
+    def _analyze_generic_graph(
+        self, gm: torch.fx.GraphModule, example_inputs: Sequence[object]
+    ) -> _GenericGraph:
+        return _analyze_generic_graph(
+            gm,
+            example_inputs,
+            supported_ops=self.supported_ops,
+            target_registry=self.target_registry,
+            kind_handlers=self.kind_handlers,
+        )
+
+    def _compile_generic_library(self, graph: _GenericGraph) -> _GenericLibrary:
+        return _compile_generic_library(
+            graph, write_generic_source=self._write_generic_source
+        )
+
+    def _compile_graph(
+        self, gm: torch.fx.GraphModule, example_inputs: List[object]
+    ) -> Callable[..., torch.Tensor]:
+        return _compile_graph(
+            gm,
+            example_inputs,
+            analyze_generic_graph=self._analyze_generic_graph,
+            compile_generic_library=self._compile_generic_library,
+        )
+
+
+_DEFAULT_BACKEND = CodegenBackend()
+
+
+def get_generic_source(
+    gm: torch.fx.GraphModule, example_inputs: Sequence[object]
+) -> str:
+    return _DEFAULT_BACKEND.get_generic_source(gm, example_inputs)
 
 
 def codegen_generic_backend(
     gm: torch.fx.GraphModule, example_inputs: List[object]
 ) -> Callable[..., torch.Tensor]:
-    return _compile_graph(gm, example_inputs)
+    return _DEFAULT_BACKEND.codegen_generic_backend(gm, example_inputs)

@@ -117,7 +117,9 @@ class _BackendMatmulHandler(MatmulHandler):
             inplace_input=inplace_input,
         )
         self.validate(op_node, input_shapes, input_dtypes, dtype_info)
-        output_shape = _infer_output_shape(op_node, input_shapes)
+        output_shape = _infer_output_shape(
+            op_node, input_shapes, kind_handlers=self._ctx.kind_handlers
+        )
         op_node.output_shape = output_shape
         if out_arg is not None and shapes[out_arg] != output_shape:
             raise CodegenBackendError(
@@ -255,7 +257,9 @@ class _BackendArangeHandler(ArangeHandler):
             output_shape=(),
             params={"start": start, "end": end, "step": step},
         )
-        output_shape = _infer_output_shape(op_node, [])
+        output_shape = _infer_output_shape(
+            op_node, [], kind_handlers=self._ctx.kind_handlers
+        )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
         dtypes[node] = dtype_spec.torch_dtype
@@ -319,7 +323,9 @@ class _BackendConcatHandler(ConcatHandler):
             inplace_input=None,
             params={"dim": concat_dim},
         )
-        output_shape = _infer_output_shape(op_node, input_shapes)
+        output_shape = _infer_output_shape(
+            op_node, input_shapes, kind_handlers=self._ctx.kind_handlers
+        )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
         dtypes[node] = dtype_info.torch_dtype
@@ -428,7 +434,9 @@ class _BackendEmptyStridedHandler(EmptyStridedHandler):
             output_shape=(),
             params={"size": output_shape},
         )
-        output_shape = _infer_output_shape(op_node, [])
+        output_shape = _infer_output_shape(
+            op_node, [], kind_handlers=self._ctx.kind_handlers
+        )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
         dtypes[node] = dtype_info.torch_dtype

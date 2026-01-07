@@ -8,12 +8,7 @@ import torch
 import torch.fx
 
 from codegen_backend.errors import CodegenBackendError
-from codegen_backend.backend import (
-    _analyze_generic_graph,
-    _dtype_to_c_type,
-    _input_c_type,
-    _write_generic_source,
-)
+from codegen_backend.backend import CodegenBackend, _dtype_to_c_type, _input_c_type
 from codegen_backend.dtypes import _CodegenDType
 from codegen_backend.graph import _GenericGraph
 
@@ -276,8 +271,9 @@ def export_generic_c(
         weight_placeholders,
         weight_tensors,
     ) = _lift_get_attr_to_placeholders(gm, example_inputs)
-    graph = _analyze_generic_graph(lifted_gm, lifted_inputs)
-    source = _write_generic_source(graph)
+    backend = CodegenBackend()
+    graph = backend._analyze_generic_graph(lifted_gm, lifted_inputs)
+    source = backend._write_generic_source(graph)
     weights = {
         weight_placeholders[node]: tensor
         for node, tensor in zip(weight_placeholders.keys(), weight_tensors)

@@ -1,4 +1,4 @@
-__all__ = ["codegen_generic_backend", "export_generic_c"]
+__all__ = ["CodegenBackend", "codegen_generic_backend", "export_generic_c"]
 
 
 def __getattr__(name: str):
@@ -6,6 +6,10 @@ def __getattr__(name: str):
         from .backend import codegen_generic_backend
 
         return codegen_generic_backend
+    if name == "CodegenBackend":
+        from .backend import CodegenBackend
+
+        return CodegenBackend
     if name == "export_generic_c":
         from .export import export_generic_c
 

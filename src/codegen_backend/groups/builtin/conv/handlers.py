@@ -139,7 +139,11 @@ class _BackendConv1dHandler(Conv1dHandler):
                 "has_bias": bias_node is not None,
             },
         )
-        output_shape = _infer_output_shape(op_node, [input_shape, weight_shape])
+        output_shape = _infer_output_shape(
+            op_node,
+            [input_shape, weight_shape],
+            kind_handlers=self._ctx.kind_handlers,
+        )
         op_node.output_shape = output_shape
         shapes[node] = output_shape
         dtypes[node] = dtype_info.torch_dtype
@@ -285,7 +289,11 @@ class _BackendConv2dHandler(Conv2dHandler):
                 "has_bias": bias_node is not None,
             },
         )
-        output_shape = _infer_output_shape(op_node, [input_shape, weight_shape])
+        output_shape = _infer_output_shape(
+            op_node,
+            [input_shape, weight_shape],
+            kind_handlers=self._ctx.kind_handlers,
+        )
         op_node.output_shape = output_shape
         if bias_node is not None:
             bias_shape = shapes[bias_node]
