@@ -48,18 +48,6 @@ def _core_ops_from_native_functions(path: Path) -> Set[str]:
     return ops
 
 
-def _aten_ops_from_schemas() -> Set[str]:
-    ops: set[str] = set()
-    for schema in torch._C._jit_get_all_schemas():
-        if not schema.name.startswith("aten::"):
-            continue
-        op_name = schema.name.split("::", 1)[1]
-        if op_name.endswith("Implicit"):
-            continue
-        ops.add(op_name)
-    return ops
-
-
 def _expand_op_names(op_names: Iterable[str]) -> Set[str]:
     expanded: set[str] = set()
     for name in op_names:
@@ -165,8 +153,14 @@ def _summarize_ops(aten_ops: Iterable[str], codegen_ops: Set[str]) -> tuple[int,
     return total, supported
 
 
-def _render_ops_section(title: str, aten_ops: Iterable[str], codegen_ops: Set[str]) -> None:
-    print(title)
+def main() -> None:
+    native_functions = _native_functions_path()
+    aten_ops = sorted(_core_ops_from_native_functions(native_functions))
+    codegen_ops = _ops_from_codegen_tests(
+        REPO_ROOT / "tests" / "test_codegen_ops.py"
+    )
+
+    print("# Core ATen ops support (codegen backend)")
     print()
     print("| aten op | codegen support |")
     print("| --- | --- |")
@@ -183,43 +177,6 @@ def _render_ops_section(title: str, aten_ops: Iterable[str], codegen_ops: Set[st
         f"- supported by codegen: {supported} / {total} ({codegen_percent:.1f}%)"
     )
     print(f"- unsupported by codegen: {unsupported}")
-
-
-def _render_all_ops_section(title: str, aten_ops: Iterable[str], codegen_ops: Set[str]) -> None:
-    print(title)
-    print()
-    print("| aten op | codegen support |")
-    print("| --- | --- |")
-    for op_name in aten_ops:
-        print(f"| `{op_name}` | {_format_support_label(op_name in codegen_ops)} |")
-
-    total, supported = _summarize_ops(aten_ops, codegen_ops)
-    unsupported = total - supported
-    codegen_percent = (supported / total * 100) if total else 0
-    print()
-    print("## Summary")
-    print(f"- total aten ops: {total}")
-    print(
-        f"- supported by codegen: {supported} / {total} ({codegen_percent:.1f}%)"
-    )
-    print(f"- unsupported by codegen: {unsupported}")
-
-
-def main() -> None:
-    native_functions = _native_functions_path()
-    aten_ops = sorted(_core_ops_from_native_functions(native_functions))
-    all_aten_ops = sorted(_aten_ops_from_schemas())
-    codegen_ops = _ops_from_codegen_tests(
-        REPO_ROOT / "tests" / "test_codegen_ops.py"
-    )
-
-    _render_ops_section(
-        "# Core ATen ops support (codegen backend)", aten_ops, codegen_ops
-    )
-    print()
-    _render_all_ops_section(
-        "# All ATen ops support (codegen backend)", all_aten_ops, codegen_ops
-    )
 
 
 if __name__ == "__main__":
