@@ -34,7 +34,11 @@ from codegen_backend.indexing import (
     format_input_access,
     format_output_access,
 )
-from codegen_backend.kinds import HandlerContext, build_kind_handlers
+from codegen_backend.kinds import (
+    HandlerContext,
+    KernelEmitRequest,
+    build_kind_handlers,
+)
 from codegen_backend.ops_registry import SUPPORTED_OPS
 from codegen_backend.param_normalize import (
     normalize_bool,
@@ -8252,8 +8256,485 @@ def get_generic_source(
 
 
 class _KindHandlerContext(HandlerContext):
+    def emit_kernel(self, kind: str, req: KernelEmitRequest) -> List[str]:
+        if kind in {"binary", "unary", "where", "fill"}:
+            return _write_elementwise_kernel(
+                req.node_index,
+                req.op_node,
+                req.output_shape,
+                req.input_shapes,
+                req.input_strides,
+                req.input_dtypes,
+                req.output_strides,
+                req.dtype,
+            )
+        if kind == "arange":
+            return _write_arange_kernel(
+                req.node_index,
+                req.op_node,
+                req.output_shape,
+                req.output_strides,
+                req.dtype,
+            )
+        if kind == "flip":
+            input_shape = req.input_shapes[0]
+            input_strides = req.input_strides[0]
+            input_dtype = req.input_dtypes[0]
+            return _write_flip_kernel(
+                req.node_index,
+                req.op_node,
+                input_shape,
+                input_strides,
+                input_dtype,
+                req.output_shape,
+                req.output_strides,
+                req.dtype,
+            )
+        if kind == "pad":
+            input_shape = req.input_shapes[0]
+            input_strides = req.input_strides[0]
+            input_dtype = req.input_dtypes[0]
+            return _write_constant_pad_kernel(
+                req.node_index,
+                req.op_node,
+                input_shape,
+                input_strides,
+                input_dtype,
+                req.output_shape,
+                req.output_strides,
+                req.dtype,
+            )
+        if kind == "view":
+            input_shape = req.input_shapes[0]
+            input_dtype = req.input_dtypes[0]
+            return _write_view_kernel(
+                req.node_index,
+                req.op_node,
+                input_shape,
+                input_dtype,
+                req.output_shape,
+                req.output_strides,
+                req.dtype,
+            )
+        if kind == "resize":
+            input_shape = req.input_shapes[0]
+            input_strides = req.input_strides[0]
+            input_dtype = req.input_dtypes[0]
+            return _write_resize_kernel(
+                req.node_index,
+                req.op_node,
+                input_shape,
+                input_strides,
+                input_dtype,
+                req.output_shape,
+                req.output_strides,
+                req.dtype,
+            )
+        if kind == "empty_strided":
+            return _write_empty_strided_kernel(
+                req.node_index,
+                req.op_spec,
+                req.output_shape,
+                req.dtype,
+            )
+        if kind == "diagonal":
+            input_shape = req.input_shapes[0]
+            input_strides = req.input_strides[0]
+            input_dtype = req.input_dtypes[0]
+            return _write_diagonal_kernel(
+                req.node_index,
+                req.op_node,
+                input_shape,
+                input_strides,
+                input_dtype,
+                req.output_shape,
+                req.output_strides,
+                req.dtype,
+            )
+        if kind == "reduction":
+            if req.op_spec.name == "std":
+                return _write_std_kernel(
+                    req.node_index,
+                    req.op_spec,
+                    req.input_shapes[0],
+                    req.input_strides[0],
+                    req.output_shape,
+                    req.output_strides,
+                    req.reduction_dims or (),
+                    bool(req.keepdim),
+                    req.dtype,
+                    unbiased=bool(req.params.get("unbiased", True)),
+                )
+            if req.op_spec.name == "var":
+                return _write_var_kernel(
+                    req.node_index,
+                    req.op_spec,
+                    req.input_shapes[0],
+                    req.input_strides[0],
+                    req.output_shape,
+                    req.output_strides,
+                    req.reduction_dims or (),
+                    bool(req.keepdim),
+                    req.dtype,
+                    unbiased=bool(req.params.get("unbiased", True)),
+                )
+            if req.op_spec.name == "norm":
+                return _write_norm_kernel(
+                    req.node_index,
+                    req.op_spec,
+                    req.input_shapes[0],
+                    req.input_strides[0],
+                    req.output_shape,
+                    req.output_strides,
+                    req.reduction_dims or (),
+                    bool(req.keepdim),
+                    req.dtype,
+                    p_value=float(req.params.get("p_value", 2.0)),
+                )
+            return _write_reduction_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.input_strides[0],
+                req.output_shape,
+                req.output_strides,
+                req.reduction_dims or (),
+                bool(req.keepdim),
+                req.dtype,
+            )
+        if kind == "arg_reduction":
+            return _write_argminmax_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.input_strides[0],
+                req.output_shape,
+                req.output_strides,
+                req.reduction_dims or (),
+                bool(req.keepdim),
+                bool(req.params.get("reduce_all", False)),
+                req.dtype,
+            )
+        if kind == "softmax":
+            return _write_softmax_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.input_strides[0],
+                req.output_strides,
+                int(req.params["dim"]),
+                req.dtype,
+            )
+        if kind == "cumsum":
+            return _write_cumsum_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.input_strides[0],
+                req.output_strides,
+                int(req.params["dim"]),
+                req.dtype,
+                req.params["output_dtype"],
+            )
+        if kind == "embedding":
+            return _write_embedding_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.input_shapes[1],
+                req.input_strides[0],
+                req.input_strides[1],
+                req.output_shape,
+                req.output_strides,
+                req.input_dtypes[1],
+                req.dtype,
+                padding_idx=int(req.params.get("padding_idx", -1)),
+            )
+        if kind == "embedding_bag":
+            return _write_embedding_bag_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.input_shapes[1],
+                req.input_shapes[2],
+                req.input_strides[0],
+                req.input_strides[1],
+                req.input_strides[2],
+                req.output_shape,
+                req.output_strides,
+                req.input_dtypes[1],
+                req.input_dtypes[2],
+                req.dtype,
+                mode=int(req.params.get("mode", 0)),
+                padding_idx=int(req.params.get("padding_idx", -1)),
+                include_last_offset=bool(
+                    req.params.get("include_last_offset", False)
+                ),
+            )
+        if kind == "gather":
+            return _write_gather_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.input_shapes[1],
+                req.input_strides[0],
+                req.input_strides[1],
+                req.output_shape,
+                req.output_strides,
+                req.input_dtypes[1],
+                int(req.params["dim"]),
+                req.dtype,
+            )
+        if kind == "concat":
+            return _write_concat_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes,
+                req.input_strides,
+                req.output_shape,
+                req.output_strides,
+                int(req.params.get("dim", 0)),
+                req.dtype,
+            )
+        if kind == "pool2d":
+            return _write_pool2d_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.output_shape,
+                req.params["kernel_size"],
+                req.params["stride"],
+                req.params["padding"],
+                req.params["dilation"],
+                req.dtype,
+                bool(req.params.get("ceil_mode", False)),
+                bool(req.params.get("count_include_pad", False)),
+                req.params.get("divisor_override"),
+            )
+        if kind == "pool3d":
+            return _write_pool3d_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.output_shape,
+                req.params["kernel_size"],
+                req.params["stride"],
+                req.params["padding"],
+                req.params["dilation"],
+                req.dtype,
+                bool(req.params.get("ceil_mode", False)),
+                bool(req.params.get("count_include_pad", False)),
+                req.params.get("divisor_override"),
+            )
+        if kind == "pool2d_backward":
+            return _write_adaptive_avg_pool2d_backward_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.input_shapes[1],
+                req.output_shape,
+                req.params["kernel_size"],
+                req.params["stride"],
+                req.dtype,
+            )
+        if kind == "pool1d":
+            return _write_pool1d_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.output_shape,
+                req.params["kernel_size"],
+                req.params["stride"],
+                req.params["padding"],
+                req.params["dilation"],
+                req.dtype,
+                bool(req.params.get("ceil_mode", False)),
+                bool(req.params.get("count_include_pad", False)),
+                req.params.get("divisor_override"),
+            )
+        if kind == "col2im":
+            return _write_col2im_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.output_shape,
+                req.params["output_size"],
+                req.params["kernel_size"],
+                req.params["dilation"],
+                req.params["padding"],
+                req.params["stride"],
+                req.dtype,
+                int(req.params.get("out_blocks_h", 1)),
+                int(req.params.get("out_blocks_w", 1)),
+            )
+        if kind == "batch_norm":
+            return _write_batch_norm_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.output_shape,
+                req.dtype,
+                float(req.params.get("eps", 1e-5)),
+                bool(req.params.get("has_weight", False)),
+                bool(req.params.get("has_bias", False)),
+            )
+        if kind == "pdist":
+            return _write_pdist_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.output_shape,
+                req.dtype,
+            )
+        if kind == "cdist":
+            return _write_cdist_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.input_shapes[1],
+                req.output_shape,
+                req.dtype,
+            )
+        if kind == "conv1d":
+            return _write_conv1d_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.input_shapes[1],
+                req.output_shape,
+                int(req.params.get("stride", 1)),
+                int(req.params.get("padding", 0)),
+                int(req.params.get("dilation", 1)),
+                int(req.params.get("groups", 1)),
+                req.dtype,
+                bool(req.params.get("has_bias", False)),
+            )
+        if kind == "conv2d":
+            return _write_conv2d_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.input_shapes[1],
+                req.output_shape,
+                bool(req.params.get("transposed", False)),
+                req.params.get("stride", (1, 1)),
+                req.params.get("padding", (0, 0)),
+                req.params.get("dilation", (1, 1)),
+                int(req.params.get("groups", 1)),
+                req.dtype,
+                bool(req.params.get("has_bias", False)),
+            )
+        if kind == "addmm":
+            return _write_addmm_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.output_shape,
+                req.input_shapes[1],
+                req.input_shapes[2],
+                req.input_strides[0],
+                req.input_strides[1],
+                req.input_strides[2],
+                req.output_strides,
+                req.dtype,
+                alpha=float(req.params.get("alpha", 1.0)),
+                beta=float(req.params.get("beta", 1.0)),
+            )
+        if kind == "addbmm":
+            return _write_addbmm_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.output_shape,
+                req.input_shapes[1],
+                req.input_shapes[2],
+                req.input_strides[0],
+                req.input_strides[1],
+                req.input_strides[2],
+                req.output_strides,
+                req.dtype,
+                alpha=float(req.params.get("alpha", 1.0)),
+                beta=float(req.params.get("beta", 1.0)),
+            )
+        if kind == "addmv":
+            return _write_addmv_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.output_shape,
+                req.input_shapes[1],
+                req.input_shapes[2],
+                req.input_strides[0],
+                req.input_strides[1],
+                req.input_strides[2],
+                req.output_strides,
+                req.dtype,
+                alpha=float(req.params.get("alpha", 1.0)),
+                beta=float(req.params.get("beta", 1.0)),
+            )
+        if kind == "addr":
+            return _write_addr_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.output_shape,
+                req.input_shapes[1],
+                req.input_shapes[2],
+                req.input_strides[0],
+                req.input_strides[1],
+                req.input_strides[2],
+                req.output_strides,
+                req.dtype,
+                alpha=float(req.params.get("alpha", 1.0)),
+                beta=float(req.params.get("beta", 1.0)),
+            )
+        if kind == "matmul":
+            return _write_matmul_kernel(
+                req.node_index,
+                req.op_spec,
+                req.input_shapes[0],
+                req.input_shapes[1],
+                req.input_strides[0],
+                req.input_strides[1],
+                req.dtype,
+            )
+        raise RefBackendError(f"Unsupported kernel kind: {kind}")
+
     def kernel_inputs(self, op_node: _OpNode) -> List[torch.fx.Node]:
         return _kernel_inputs(op_node)
+
+    def _emit_request(
+        self,
+        kind: str,
+        *,
+        node_index: int,
+        op_node: _OpNode | None = None,
+        op_spec: _OpSpec | None = None,
+        output_shape: Sequence[int] = (),
+        output_strides: Sequence[int] | None = None,
+        input_shapes: Sequence[Sequence[int]] = (),
+        input_strides: Sequence[Sequence[int]] = (),
+        input_dtypes: Sequence[torch.dtype] = (),
+        dtype: _CodegenDType | None = None,
+        reduction_dims: Sequence[int] | None = None,
+        keepdim: bool | None = None,
+        params: Optional[Dict[str, object]] = None,
+    ) -> List[str]:
+        req = KernelEmitRequest(
+            node_index=node_index,
+            op_node=op_node,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=input_shapes,
+            input_strides=input_strides,
+            input_dtypes=input_dtypes,
+            dtype=dtype,
+            reduction_dims=reduction_dims,
+            keepdim=keepdim,
+            params=params or {},
+        )
+        return self.emit_kernel(kind, req)
 
     def write_arange_kernel(
         self,
@@ -8263,8 +8744,14 @@ class _KindHandlerContext(HandlerContext):
         output_strides: Sequence[int],
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_arange_kernel(
-            node_index, op_node, output_shape, output_strides, dtype
+        return self._emit_request(
+            "arange",
+            node_index=node_index,
+            op_node=op_node,
+            op_spec=op_node.spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            dtype=dtype,
         )
 
     def write_elementwise_kernel(
@@ -8278,15 +8765,17 @@ class _KindHandlerContext(HandlerContext):
         output_strides: Sequence[int],
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_elementwise_kernel(
-            node_index,
-            op_node,
-            output_shape,
-            input_shapes,
-            input_strides,
-            input_dtypes,
-            output_strides,
-            dtype,
+        return self._emit_request(
+            op_node.spec.kind,
+            node_index=node_index,
+            op_node=op_node,
+            op_spec=op_node.spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=input_shapes,
+            input_strides=input_strides,
+            input_dtypes=input_dtypes,
+            dtype=dtype,
         )
 
     def write_flip_kernel(
@@ -8300,15 +8789,17 @@ class _KindHandlerContext(HandlerContext):
         output_strides: Sequence[int],
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_flip_kernel(
-            node_index,
-            op_node,
-            input_shape,
-            input_strides,
-            input_dtype,
-            output_shape,
-            output_strides,
-            dtype,
+        return self._emit_request(
+            "flip",
+            node_index=node_index,
+            op_node=op_node,
+            op_spec=op_node.spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(input_shape,),
+            input_strides=(input_strides,),
+            input_dtypes=(input_dtype,),
+            dtype=dtype,
         )
 
     def write_constant_pad_kernel(
@@ -8322,15 +8813,17 @@ class _KindHandlerContext(HandlerContext):
         output_strides: Sequence[int],
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_constant_pad_kernel(
-            node_index,
-            op_node,
-            input_shape,
-            input_strides,
-            input_dtype,
-            output_shape,
-            output_strides,
-            dtype,
+        return self._emit_request(
+            "pad",
+            node_index=node_index,
+            op_node=op_node,
+            op_spec=op_node.spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(input_shape,),
+            input_strides=(input_strides,),
+            input_dtypes=(input_dtype,),
+            dtype=dtype,
         )
 
     def write_view_kernel(
@@ -8343,14 +8836,16 @@ class _KindHandlerContext(HandlerContext):
         output_strides: Sequence[int],
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_view_kernel(
-            node_index,
-            op_node,
-            input_shape,
-            input_dtype,
-            output_shape,
-            output_strides,
-            dtype,
+        return self._emit_request(
+            "view",
+            node_index=node_index,
+            op_node=op_node,
+            op_spec=op_node.spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(input_shape,),
+            input_dtypes=(input_dtype,),
+            dtype=dtype,
         )
 
     def write_resize_kernel(
@@ -8364,15 +8859,17 @@ class _KindHandlerContext(HandlerContext):
         output_strides: Sequence[int],
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_resize_kernel(
-            node_index,
-            op_node,
-            input_shape,
-            input_strides,
-            input_dtype,
-            output_shape,
-            output_strides,
-            dtype,
+        return self._emit_request(
+            "resize",
+            node_index=node_index,
+            op_node=op_node,
+            op_spec=op_node.spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(input_shape,),
+            input_strides=(input_strides,),
+            input_dtypes=(input_dtype,),
+            dtype=dtype,
         )
 
     def write_empty_strided_kernel(
@@ -8382,8 +8879,12 @@ class _KindHandlerContext(HandlerContext):
         output_shape: Sequence[int],
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_empty_strided_kernel(
-            node_index, op_spec, output_shape, dtype
+        return self._emit_request(
+            "empty_strided",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            dtype=dtype,
         )
 
     def write_diagonal_kernel(
@@ -8397,15 +8898,17 @@ class _KindHandlerContext(HandlerContext):
         output_strides: Sequence[int],
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_diagonal_kernel(
-            node_index,
-            op_node,
-            input_shape,
-            input_strides,
-            input_dtype,
-            output_shape,
-            output_strides,
-            dtype,
+        return self._emit_request(
+            "diagonal",
+            node_index=node_index,
+            op_node=op_node,
+            op_spec=op_node.spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(input_shape,),
+            input_strides=(input_strides,),
+            input_dtypes=(input_dtype,),
+            dtype=dtype,
         )
 
     def write_std_kernel(
@@ -8422,17 +8925,18 @@ class _KindHandlerContext(HandlerContext):
         *,
         unbiased: bool,
     ) -> List[str]:
-        return _write_std_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            input_strides,
-            output_shape,
-            output_strides,
-            reduction_dims,
-            keepdim,
-            dtype,
-            unbiased=unbiased,
+        return self._emit_request(
+            "reduction",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(input_shape,),
+            input_strides=(input_strides,),
+            dtype=dtype,
+            reduction_dims=reduction_dims,
+            keepdim=keepdim,
+            params={"unbiased": unbiased},
         )
 
     def write_var_kernel(
@@ -8449,17 +8953,18 @@ class _KindHandlerContext(HandlerContext):
         *,
         unbiased: bool,
     ) -> List[str]:
-        return _write_var_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            input_strides,
-            output_shape,
-            output_strides,
-            reduction_dims,
-            keepdim,
-            dtype,
-            unbiased=unbiased,
+        return self._emit_request(
+            "reduction",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(input_shape,),
+            input_strides=(input_strides,),
+            dtype=dtype,
+            reduction_dims=reduction_dims,
+            keepdim=keepdim,
+            params={"unbiased": unbiased},
         )
 
     def write_norm_kernel(
@@ -8476,17 +8981,18 @@ class _KindHandlerContext(HandlerContext):
         *,
         p_value: float,
     ) -> List[str]:
-        return _write_norm_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            input_strides,
-            output_shape,
-            output_strides,
-            reduction_dims,
-            keepdim,
-            dtype,
-            p_value=p_value,
+        return self._emit_request(
+            "reduction",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(input_shape,),
+            input_strides=(input_strides,),
+            dtype=dtype,
+            reduction_dims=reduction_dims,
+            keepdim=keepdim,
+            params={"p_value": p_value},
         )
 
     def write_reduction_kernel(
@@ -8501,16 +9007,17 @@ class _KindHandlerContext(HandlerContext):
         keepdim: bool,
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_reduction_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            input_strides,
-            output_shape,
-            output_strides,
-            reduction_dims,
-            keepdim,
-            dtype,
+        return self._emit_request(
+            "reduction",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(input_shape,),
+            input_strides=(input_strides,),
+            dtype=dtype,
+            reduction_dims=reduction_dims,
+            keepdim=keepdim,
         )
 
     def write_argminmax_kernel(
@@ -8526,17 +9033,18 @@ class _KindHandlerContext(HandlerContext):
         reduce_all: bool,
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_argminmax_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            input_strides,
-            output_shape,
-            output_strides,
-            reduction_dims,
-            keepdim,
-            reduce_all,
-            dtype,
+        return self._emit_request(
+            "arg_reduction",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(input_shape,),
+            input_strides=(input_strides,),
+            dtype=dtype,
+            reduction_dims=reduction_dims,
+            keepdim=keepdim,
+            params={"reduce_all": reduce_all},
         )
 
     def write_softmax_kernel(
@@ -8549,14 +9057,15 @@ class _KindHandlerContext(HandlerContext):
         dim: int,
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_softmax_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            input_strides,
-            output_strides,
-            dim,
-            dtype,
+        return self._emit_request(
+            "softmax",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_strides=output_strides,
+            input_shapes=(input_shape,),
+            input_strides=(input_strides,),
+            dtype=dtype,
+            params={"dim": dim},
         )
 
     def write_cumsum_kernel(
@@ -8570,15 +9079,15 @@ class _KindHandlerContext(HandlerContext):
         dtype: _CodegenDType,
         output_dtype: torch.dtype,
     ) -> List[str]:
-        return _write_cumsum_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            input_strides,
-            output_strides,
-            dim,
-            dtype,
-            output_dtype,
+        return self._emit_request(
+            "cumsum",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_strides=output_strides,
+            input_shapes=(input_shape,),
+            input_strides=(input_strides,),
+            dtype=dtype,
+            params={"dim": dim, "output_dtype": output_dtype},
         )
 
     def write_embedding_kernel(
@@ -8596,18 +9105,17 @@ class _KindHandlerContext(HandlerContext):
         *,
         padding_idx: int,
     ) -> List[str]:
-        return _write_embedding_kernel(
-            node_index,
-            op_spec,
-            weight_shape,
-            indices_shape,
-            weight_strides,
-            indices_strides,
-            output_shape,
-            output_strides,
-            indices_dtype,
-            dtype,
-            padding_idx=padding_idx,
+        return self._emit_request(
+            "embedding",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(weight_shape, indices_shape),
+            input_strides=(weight_strides, indices_strides),
+            input_dtypes=(indices_dtype, indices_dtype),
+            dtype=dtype,
+            params={"padding_idx": padding_idx},
         )
 
     def write_embedding_bag_kernel(
@@ -8630,23 +9138,21 @@ class _KindHandlerContext(HandlerContext):
         padding_idx: int,
         include_last_offset: bool,
     ) -> List[str]:
-        return _write_embedding_bag_kernel(
-            node_index,
-            op_spec,
-            weight_shape,
-            indices_shape,
-            offsets_shape,
-            weight_strides,
-            indices_strides,
-            offsets_strides,
-            output_shape,
-            output_strides,
-            indices_dtype,
-            offsets_dtype,
-            dtype,
-            mode=mode,
-            padding_idx=padding_idx,
-            include_last_offset=include_last_offset,
+        return self._emit_request(
+            "embedding_bag",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(weight_shape, indices_shape, offsets_shape),
+            input_strides=(weight_strides, indices_strides, offsets_strides),
+            input_dtypes=(indices_dtype, indices_dtype, offsets_dtype),
+            dtype=dtype,
+            params={
+                "mode": mode,
+                "padding_idx": padding_idx,
+                "include_last_offset": include_last_offset,
+            },
         )
 
     def write_gather_kernel(
@@ -8663,18 +9169,17 @@ class _KindHandlerContext(HandlerContext):
         dim: int,
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_gather_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            index_shape,
-            input_strides,
-            index_strides,
-            output_shape,
-            output_strides,
-            index_dtype,
-            dim,
-            dtype,
+        return self._emit_request(
+            "gather",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(input_shape, index_shape),
+            input_strides=(input_strides, index_strides),
+            input_dtypes=(index_dtype, index_dtype),
+            dtype=dtype,
+            params={"dim": dim},
         )
 
     def write_concat_kernel(
@@ -8688,15 +9193,16 @@ class _KindHandlerContext(HandlerContext):
         dim: int,
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_concat_kernel(
-            node_index,
-            op_spec,
-            input_shapes,
-            input_strides,
-            output_shape,
-            output_strides,
-            dim,
-            dtype,
+        return self._emit_request(
+            "concat",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=input_shapes,
+            input_strides=input_strides,
+            dtype=dtype,
+            params={"dim": dim},
         )
 
     def write_pool2d_kernel(
@@ -8714,19 +9220,22 @@ class _KindHandlerContext(HandlerContext):
         count_include_pad: bool,
         divisor_override: object,
     ) -> List[str]:
-        return _write_pool2d_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            output_shape,
-            kernel_size,
-            stride,
-            padding,
-            dilation,
-            dtype,
-            ceil_mode,
-            count_include_pad,
-            divisor_override,
+        return self._emit_request(
+            "pool2d",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            input_shapes=(input_shape,),
+            dtype=dtype,
+            params={
+                "kernel_size": kernel_size,
+                "stride": stride,
+                "padding": padding,
+                "dilation": dilation,
+                "ceil_mode": ceil_mode,
+                "count_include_pad": count_include_pad,
+                "divisor_override": divisor_override,
+            },
         )
 
     def write_pool3d_kernel(
@@ -8744,19 +9253,22 @@ class _KindHandlerContext(HandlerContext):
         count_include_pad: bool,
         divisor_override: object,
     ) -> List[str]:
-        return _write_pool3d_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            output_shape,
-            kernel_size,
-            stride,
-            padding,
-            dilation,
-            dtype,
-            ceil_mode,
-            count_include_pad,
-            divisor_override,
+        return self._emit_request(
+            "pool3d",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            input_shapes=(input_shape,),
+            dtype=dtype,
+            params={
+                "kernel_size": kernel_size,
+                "stride": stride,
+                "padding": padding,
+                "dilation": dilation,
+                "ceil_mode": ceil_mode,
+                "count_include_pad": count_include_pad,
+                "divisor_override": divisor_override,
+            },
         )
 
     def write_adaptive_avg_pool2d_backward_kernel(
@@ -8770,15 +9282,14 @@ class _KindHandlerContext(HandlerContext):
         stride: Tuple[int, int],
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_adaptive_avg_pool2d_backward_kernel(
-            node_index,
-            op_spec,
-            grad_output_shape,
-            input_shape,
-            output_shape,
-            kernel_size,
-            stride,
-            dtype,
+        return self._emit_request(
+            "pool2d_backward",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            input_shapes=(grad_output_shape, input_shape),
+            dtype=dtype,
+            params={"kernel_size": kernel_size, "stride": stride},
         )
 
     def write_pool1d_kernel(
@@ -8796,19 +9307,22 @@ class _KindHandlerContext(HandlerContext):
         count_include_pad: bool,
         divisor_override: object,
     ) -> List[str]:
-        return _write_pool1d_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            output_shape,
-            kernel_size,
-            stride,
-            padding,
-            dilation,
-            dtype,
-            ceil_mode,
-            count_include_pad,
-            divisor_override,
+        return self._emit_request(
+            "pool1d",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            input_shapes=(input_shape,),
+            dtype=dtype,
+            params={
+                "kernel_size": kernel_size,
+                "stride": stride,
+                "padding": padding,
+                "dilation": dilation,
+                "ceil_mode": ceil_mode,
+                "count_include_pad": count_include_pad,
+                "divisor_override": divisor_override,
+            },
         )
 
     def write_col2im_kernel(
@@ -8826,19 +9340,22 @@ class _KindHandlerContext(HandlerContext):
         out_blocks_h: int,
         out_blocks_w: int,
     ) -> List[str]:
-        return _write_col2im_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            output_shape,
-            output_size,
-            kernel_size,
-            dilation,
-            padding,
-            stride,
-            dtype,
-            out_blocks_h,
-            out_blocks_w,
+        return self._emit_request(
+            "col2im",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            input_shapes=(input_shape,),
+            dtype=dtype,
+            params={
+                "output_size": output_size,
+                "kernel_size": kernel_size,
+                "dilation": dilation,
+                "padding": padding,
+                "stride": stride,
+                "out_blocks_h": out_blocks_h,
+                "out_blocks_w": out_blocks_w,
+            },
         )
 
     def write_batch_norm_kernel(
@@ -8852,15 +9369,14 @@ class _KindHandlerContext(HandlerContext):
         has_weight: bool,
         has_bias: bool,
     ) -> List[str]:
-        return _write_batch_norm_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            output_shape,
-            dtype,
-            eps,
-            has_weight,
-            has_bias,
+        return self._emit_request(
+            "batch_norm",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            input_shapes=(input_shape,),
+            dtype=dtype,
+            params={"eps": eps, "has_weight": has_weight, "has_bias": has_bias},
         )
 
     def write_pdist_kernel(
@@ -8871,8 +9387,13 @@ class _KindHandlerContext(HandlerContext):
         output_shape: Sequence[int],
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_pdist_kernel(
-            node_index, op_spec, input_shape, output_shape, dtype
+        return self._emit_request(
+            "pdist",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            input_shapes=(input_shape,),
+            dtype=dtype,
         )
 
     def write_cdist_kernel(
@@ -8884,8 +9405,13 @@ class _KindHandlerContext(HandlerContext):
         output_shape: Sequence[int],
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_cdist_kernel(
-            node_index, op_spec, x1_shape, x2_shape, output_shape, dtype
+        return self._emit_request(
+            "cdist",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            input_shapes=(x1_shape, x2_shape),
+            dtype=dtype,
         )
 
     def write_conv1d_kernel(
@@ -8902,18 +9428,20 @@ class _KindHandlerContext(HandlerContext):
         dtype: _CodegenDType,
         has_bias: bool,
     ) -> List[str]:
-        return _write_conv1d_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            weight_shape,
-            output_shape,
-            stride,
-            padding,
-            dilation,
-            groups,
-            dtype,
-            has_bias,
+        return self._emit_request(
+            "conv1d",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            input_shapes=(input_shape, weight_shape),
+            dtype=dtype,
+            params={
+                "stride": stride,
+                "padding": padding,
+                "dilation": dilation,
+                "groups": groups,
+                "has_bias": has_bias,
+            },
         )
 
     def write_conv2d_kernel(
@@ -8931,19 +9459,21 @@ class _KindHandlerContext(HandlerContext):
         dtype: _CodegenDType,
         has_bias: bool,
     ) -> List[str]:
-        return _write_conv2d_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            weight_shape,
-            output_shape,
-            transposed,
-            stride,
-            padding,
-            dilation,
-            groups,
-            dtype,
-            has_bias,
+        return self._emit_request(
+            "conv2d",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            input_shapes=(input_shape, weight_shape),
+            dtype=dtype,
+            params={
+                "transposed": transposed,
+                "stride": stride,
+                "padding": padding,
+                "dilation": dilation,
+                "groups": groups,
+                "has_bias": has_bias,
+            },
         )
 
     def write_addmm_kernel(
@@ -8963,20 +9493,16 @@ class _KindHandlerContext(HandlerContext):
         alpha: float,
         beta: float,
     ) -> List[str]:
-        return _write_addmm_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            output_shape,
-            mat1_shape,
-            mat2_shape,
-            input_strides,
-            mat1_strides,
-            mat2_strides,
-            output_strides,
-            dtype,
-            alpha=alpha,
-            beta=beta,
+        return self._emit_request(
+            "addmm",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(input_shape, mat1_shape, mat2_shape),
+            input_strides=(input_strides, mat1_strides, mat2_strides),
+            dtype=dtype,
+            params={"alpha": alpha, "beta": beta},
         )
 
     def write_addbmm_kernel(
@@ -8996,20 +9522,16 @@ class _KindHandlerContext(HandlerContext):
         alpha: float,
         beta: float,
     ) -> List[str]:
-        return _write_addbmm_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            output_shape,
-            batch1_shape,
-            batch2_shape,
-            input_strides,
-            batch1_strides,
-            batch2_strides,
-            output_strides,
-            dtype,
-            alpha=alpha,
-            beta=beta,
+        return self._emit_request(
+            "addbmm",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(input_shape, batch1_shape, batch2_shape),
+            input_strides=(input_strides, batch1_strides, batch2_strides),
+            dtype=dtype,
+            params={"alpha": alpha, "beta": beta},
         )
 
     def write_addmv_kernel(
@@ -9029,20 +9551,16 @@ class _KindHandlerContext(HandlerContext):
         alpha: float,
         beta: float,
     ) -> List[str]:
-        return _write_addmv_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            output_shape,
-            mat_shape,
-            vec_shape,
-            input_strides,
-            mat_strides,
-            vec_strides,
-            output_strides,
-            dtype,
-            alpha=alpha,
-            beta=beta,
+        return self._emit_request(
+            "addmv",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(input_shape, mat_shape, vec_shape),
+            input_strides=(input_strides, mat_strides, vec_strides),
+            dtype=dtype,
+            params={"alpha": alpha, "beta": beta},
         )
 
     def write_addr_kernel(
@@ -9062,20 +9580,16 @@ class _KindHandlerContext(HandlerContext):
         alpha: float,
         beta: float,
     ) -> List[str]:
-        return _write_addr_kernel(
-            node_index,
-            op_spec,
-            input_shape,
-            output_shape,
-            vec1_shape,
-            vec2_shape,
-            input_strides,
-            vec1_strides,
-            vec2_strides,
-            output_strides,
-            dtype,
-            alpha=alpha,
-            beta=beta,
+        return self._emit_request(
+            "addr",
+            node_index=node_index,
+            op_spec=op_spec,
+            output_shape=output_shape,
+            output_strides=output_strides,
+            input_shapes=(input_shape, vec1_shape, vec2_shape),
+            input_strides=(input_strides, vec1_strides, vec2_strides),
+            dtype=dtype,
+            params={"alpha": alpha, "beta": beta},
         )
 
     def write_matmul_kernel(
@@ -9088,8 +9602,13 @@ class _KindHandlerContext(HandlerContext):
         b_strides: Sequence[int],
         dtype: _CodegenDType,
     ) -> List[str]:
-        return _write_matmul_kernel(
-            node_index, op_spec, a_shape, b_shape, a_strides, b_strides, dtype
+        return self._emit_request(
+            "matmul",
+            node_index=node_index,
+            op_spec=op_spec,
+            input_shapes=(a_shape, b_shape),
+            input_strides=(a_strides, b_strides),
+            dtype=dtype,
         )
 
 

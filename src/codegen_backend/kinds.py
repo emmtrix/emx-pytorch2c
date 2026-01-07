@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from fractions import Fraction
 import math
 import numbers
@@ -14,476 +15,27 @@ if TYPE_CHECKING:
     from codegen_backend.graph import _GenericGraph, _OpNode
     from codegen_backend.specs import _OpSpec
 
+@dataclass
+class KernelEmitRequest:
+    node_index: int
+    op_node: "_OpNode | None" = None
+    op_spec: "_OpSpec | None" = None
+    inputs: Sequence["torch.fx.Node"] = field(default_factory=tuple)
+    output_shape: Sequence[int] = field(default_factory=tuple)
+    output_strides: Sequence[int] | None = None
+    input_shapes: Sequence[Sequence[int]] = field(default_factory=tuple)
+    input_strides: Sequence[Sequence[int]] = field(default_factory=tuple)
+    input_dtypes: Sequence[object] = field(default_factory=tuple)
+    dtype: object | None = None
+    reduction_dims: Sequence[int] | None = None
+    keepdim: bool | None = None
+    params: Dict[str, object] = field(default_factory=dict)
+
+
 class HandlerContext(Protocol):
     def kernel_inputs(self, op_node: "_OpNode") -> List["torch.fx.Node"]: ...
 
-    def write_arange_kernel(
-        self,
-        node_index: int,
-        op_node: "_OpNode",
-        output_shape: Sequence[int],
-        output_strides: Sequence[int],
-        dtype: object,
-    ) -> List[str]: ...
-
-    def write_elementwise_kernel(
-        self,
-        node_index: int,
-        op_node: "_OpNode",
-        output_shape: Sequence[int],
-        input_shapes: Sequence[Sequence[int]],
-        input_strides: Sequence[Sequence[int]],
-        input_dtypes: Sequence[object],
-        output_strides: Sequence[int],
-        dtype: object,
-    ) -> List[str]: ...
-
-    def write_flip_kernel(
-        self,
-        node_index: int,
-        op_node: "_OpNode",
-        input_shape: Sequence[int],
-        input_strides: Sequence[int],
-        input_dtype: object,
-        output_shape: Sequence[int],
-        output_strides: Sequence[int],
-        dtype: object,
-    ) -> List[str]: ...
-
-    def write_constant_pad_kernel(
-        self,
-        node_index: int,
-        op_node: "_OpNode",
-        input_shape: Sequence[int],
-        input_strides: Sequence[int],
-        input_dtype: object,
-        output_shape: Sequence[int],
-        output_strides: Sequence[int],
-        dtype: object,
-    ) -> List[str]: ...
-
-    def write_view_kernel(
-        self,
-        node_index: int,
-        op_node: "_OpNode",
-        input_shape: Sequence[int],
-        input_dtype: object,
-        output_shape: Sequence[int],
-        output_strides: Sequence[int],
-        dtype: object,
-    ) -> List[str]: ...
-
-    def write_resize_kernel(
-        self,
-        node_index: int,
-        op_node: "_OpNode",
-        input_shape: Sequence[int],
-        input_strides: Sequence[int],
-        input_dtype: object,
-        output_shape: Sequence[int],
-        output_strides: Sequence[int],
-        dtype: object,
-    ) -> List[str]: ...
-
-    def write_empty_strided_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        output_shape: Sequence[int],
-        dtype: object,
-    ) -> List[str]: ...
-
-    def write_diagonal_kernel(
-        self,
-        node_index: int,
-        op_node: "_OpNode",
-        input_shape: Sequence[int],
-        input_strides: Sequence[int],
-        input_dtype: object,
-        output_shape: Sequence[int],
-        output_strides: Sequence[int],
-        dtype: object,
-    ) -> List[str]: ...
-
-    def write_std_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        input_strides: Sequence[int],
-        output_shape: Sequence[int],
-        output_strides: Sequence[int],
-        reduction_dims: Sequence[int],
-        keepdim: bool,
-        dtype: object,
-        *,
-        unbiased: bool,
-    ) -> List[str]: ...
-
-    def write_var_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        input_strides: Sequence[int],
-        output_shape: Sequence[int],
-        output_strides: Sequence[int],
-        reduction_dims: Sequence[int],
-        keepdim: bool,
-        dtype: object,
-        *,
-        unbiased: bool,
-    ) -> List[str]: ...
-
-    def write_norm_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        input_strides: Sequence[int],
-        output_shape: Sequence[int],
-        output_strides: Sequence[int],
-        reduction_dims: Sequence[int],
-        keepdim: bool,
-        dtype: object,
-        *,
-        p_value: float,
-    ) -> List[str]: ...
-
-    def write_reduction_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        input_strides: Sequence[int],
-        output_shape: Sequence[int],
-        output_strides: Sequence[int],
-        reduction_dims: Sequence[int],
-        keepdim: bool,
-        dtype: object,
-    ) -> List[str]: ...
-
-    def write_argminmax_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        input_strides: Sequence[int],
-        output_shape: Sequence[int],
-        output_strides: Sequence[int],
-        reduction_dims: Sequence[int],
-        keepdim: bool,
-        reduce_all: bool,
-        dtype: object,
-    ) -> List[str]: ...
-
-    def write_softmax_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        input_strides: Sequence[int],
-        output_strides: Sequence[int],
-        dim: int,
-        dtype: object,
-    ) -> List[str]: ...
-
-    def write_cumsum_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        input_strides: Sequence[int],
-        output_strides: Sequence[int],
-        dim: int,
-        dtype: object,
-        output_dtype: object,
-    ) -> List[str]: ...
-
-    def write_embedding_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        weight_shape: Sequence[int],
-        indices_shape: Sequence[int],
-        weight_strides: Sequence[int],
-        indices_strides: Sequence[int],
-        output_shape: Sequence[int],
-        output_strides: Sequence[int],
-        indices_dtype: object,
-        dtype: object,
-        *,
-        padding_idx: int,
-    ) -> List[str]: ...
-
-    def write_embedding_bag_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        weight_shape: Sequence[int],
-        indices_shape: Sequence[int],
-        offsets_shape: Sequence[int],
-        weight_strides: Sequence[int],
-        indices_strides: Sequence[int],
-        offsets_strides: Sequence[int],
-        output_shape: Sequence[int],
-        output_strides: Sequence[int],
-        indices_dtype: object,
-        offsets_dtype: object,
-        dtype: object,
-        *,
-        mode: int,
-        padding_idx: int,
-        include_last_offset: bool,
-    ) -> List[str]: ...
-
-    def write_gather_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        index_shape: Sequence[int],
-        input_strides: Sequence[int],
-        index_strides: Sequence[int],
-        output_shape: Sequence[int],
-        output_strides: Sequence[int],
-        index_dtype: object,
-        dim: int,
-        dtype: object,
-    ) -> List[str]: ...
-
-    def write_concat_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shapes: Sequence[Sequence[int]],
-        input_strides: Sequence[Sequence[int]],
-        output_shape: Sequence[int],
-        output_strides: Sequence[int],
-        dim: int,
-        dtype: object,
-    ) -> List[str]: ...
-
-    def write_pool2d_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        output_shape: Sequence[int],
-        kernel_size: Tuple[int, int],
-        stride: Tuple[int, int],
-        padding: Tuple[int, int],
-        dilation: Tuple[int, int],
-        dtype: object,
-        ceil_mode: bool,
-        count_include_pad: bool,
-        divisor_override: object,
-    ) -> List[str]: ...
-
-    def write_pool3d_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        output_shape: Sequence[int],
-        kernel_size: Tuple[int, int, int],
-        stride: Tuple[int, int, int],
-        padding: Tuple[int, int, int],
-        dilation: Tuple[int, int, int],
-        dtype: object,
-        ceil_mode: bool,
-        count_include_pad: bool,
-        divisor_override: object,
-    ) -> List[str]: ...
-
-    def write_adaptive_avg_pool2d_backward_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        grad_output_shape: Sequence[int],
-        input_shape: Sequence[int],
-        output_shape: Sequence[int],
-        kernel_size: Tuple[int, int],
-        stride: Tuple[int, int],
-        dtype: object,
-    ) -> List[str]: ...
-
-    def write_pool1d_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        output_shape: Sequence[int],
-        kernel_size: int,
-        stride: int,
-        padding: int,
-        dilation: int,
-        dtype: object,
-        ceil_mode: bool,
-        count_include_pad: bool,
-        divisor_override: object,
-    ) -> List[str]: ...
-
-    def write_col2im_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        output_shape: Sequence[int],
-        output_size: Tuple[int, int],
-        kernel_size: Tuple[int, int],
-        dilation: Tuple[int, int],
-        padding: Tuple[int, int],
-        stride: Tuple[int, int],
-        dtype: object,
-        out_blocks_h: int,
-        out_blocks_w: int,
-    ) -> List[str]: ...
-
-    def write_batch_norm_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        output_shape: Sequence[int],
-        dtype: object,
-        eps: float,
-        has_weight: bool,
-        has_bias: bool,
-    ) -> List[str]: ...
-
-    def write_pdist_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        output_shape: Sequence[int],
-        dtype: object,
-    ) -> List[str]: ...
-
-    def write_cdist_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        x1_shape: Sequence[int],
-        x2_shape: Sequence[int],
-        output_shape: Sequence[int],
-        dtype: object,
-    ) -> List[str]: ...
-
-    def write_conv1d_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        weight_shape: Sequence[int],
-        output_shape: Sequence[int],
-        stride: int,
-        padding: int,
-        dilation: int,
-        groups: int,
-        dtype: object,
-        has_bias: bool,
-    ) -> List[str]: ...
-
-    def write_conv2d_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        weight_shape: Sequence[int],
-        output_shape: Sequence[int],
-        transposed: bool,
-        stride: Tuple[int, int],
-        padding: Tuple[int, int],
-        dilation: Tuple[int, int],
-        groups: int,
-        dtype: object,
-        has_bias: bool,
-    ) -> List[str]: ...
-
-    def write_addmm_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        output_shape: Sequence[int],
-        mat1_shape: Sequence[int],
-        mat2_shape: Sequence[int],
-        input_strides: Sequence[int],
-        mat1_strides: Sequence[int],
-        mat2_strides: Sequence[int],
-        output_strides: Sequence[int],
-        dtype: object,
-        *,
-        alpha: float,
-        beta: float,
-    ) -> List[str]: ...
-
-    def write_addbmm_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        output_shape: Sequence[int],
-        batch1_shape: Sequence[int],
-        batch2_shape: Sequence[int],
-        input_strides: Sequence[int],
-        batch1_strides: Sequence[int],
-        batch2_strides: Sequence[int],
-        output_strides: Sequence[int],
-        dtype: object,
-        *,
-        alpha: float,
-        beta: float,
-    ) -> List[str]: ...
-
-    def write_addmv_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        output_shape: Sequence[int],
-        mat_shape: Sequence[int],
-        vec_shape: Sequence[int],
-        input_strides: Sequence[int],
-        mat_strides: Sequence[int],
-        vec_strides: Sequence[int],
-        output_strides: Sequence[int],
-        dtype: object,
-        *,
-        alpha: float,
-        beta: float,
-    ) -> List[str]: ...
-
-    def write_addr_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        input_shape: Sequence[int],
-        output_shape: Sequence[int],
-        vec1_shape: Sequence[int],
-        vec2_shape: Sequence[int],
-        input_strides: Sequence[int],
-        vec1_strides: Sequence[int],
-        vec2_strides: Sequence[int],
-        output_strides: Sequence[int],
-        dtype: object,
-        *,
-        alpha: float,
-        beta: float,
-    ) -> List[str]: ...
-
-    def write_matmul_kernel(
-        self,
-        node_index: int,
-        op_spec: "_OpSpec",
-        a_shape: Sequence[int],
-        b_shape: Sequence[int],
-        a_strides: Sequence[int],
-        b_strides: Sequence[int],
-        dtype: object,
-    ) -> List[str]: ...
+    def emit_kernel(self, kind: str, req: KernelEmitRequest) -> List[str]: ...
 
 
 class KindHandler(ABC):
@@ -503,6 +55,26 @@ class KindHandler(ABC):
         input_shapes: Sequence[Tuple[int, ...]],
     ) -> Tuple[int, ...]:
         raise NotImplementedError
+
+
+def _make_request(
+    node_index: int,
+    op_node: _OpNode,
+    graph: _GenericGraph,
+    inputs: Sequence["torch.fx.Node"],
+) -> KernelEmitRequest:
+    return KernelEmitRequest(
+        node_index=node_index,
+        op_node=op_node,
+        op_spec=op_node.spec,
+        inputs=inputs,
+        output_shape=op_node.output_shape,
+        output_strides=graph.strides[op_node.node],
+        input_shapes=[graph.shapes[node] for node in inputs],
+        input_strides=[graph.strides[node] for node in inputs],
+        input_dtypes=[graph.dtypes[node] for node in inputs],
+        dtype=graph.dtype,
+    )
 
 
 def _compute_arange_size(
@@ -856,13 +428,8 @@ class ArangeHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        return self._ctx.write_arange_kernel(
-            node_index,
-            op_node,
-            op_node.output_shape,
-            graph.strides[op_node.node],
-            graph.dtype,
-        )
+        req = _make_request(node_index, op_node, graph, ())
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -880,20 +447,8 @@ class ElementwiseHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         kernel_inputs = self._ctx.kernel_inputs(op_node)
-        input_shapes = [graph.shapes[arg] for arg in kernel_inputs]
-        input_strides = [graph.strides[arg] for arg in kernel_inputs]
-        input_dtypes = [graph.dtypes[arg] for arg in kernel_inputs]
-        output_strides = graph.strides[op_node.node]
-        return self._ctx.write_elementwise_kernel(
-            node_index,
-            op_node,
-            op_node.output_shape,
-            input_shapes,
-            input_strides,
-            input_dtypes,
-            output_strides,
-            graph.dtype,
-        )
+        req = _make_request(node_index, op_node, graph, kernel_inputs)
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -931,16 +486,8 @@ class FlipHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node = op_node.inputs[0]
-        return self._ctx.write_flip_kernel(
-            node_index,
-            op_node,
-            graph.shapes[input_node],
-            graph.strides[input_node],
-            graph.dtypes[input_node],
-            op_node.output_shape,
-            graph.strides[op_node.node],
-            graph.dtype,
-        )
+        req = _make_request(node_index, op_node, graph, (input_node,))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -955,16 +502,8 @@ class PadHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node = op_node.inputs[0]
-        return self._ctx.write_constant_pad_kernel(
-            node_index,
-            op_node,
-            graph.shapes[input_node],
-            graph.strides[input_node],
-            graph.dtypes[input_node],
-            op_node.output_shape,
-            graph.strides[op_node.node],
-            graph.dtype,
-        )
+        req = _make_request(node_index, op_node, graph, (input_node,))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -994,15 +533,8 @@ class ViewHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node = op_node.inputs[0]
-        return self._ctx.write_view_kernel(
-            node_index,
-            op_node,
-            graph.shapes[input_node],
-            graph.dtypes[input_node],
-            op_node.output_shape,
-            graph.strides[op_node.node],
-            graph.dtype,
-        )
+        req = _make_request(node_index, op_node, graph, (input_node,))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1035,16 +567,8 @@ class ResizeHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node = op_node.inputs[0]
-        return self._ctx.write_resize_kernel(
-            node_index,
-            op_node,
-            graph.shapes[input_node],
-            graph.strides[input_node],
-            graph.dtypes[input_node],
-            op_node.output_shape,
-            graph.strides[op_node.node],
-            graph.dtype,
-        )
+        req = _make_request(node_index, op_node, graph, (input_node,))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1061,12 +585,8 @@ class EmptyStridedHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        return self._ctx.write_empty_strided_kernel(
-            node_index,
-            op_node.spec,
-            op_node.output_shape,
-            graph.dtype,
-        )
+        req = _make_request(node_index, op_node, graph, ())
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1084,16 +604,8 @@ class DiagonalHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node = op_node.inputs[0]
-        return self._ctx.write_diagonal_kernel(
-            node_index,
-            op_node,
-            graph.shapes[input_node],
-            graph.strides[input_node],
-            graph.dtypes[input_node],
-            op_node.output_shape,
-            graph.strides[op_node.node],
-            graph.dtype,
-        )
+        req = _make_request(node_index, op_node, graph, (input_node,))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1113,56 +625,14 @@ class ReductionHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node = op_node.inputs[0]
-        if op_node.spec.name == "std":
-            return self._ctx.write_std_kernel(
-                node_index,
-                op_node.spec,
-                graph.shapes[input_node],
-                graph.strides[input_node],
-                op_node.output_shape,
-                graph.strides[op_node.node],
-                op_node.reduction_dims or (),
-                op_node.keepdim,
-                graph.dtype,
-                unbiased=bool(op_node.p("unbiased", True)),
-            )
-        if op_node.spec.name == "var":
-            return self._ctx.write_var_kernel(
-                node_index,
-                op_node.spec,
-                graph.shapes[input_node],
-                graph.strides[input_node],
-                op_node.output_shape,
-                graph.strides[op_node.node],
-                op_node.reduction_dims or (),
-                op_node.keepdim,
-                graph.dtype,
-                unbiased=bool(op_node.p("unbiased", True)),
-            )
+        req = _make_request(node_index, op_node, graph, (input_node,))
+        req.reduction_dims = op_node.reduction_dims or ()
+        req.keepdim = op_node.keepdim
+        if op_node.spec.name in {"std", "var"}:
+            req.params["unbiased"] = bool(op_node.p("unbiased", True))
         if op_node.spec.name == "norm":
-            return self._ctx.write_norm_kernel(
-                node_index,
-                op_node.spec,
-                graph.shapes[input_node],
-                graph.strides[input_node],
-                op_node.output_shape,
-                graph.strides[op_node.node],
-                op_node.reduction_dims or (),
-                op_node.keepdim,
-                graph.dtype,
-                p_value=float(op_node.p("norm_p", 2.0)),
-            )
-        return self._ctx.write_reduction_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            graph.strides[input_node],
-            op_node.output_shape,
-            graph.strides[op_node.node],
-            op_node.reduction_dims or (),
-            op_node.keepdim,
-            graph.dtype,
-        )
+            req.params["p_value"] = float(op_node.p("norm_p", 2.0))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1182,18 +652,11 @@ class ArgReductionHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node = op_node.inputs[0]
-        return self._ctx.write_argminmax_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            graph.strides[input_node],
-            op_node.output_shape,
-            graph.strides[op_node.node],
-            op_node.reduction_dims or (),
-            op_node.keepdim,
-            bool(op_node.p("reduce_all", False)),
-            graph.dtype,
-        )
+        req = _make_request(node_index, op_node, graph, (input_node,))
+        req.reduction_dims = op_node.reduction_dims or ()
+        req.keepdim = op_node.keepdim
+        req.params["reduce_all"] = bool(op_node.p("reduce_all", False))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1213,15 +676,9 @@ class SoftmaxHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node = op_node.inputs[0]
-        return self._ctx.write_softmax_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            graph.strides[input_node],
-            graph.strides[op_node.node],
-            op_node.p("dim"),
-            graph.dtype,
-        )
+        req = _make_request(node_index, op_node, graph, (input_node,))
+        req.params["dim"] = op_node.p("dim")
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1236,16 +693,10 @@ class CumsumHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node = op_node.inputs[0]
-        return self._ctx.write_cumsum_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            graph.strides[input_node],
-            graph.strides[op_node.node],
-            op_node.p("dim"),
-            graph.dtype,
-            graph.dtypes[op_node.node],
-        )
+        req = _make_request(node_index, op_node, graph, (input_node,))
+        req.params["dim"] = op_node.p("dim")
+        req.params["output_dtype"] = graph.dtypes[op_node.node]
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1260,19 +711,11 @@ class EmbeddingHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         weight_node, indices_node = op_node.inputs
-        return self._ctx.write_embedding_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[weight_node],
-            graph.shapes[indices_node],
-            graph.strides[weight_node],
-            graph.strides[indices_node],
-            op_node.output_shape,
-            graph.strides[op_node.node],
-            graph.dtypes[indices_node],
-            graph.dtype,
-            padding_idx=int(op_node.p("padding_idx", -1)),
+        req = _make_request(
+            node_index, op_node, graph, (weight_node, indices_node)
         )
+        req.params["padding_idx"] = int(op_node.p("padding_idx", -1))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1292,24 +735,18 @@ class EmbeddingBagHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         weight_node, indices_node, offsets_node = op_node.inputs
-        return self._ctx.write_embedding_bag_kernel(
+        req = _make_request(
             node_index,
-            op_node.spec,
-            graph.shapes[weight_node],
-            graph.shapes[indices_node],
-            graph.shapes[offsets_node],
-            graph.strides[weight_node],
-            graph.strides[indices_node],
-            graph.strides[offsets_node],
-            op_node.output_shape,
-            graph.strides[op_node.node],
-            graph.dtypes[indices_node],
-            graph.dtypes[offsets_node],
-            graph.dtype,
-            mode=int(op_node.p("mode", 0)),
-            padding_idx=int(op_node.p("padding_idx", -1)),
-            include_last_offset=bool(op_node.p("include_last_offset", False)),
+            op_node,
+            graph,
+            (weight_node, indices_node, offsets_node),
         )
+        req.params["mode"] = int(op_node.p("mode", 0))
+        req.params["padding_idx"] = int(op_node.p("padding_idx", -1))
+        req.params["include_last_offset"] = bool(
+            op_node.p("include_last_offset", False)
+        )
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1335,19 +772,9 @@ class GatherHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, index_node = op_node.inputs
-        return self._ctx.write_gather_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            graph.shapes[index_node],
-            graph.strides[input_node],
-            graph.strides[index_node],
-            op_node.output_shape,
-            graph.strides[op_node.node],
-            graph.dtypes[index_node],
-            int(op_node.p("dim")),
-            graph.dtype,
-        )
+        req = _make_request(node_index, op_node, graph, (input_node, index_node))
+        req.params["dim"] = int(op_node.p("dim"))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1361,18 +788,9 @@ class ConcatHandler(KindHandler):
     def emit_kernel(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
-        input_shapes = [graph.shapes[arg] for arg in op_node.inputs]
-        input_strides = [graph.strides[arg] for arg in op_node.inputs]
-        return self._ctx.write_concat_kernel(
-            node_index,
-            op_node.spec,
-            input_shapes,
-            input_strides,
-            op_node.output_shape,
-            graph.strides[op_node.node],
-            op_node.p("dim", 0),
-            graph.dtype,
-        )
+        req = _make_request(node_index, op_node, graph, op_node.inputs)
+        req.params["dim"] = op_node.p("dim", 0)
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1396,20 +814,17 @@ class Pool2dHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node = op_node.inputs[0]
-        return self._ctx.write_pool2d_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            op_node.output_shape,
-            op_node.p("kernel_size", (1, 1)),
-            op_node.p("stride", (1, 1)),
-            op_node.p("padding", (0, 0)),
-            op_node.p("dilation", (1, 1)),
-            graph.dtype,
-            bool(op_node.p("ceil_mode", False)),
-            bool(op_node.p("count_include_pad", False)),
-            op_node.p("divisor_override"),
+        req = _make_request(node_index, op_node, graph, (input_node,))
+        req.params["kernel_size"] = op_node.p("kernel_size", (1, 1))
+        req.params["stride"] = op_node.p("stride", (1, 1))
+        req.params["padding"] = op_node.p("padding", (0, 0))
+        req.params["dilation"] = op_node.p("dilation", (1, 1))
+        req.params["ceil_mode"] = bool(op_node.p("ceil_mode", False))
+        req.params["count_include_pad"] = bool(
+            op_node.p("count_include_pad", False)
         )
+        req.params["divisor_override"] = op_node.p("divisor_override")
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1431,20 +846,17 @@ class Pool3dHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node = op_node.inputs[0]
-        return self._ctx.write_pool3d_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            op_node.output_shape,
-            op_node.p("kernel_size", (1, 1, 1)),
-            op_node.p("stride", (1, 1, 1)),
-            op_node.p("padding", (0, 0, 0)),
-            op_node.p("dilation", (1, 1, 1)),
-            graph.dtype,
-            bool(op_node.p("ceil_mode", False)),
-            bool(op_node.p("count_include_pad", False)),
-            op_node.p("divisor_override"),
+        req = _make_request(node_index, op_node, graph, (input_node,))
+        req.params["kernel_size"] = op_node.p("kernel_size", (1, 1, 1))
+        req.params["stride"] = op_node.p("stride", (1, 1, 1))
+        req.params["padding"] = op_node.p("padding", (0, 0, 0))
+        req.params["dilation"] = op_node.p("dilation", (1, 1, 1))
+        req.params["ceil_mode"] = bool(op_node.p("ceil_mode", False))
+        req.params["count_include_pad"] = bool(
+            op_node.p("count_include_pad", False)
         )
+        req.params["divisor_override"] = op_node.p("divisor_override")
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1465,16 +877,12 @@ class Pool2dBackwardHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         grad_output_node, input_node = op_node.inputs
-        return self._ctx.write_adaptive_avg_pool2d_backward_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[grad_output_node],
-            graph.shapes[input_node],
-            op_node.output_shape,
-            op_node.p("kernel_size", (1, 1)),
-            op_node.p("stride", (1, 1)),
-            graph.dtype,
+        req = _make_request(
+            node_index, op_node, graph, (grad_output_node, input_node)
         )
+        req.params["kernel_size"] = op_node.p("kernel_size", (1, 1))
+        req.params["stride"] = op_node.p("stride", (1, 1))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1490,20 +898,17 @@ class Pool1dHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node = op_node.inputs[0]
-        return self._ctx.write_pool1d_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            op_node.output_shape,
-            op_node.p("kernel_size", 1),
-            op_node.p("stride", 1),
-            op_node.p("padding", 0),
-            op_node.p("dilation", 1),
-            graph.dtype,
-            bool(op_node.p("ceil_mode", False)),
-            bool(op_node.p("count_include_pad", False)),
-            op_node.p("divisor_override"),
+        req = _make_request(node_index, op_node, graph, (input_node,))
+        req.params["kernel_size"] = op_node.p("kernel_size", 1)
+        req.params["stride"] = op_node.p("stride", 1)
+        req.params["padding"] = op_node.p("padding", 0)
+        req.params["dilation"] = op_node.p("dilation", 1)
+        req.params["ceil_mode"] = bool(op_node.p("ceil_mode", False))
+        req.params["count_include_pad"] = bool(
+            op_node.p("count_include_pad", False)
         )
+        req.params["divisor_override"] = op_node.p("divisor_override")
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1525,20 +930,15 @@ class Col2imHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node = op_node.inputs[0]
-        return self._ctx.write_col2im_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            op_node.output_shape,
-            op_node.p("output_size", (1, 1)),
-            op_node.p("kernel_size", (1, 1)),
-            op_node.p("dilation", (1, 1)),
-            op_node.p("padding", (0, 0)),
-            op_node.p("stride", (1, 1)),
-            graph.dtype,
-            op_node.p("out_blocks_h", 1),
-            op_node.p("out_blocks_w", 1),
-        )
+        req = _make_request(node_index, op_node, graph, (input_node,))
+        req.params["output_size"] = op_node.p("output_size", (1, 1))
+        req.params["kernel_size"] = op_node.p("kernel_size", (1, 1))
+        req.params["dilation"] = op_node.p("dilation", (1, 1))
+        req.params["padding"] = op_node.p("padding", (0, 0))
+        req.params["stride"] = op_node.p("stride", (1, 1))
+        req.params["out_blocks_h"] = op_node.p("out_blocks_h", 1)
+        req.params["out_blocks_w"] = op_node.p("out_blocks_w", 1)
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1601,16 +1001,11 @@ class BatchNormHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node = op_node.inputs[0]
-        return self._ctx.write_batch_norm_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            op_node.output_shape,
-            graph.dtype,
-            float(op_node.p("eps", 1e-5)),
-            bool(op_node.p("has_weight", False)),
-            bool(op_node.p("has_bias", False)),
-        )
+        req = _make_request(node_index, op_node, graph, (input_node,))
+        req.params["eps"] = float(op_node.p("eps", 1e-5))
+        req.params["has_weight"] = bool(op_node.p("has_weight", False))
+        req.params["has_bias"] = bool(op_node.p("has_bias", False))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1625,13 +1020,8 @@ class PdistHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node = op_node.inputs[0]
-        return self._ctx.write_pdist_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            op_node.output_shape,
-            graph.dtype,
-        )
+        req = _make_request(node_index, op_node, graph, (input_node,))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1651,14 +1041,8 @@ class CdistHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         x1_node, x2_node = op_node.inputs
-        return self._ctx.write_cdist_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[x1_node],
-            graph.shapes[x2_node],
-            op_node.output_shape,
-            graph.dtype,
-        )
+        req = _make_request(node_index, op_node, graph, (x1_node, x2_node))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1686,19 +1070,13 @@ class Conv1dHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, weight_node, *_ = op_node.inputs
-        return self._ctx.write_conv1d_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            graph.shapes[weight_node],
-            op_node.output_shape,
-            op_node.p("stride", 1),
-            op_node.p("padding", 0),
-            op_node.p("dilation", 1),
-            op_node.p("groups", 1),
-            graph.dtype,
-            bool(op_node.p("has_bias", False)),
-        )
+        req = _make_request(node_index, op_node, graph, (input_node, weight_node))
+        req.params["stride"] = op_node.p("stride", 1)
+        req.params["padding"] = op_node.p("padding", 0)
+        req.params["dilation"] = op_node.p("dilation", 1)
+        req.params["groups"] = op_node.p("groups", 1)
+        req.params["has_bias"] = bool(op_node.p("has_bias", False))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1749,20 +1127,14 @@ class Conv2dHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, weight_node, *_ = op_node.inputs
-        return self._ctx.write_conv2d_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            graph.shapes[weight_node],
-            op_node.output_shape,
-            bool(op_node.p("transposed", False)),
-            op_node.p("stride", (1, 1)),
-            op_node.p("padding", (0, 0)),
-            op_node.p("dilation", (1, 1)),
-            op_node.p("groups", 1),
-            graph.dtype,
-            bool(op_node.p("has_bias", False)),
-        )
+        req = _make_request(node_index, op_node, graph, (input_node, weight_node))
+        req.params["transposed"] = bool(op_node.p("transposed", False))
+        req.params["stride"] = op_node.p("stride", (1, 1))
+        req.params["padding"] = op_node.p("padding", (0, 0))
+        req.params["dilation"] = op_node.p("dilation", (1, 1))
+        req.params["groups"] = op_node.p("groups", 1)
+        req.params["has_bias"] = bool(op_node.p("has_bias", False))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1822,21 +1194,12 @@ class AddmmHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, mat1_node, mat2_node = op_node.inputs
-        return self._ctx.write_addmm_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            graph.shapes[op_node.node],
-            graph.shapes[mat1_node],
-            graph.shapes[mat2_node],
-            graph.strides[input_node],
-            graph.strides[mat1_node],
-            graph.strides[mat2_node],
-            graph.strides[op_node.node],
-            graph.dtype,
-            alpha=float(op_node.p("alpha", 1.0)),
-            beta=float(op_node.p("beta", 1.0)),
+        req = _make_request(
+            node_index, op_node, graph, (input_node, mat1_node, mat2_node)
         )
+        req.params["alpha"] = float(op_node.p("alpha", 1.0))
+        req.params["beta"] = float(op_node.p("beta", 1.0))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1868,21 +1231,12 @@ class AddbmmHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, batch1_node, batch2_node = op_node.inputs
-        return self._ctx.write_addbmm_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            graph.shapes[op_node.node],
-            graph.shapes[batch1_node],
-            graph.shapes[batch2_node],
-            graph.strides[input_node],
-            graph.strides[batch1_node],
-            graph.strides[batch2_node],
-            graph.strides[op_node.node],
-            graph.dtype,
-            alpha=float(op_node.p("alpha", 1.0)),
-            beta=float(op_node.p("beta", 1.0)),
+        req = _make_request(
+            node_index, op_node, graph, (input_node, batch1_node, batch2_node)
         )
+        req.params["alpha"] = float(op_node.p("alpha", 1.0))
+        req.params["beta"] = float(op_node.p("beta", 1.0))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1924,21 +1278,12 @@ class AddmvHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, mat_node, vec_node = op_node.inputs
-        return self._ctx.write_addmv_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            graph.shapes[op_node.node],
-            graph.shapes[mat_node],
-            graph.shapes[vec_node],
-            graph.strides[input_node],
-            graph.strides[mat_node],
-            graph.strides[vec_node],
-            graph.strides[op_node.node],
-            graph.dtype,
-            alpha=float(op_node.p("alpha", 1.0)),
-            beta=float(op_node.p("beta", 1.0)),
+        req = _make_request(
+            node_index, op_node, graph, (input_node, mat_node, vec_node)
         )
+        req.params["alpha"] = float(op_node.p("alpha", 1.0))
+        req.params["beta"] = float(op_node.p("beta", 1.0))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -1972,21 +1317,12 @@ class AddrHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         input_node, vec1_node, vec2_node = op_node.inputs
-        return self._ctx.write_addr_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[input_node],
-            graph.shapes[op_node.node],
-            graph.shapes[vec1_node],
-            graph.shapes[vec2_node],
-            graph.strides[input_node],
-            graph.strides[vec1_node],
-            graph.strides[vec2_node],
-            graph.strides[op_node.node],
-            graph.dtype,
-            alpha=float(op_node.p("alpha", 1.0)),
-            beta=float(op_node.p("beta", 1.0)),
+        req = _make_request(
+            node_index, op_node, graph, (input_node, vec1_node, vec2_node)
         )
+        req.params["alpha"] = float(op_node.p("alpha", 1.0))
+        req.params["beta"] = float(op_node.p("beta", 1.0))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
@@ -2020,15 +1356,8 @@ class MatmulHandler(KindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         lhs, rhs = op_node.inputs
-        return self._ctx.write_matmul_kernel(
-            node_index,
-            op_node.spec,
-            graph.shapes[lhs],
-            graph.shapes[rhs],
-            graph.strides[lhs],
-            graph.strides[rhs],
-            graph.dtype,
-        )
+        req = _make_request(node_index, op_node, graph, (lhs, rhs))
+        return self._ctx.emit_kernel(op_node.spec.kind, req)
 
     def infer_output_shape(
         self,
