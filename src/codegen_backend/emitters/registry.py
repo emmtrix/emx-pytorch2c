@@ -4,6 +4,7 @@ from typing import Dict, List
 
 from c_ref_backend.cffi_bindings import RefBackendError
 from codegen_backend.emitters.base import KindEmitter, KindEmitterBase
+from codegen_backend.emitters.elementwise import ElementwiseEmitter
 from codegen_backend.kinds import KernelEmitRequest
 from codegen_backend.specs import OpKind
 
@@ -16,22 +17,6 @@ class TemporaryEmitter(KindEmitterBase):
         from codegen_backend import backend as backend_module
 
         kind = self._kind
-        if kind in {
-            OpKind.BINARY,
-            OpKind.UNARY,
-            OpKind.WHERE,
-            OpKind.FILL,
-        }:
-            return backend_module._write_elementwise_kernel(
-                req.node_index,
-                req.op_node,
-                req.output_shape,
-                req.input_shapes,
-                req.input_strides,
-                req.input_dtypes,
-                req.output_strides,
-                req.dtype,
-            )
         if kind == OpKind.ARANGE:
             return backend_module._write_arange_kernel(
                 req.node_index,
@@ -466,4 +451,16 @@ class TemporaryEmitter(KindEmitterBase):
 
 
 def build_kind_emitters() -> Dict[OpKind, KindEmitter]:
-    return {kind: TemporaryEmitter(kind) for kind in OpKind}
+    elementwise_emitter = ElementwiseEmitter()
+    elementwise_kinds = {
+        OpKind.BINARY,
+        OpKind.FILL,
+        OpKind.UNARY,
+        OpKind.WHERE,
+    }
+    return {
+        kind: elementwise_emitter
+        if kind in elementwise_kinds
+        else TemporaryEmitter(kind)
+        for kind in OpKind
+    }
