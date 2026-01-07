@@ -12,6 +12,10 @@ This project generates simple, correct, generic, and easily analyzable C code fr
 
 * Performance optimization of the generated C code
 
+## Features
+
+* Supported operators (codegen backend): see [`tests/list_aten_core_ops_ref.md`](tests/list_aten_core_ops_ref.md).
+
 ## Setup
 
 ```bash
