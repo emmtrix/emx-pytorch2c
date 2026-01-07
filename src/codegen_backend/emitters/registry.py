@@ -3,8 +3,13 @@ from __future__ import annotations
 from typing import Dict, List
 
 from c_ref_backend.cffi_bindings import RefBackendError
+from codegen_backend.emitters.arange import ArangeEmitter
 from codegen_backend.emitters.base import KindEmitter, KindEmitterBase
 from codegen_backend.emitters.elementwise import ElementwiseEmitter
+from codegen_backend.emitters.flip import FlipEmitter
+from codegen_backend.emitters.pad import PadEmitter
+from codegen_backend.emitters.resize import ResizeEmitter
+from codegen_backend.emitters.view import ViewEmitter
 from codegen_backend.kinds import KernelEmitRequest
 from codegen_backend.specs import OpKind
 
@@ -17,68 +22,6 @@ class TemporaryEmitter(KindEmitterBase):
         from codegen_backend import backend as backend_module
 
         kind = self._kind
-        if kind == OpKind.ARANGE:
-            return backend_module._write_arange_kernel(
-                req.node_index,
-                req.op_node,
-                req.output_shape,
-                req.output_strides,
-                req.dtype,
-            )
-        if kind == OpKind.FLIP:
-            input_shape = req.input_shapes[0]
-            input_strides = req.input_strides[0]
-            input_dtype = req.input_dtypes[0]
-            return backend_module._write_flip_kernel(
-                req.node_index,
-                req.op_node,
-                input_shape,
-                input_strides,
-                input_dtype,
-                req.output_shape,
-                req.output_strides,
-                req.dtype,
-            )
-        if kind == OpKind.PAD:
-            input_shape = req.input_shapes[0]
-            input_strides = req.input_strides[0]
-            input_dtype = req.input_dtypes[0]
-            return backend_module._write_constant_pad_kernel(
-                req.node_index,
-                req.op_node,
-                input_shape,
-                input_strides,
-                input_dtype,
-                req.output_shape,
-                req.output_strides,
-                req.dtype,
-            )
-        if kind == OpKind.VIEW:
-            input_shape = req.input_shapes[0]
-            input_dtype = req.input_dtypes[0]
-            return backend_module._write_view_kernel(
-                req.node_index,
-                req.op_node,
-                input_shape,
-                input_dtype,
-                req.output_shape,
-                req.output_strides,
-                req.dtype,
-            )
-        if kind == OpKind.RESIZE:
-            input_shape = req.input_shapes[0]
-            input_strides = req.input_strides[0]
-            input_dtype = req.input_dtypes[0]
-            return backend_module._write_resize_kernel(
-                req.node_index,
-                req.op_node,
-                input_shape,
-                input_strides,
-                input_dtype,
-                req.output_shape,
-                req.output_strides,
-                req.dtype,
-            )
         if kind == OpKind.EMPTY_STRIDED:
             return backend_module._write_empty_strided_kernel(
                 req.node_index,
@@ -458,9 +401,18 @@ def build_kind_emitters() -> Dict[OpKind, KindEmitter]:
         OpKind.UNARY,
         OpKind.WHERE,
     }
+    kind_emitters: Dict[OpKind, KindEmitter] = {
+        OpKind.ARANGE: ArangeEmitter(),
+        OpKind.FLIP: FlipEmitter(),
+        OpKind.PAD: PadEmitter(),
+        OpKind.VIEW: ViewEmitter(),
+        OpKind.RESIZE: ResizeEmitter(),
+    }
     return {
-        kind: elementwise_emitter
-        if kind in elementwise_kinds
-        else TemporaryEmitter(kind)
+        kind: (
+            elementwise_emitter
+            if kind in elementwise_kinds
+            else kind_emitters.get(kind, TemporaryEmitter(kind))
+        )
         for kind in OpKind
     }
