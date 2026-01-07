@@ -16,6 +16,7 @@ onnx2torch = pytest.importorskip("onnx2torch")
 
 REFERENCE_DIR = Path(__file__).resolve().parent / "onnx2c_refs"
 ONNX_DIR = Path(__file__).resolve().parent / "onnx2c"
+WEIGHT_TRUNCATE_AFTER = 10
 ONNX_CASES = [
     pytest.param(
         ONNX_DIR / "test_onnx01_add_bias_tiny.onnx",
@@ -73,6 +74,7 @@ def _onnx_to_source(onnx_path: Path, tmp_path: Path) -> str:
         example_inputs,
         str(out_path),
         function_name="entry",
+        truncate_weights_after=WEIGHT_TRUNCATE_AFTER,
     ).lstrip()
 
 

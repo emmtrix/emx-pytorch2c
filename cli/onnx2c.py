@@ -146,6 +146,15 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
             "Set to 0 to disable the self-test."
         ),
     )
+    parser.add_argument(
+        "--truncate-weights-after",
+        type=int,
+        default=None,
+        help=(
+            "Truncate inline weight initializers after this many values (emit '...'). "
+            "Intended for golden test fixtures."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -176,6 +185,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         example_inputs,
         str(out_path),
         function_name=args.function_name,
+        truncate_weights_after=args.truncate_weights_after,
     )
     return 0
 

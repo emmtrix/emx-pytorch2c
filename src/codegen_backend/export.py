@@ -140,8 +140,64 @@ def _emit_initializer_lines(
     return lines
 
 
+def _emit_initializer_lines_truncated(
+    values: List[str],
+    shape: List[int],
+    truncate_after: int,
+    indent: str = "    ",
+    per_line: int = 8,
+    start_index: int = 0,
+    emitted: int = 0,
+) -> tuple[List[str], int, int, bool]:
+    if len(shape) == 1:
+        items: List[str] = []
+        truncated = False
+        index = start_index
+        for _ in range(shape[0]):
+            if emitted >= truncate_after:
+                items.append("...")
+                truncated = True
+                break
+            items.append(values[index])
+            index += 1
+            emitted += 1
+        lines: List[str] = []
+        for item_index in range(0, len(items), per_line):
+            chunk = ", ".join(items[item_index : item_index + per_line])
+            lines.append(f"{indent}{chunk},")
+        if lines:
+            lines[-1] = lines[-1].rstrip(",")
+        return lines, index, emitted, truncated
+    sub_shape = shape[1:]
+    sub_size = prod(sub_shape)
+    lines: List[str] = []
+    index = start_index
+    truncated = False
+    for _ in range(shape[0]):
+        lines.append(f"{indent}{{")
+        sub_lines, index, emitted, sub_truncated = _emit_initializer_lines_truncated(
+            values,
+            sub_shape,
+            truncate_after,
+            indent + "    ",
+            per_line,
+            index,
+            emitted,
+        )
+        lines.extend(sub_lines)
+        lines.append(f"{indent}}},")
+        if sub_truncated:
+            truncated = True
+            break
+    if lines:
+        lines[-1] = lines[-1].rstrip(",")
+    return lines, index, emitted, truncated
+
+
 def _emit_inline_weights(
-    weights: Dict[str, torch.Tensor], graph_dtype: _CodegenDType
+    weights: Dict[str, torch.Tensor],
+    graph_dtype: _CodegenDType,
+    truncate_weights_after: int | None = None,
 ) -> List[str]:
     lines: List[str] = []
     for name, tensor in weights.items():
@@ -151,7 +207,13 @@ def _emit_inline_weights(
         values = [_format_weight_value(value, flat.dtype) for value in flat.tolist()]
         dims = "".join(f"[{dim}]" for dim in shape)
         lines.append(f"static const {c_type} {name}{dims} = {{")
-        lines.extend(_emit_initializer_lines(values, shape))
+        if truncate_weights_after is not None and len(values) > truncate_weights_after:
+            truncated_lines, _, _, _ = _emit_initializer_lines_truncated(
+                values, shape, truncate_weights_after
+            )
+            lines.extend(truncated_lines)
+        else:
+            lines.extend(_emit_initializer_lines(values, shape))
         lines.append("};")
         lines.append("")
     return lines
@@ -204,7 +266,10 @@ def export_generic_c(
     example_inputs: Sequence[object],
     out_path: str,
     function_name: str = "model_run",
+    truncate_weights_after: int | None = None,
 ) -> str:
+    if truncate_weights_after is not None and truncate_weights_after < 1:
+        raise ValueError("truncate_weights_after must be >= 1")
     (
         lifted_gm,
         lifted_inputs,
@@ -217,7 +282,9 @@ def export_generic_c(
         weight_placeholders[node]: tensor
         for node, tensor in zip(weight_placeholders.keys(), weight_tensors)
     }
-    weight_lines = _emit_inline_weights(weights, graph.dtype)
+    weight_lines = _emit_inline_weights(
+        weights, graph.dtype, truncate_weights_after=truncate_weights_after
+    )
     source = _insert_inline_weights(source, weight_lines)
     wrapper = _emit_model_wrapper(graph, weight_placeholders, function_name)
     final_source = source.rstrip() + "\n\n" + wrapper
