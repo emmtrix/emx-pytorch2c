@@ -43,9 +43,25 @@ _GROUP_REGISTRY: GroupRegistry | None = None
 def get_group_registry() -> GroupRegistry:
     global _GROUP_REGISTRY
     if _GROUP_REGISTRY is None:
-        from codegen_backend.groups.builtin.legacy_backend import LegacyBackendGroup
+        from codegen_backend.groups.builtin.conv.group import ConvGroup
+        from codegen_backend.groups.builtin.elementwise.group import ElementwiseGroup
+        from codegen_backend.groups.builtin.embedding.group import EmbeddingGroup
+        from codegen_backend.groups.builtin.legacy_backend import BaseBackendGroup
+        from codegen_backend.groups.builtin.pooling.group import PoolingGroup
+        from codegen_backend.groups.builtin.reductions.group import ReductionsGroup
+        from codegen_backend.groups.builtin.tensor.group import TensorGroup
 
-        _GROUP_REGISTRY = GroupRegistry(groups=[LegacyBackendGroup()])
+        _GROUP_REGISTRY = GroupRegistry(
+            groups=[
+                BaseBackendGroup(),
+                ElementwiseGroup(),
+                ReductionsGroup(),
+                PoolingGroup(),
+                ConvGroup(),
+                EmbeddingGroup(),
+                TensorGroup(),
+            ]
+        )
     return _GROUP_REGISTRY
 
 

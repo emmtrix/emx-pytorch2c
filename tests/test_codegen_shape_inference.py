@@ -5,8 +5,7 @@ from types import SimpleNamespace
 import torch.fx
 
 from codegen_backend.graph import _OpNode
-from codegen_backend.kinds import build_kind_handlers
-from codegen_backend.ops_registry import SUPPORTED_OPS
+from codegen_backend.groups.registry import get_group_registry
 
 
 def _make_op_node(
@@ -22,7 +21,7 @@ def _make_op_node(
     output_node = graph.placeholder("out")
     return _OpNode(
         node=output_node,
-        spec=SUPPORTED_OPS[op_name],
+        spec=get_group_registry().merged_supported_ops()[op_name],
         inputs=inputs,
         output_shape=(),
         reduction_dims=reduction_dims,
@@ -32,7 +31,7 @@ def _make_op_node(
 
 
 def test_infer_output_shape_by_handler() -> None:
-    handlers = build_kind_handlers(SimpleNamespace())
+    handlers = get_group_registry().build_kind_handlers(SimpleNamespace())
     cases = [
         ("arange", [], {"start": 0, "end": 10, "step": 2}, None, False, (5,)),
         ("add", [(2, 3), (1, 3)], {}, None, False, (2, 3)),
