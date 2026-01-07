@@ -5,6 +5,7 @@ from typing import Iterable, List
 
 import torch
 
+from codegen_backend import codegen_generic_backend
 from codegen_backend.export import export_generic_c
 
 
@@ -76,6 +77,43 @@ def _trace_module(torch_module: torch.nn.Module) -> torch.fx.GraphModule:
     return torch.fx.GraphModule(torch_module, graph)
 
 
+def _random_input_like(example: torch.Tensor) -> torch.Tensor:
+    shape = tuple(example.shape)
+    dtype = example.dtype
+    if dtype.is_floating_point or dtype is torch.bfloat16:
+        return torch.randn(shape, dtype=dtype)
+    if dtype is torch.bool:
+        return torch.randint(0, 2, shape, dtype=torch.int8).to(dtype)
+    if dtype is torch.uint8:
+        return torch.randint(0, 8, shape, dtype=dtype)
+    return torch.randint(-8, 8, shape, dtype=dtype)
+
+
+def _random_inputs(example_inputs: Iterable[torch.Tensor]) -> List[torch.Tensor]:
+    return [_random_input_like(example) for example in example_inputs]
+
+
+def _run_self_test(
+    torch_module: torch.nn.Module,
+    example_inputs: Iterable[torch.Tensor],
+    runs: int,
+) -> None:
+    if runs < 0:
+        raise ValueError("self-test runs must be >= 0")
+    if runs == 0:
+        return
+    print(f"[onnx2c] running torch.compile self-test ({runs} random inputs)...")
+    compiled = torch.compile(torch_module, backend=codegen_generic_backend)
+    with torch.no_grad():
+        for run_index in range(1, runs + 1):
+            random_inputs = _random_inputs(example_inputs)
+            compiled_output = compiled(*random_inputs)
+            eager_output = torch_module(*random_inputs)
+            torch.testing.assert_close(compiled_output, eager_output)
+            print(f"[onnx2c] self-test run {run_index}/{runs} OK")
+    print("[onnx2c] self-test completed.")
+
+
 def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Convert an ONNX model to C code using the codegen backend."
@@ -98,6 +136,15 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         "--function-name",
         default="entry",
         help="Name for the generated C entry function.",
+    )
+    parser.add_argument(
+        "--self-test-runs",
+        type=int,
+        default=1,
+        help=(
+            "Number of random inputs to validate torch.compile output against eager. "
+            "Set to 0 to disable the self-test."
+        ),
     )
     return parser.parse_args(argv)
 
@@ -122,6 +169,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     example_inputs = _collect_example_inputs(onnx_module, model, args.default_dim)
     torch_module = onnx2torch_module.convert(model)
     torch_module.eval()
+    _run_self_test(torch_module, example_inputs, args.self_test_runs)
     graph_module = _trace_module(torch_module)
     export_generic_c(
         graph_module,
