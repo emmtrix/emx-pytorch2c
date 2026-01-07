@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC
-from typing import List, Protocol, Sequence, Tuple
+from typing import Dict, List, Protocol, Sequence, Tuple
 
 import torch
 
@@ -156,6 +156,20 @@ def emit_footer(output_shape: Sequence[int], indent: str) -> List[str]:
     return lines
 
 
+def map_reduction_dims(
+    input_rank: int, reduction_dims: Sequence[int]
+) -> Dict[int, int]:
+    dim_to_output: Dict[int, int] = {}
+    output_idx = 0
+    reduction_set = set(reduction_dims)
+    for dim in range(input_rank):
+        if dim in reduction_set:
+            continue
+        dim_to_output[dim] = output_idx
+        output_idx += 1
+    return dim_to_output
+
+
 class KindEmitter(Protocol):
     def emit(self, req: KernelEmitRequest) -> List[str]: ...
 
@@ -165,3 +179,4 @@ class KindEmitterBase(ABC):
     emit_footer = staticmethod(emit_footer)
     emit_input_access = staticmethod(emit_input_access)
     emit_output_access = staticmethod(emit_output_access)
+    map_reduction_dims = staticmethod(map_reduction_dims)

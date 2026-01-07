@@ -4,10 +4,13 @@ from typing import Dict, List
 
 from c_ref_backend.cffi_bindings import RefBackendError
 from codegen_backend.emitters.arange import ArangeEmitter
+from codegen_backend.emitters.argreduction import ArgReductionEmitter
 from codegen_backend.emitters.base import KindEmitter, KindEmitterBase
 from codegen_backend.emitters.elementwise import ElementwiseEmitter
 from codegen_backend.emitters.flip import FlipEmitter
+from codegen_backend.emitters.matmul import MatmulEmitter
 from codegen_backend.emitters.pad import PadEmitter
+from codegen_backend.emitters.reduction import ReductionEmitter
 from codegen_backend.emitters.resize import ResizeEmitter
 from codegen_backend.emitters.view import ViewEmitter
 from codegen_backend.kinds import KernelEmitRequest
@@ -41,70 +44,6 @@ class TemporaryEmitter(KindEmitterBase):
                 input_dtype,
                 req.output_shape,
                 req.output_strides,
-                req.dtype,
-            )
-        if kind == OpKind.REDUCTION:
-            if req.op_spec.name == "std":
-                return backend_module._write_std_kernel(
-                    req.node_index,
-                    req.op_spec,
-                    req.input_shapes[0],
-                    req.input_strides[0],
-                    req.output_shape,
-                    req.output_strides,
-                    req.reduction_dims or (),
-                    bool(req.keepdim),
-                    req.dtype,
-                    unbiased=bool(req.params.get("unbiased", True)),
-                )
-            if req.op_spec.name == "var":
-                return backend_module._write_var_kernel(
-                    req.node_index,
-                    req.op_spec,
-                    req.input_shapes[0],
-                    req.input_strides[0],
-                    req.output_shape,
-                    req.output_strides,
-                    req.reduction_dims or (),
-                    bool(req.keepdim),
-                    req.dtype,
-                    unbiased=bool(req.params.get("unbiased", True)),
-                )
-            if req.op_spec.name == "norm":
-                return backend_module._write_norm_kernel(
-                    req.node_index,
-                    req.op_spec,
-                    req.input_shapes[0],
-                    req.input_strides[0],
-                    req.output_shape,
-                    req.output_strides,
-                    req.reduction_dims or (),
-                    bool(req.keepdim),
-                    req.dtype,
-                    p_value=float(req.params.get("p_value", 2.0)),
-                )
-            return backend_module._write_reduction_kernel(
-                req.node_index,
-                req.op_spec,
-                req.input_shapes[0],
-                req.input_strides[0],
-                req.output_shape,
-                req.output_strides,
-                req.reduction_dims or (),
-                bool(req.keepdim),
-                req.dtype,
-            )
-        if kind == OpKind.ARG_REDUCTION:
-            return backend_module._write_argminmax_kernel(
-                req.node_index,
-                req.op_spec,
-                req.input_shapes[0],
-                req.input_strides[0],
-                req.output_shape,
-                req.output_strides,
-                req.reduction_dims or (),
-                bool(req.keepdim),
-                bool(req.params.get("reduce_all", False)),
                 req.dtype,
             )
         if kind == OpKind.SOFTMAX:
@@ -380,16 +319,6 @@ class TemporaryEmitter(KindEmitterBase):
                 alpha=float(req.params.get("alpha", 1.0)),
                 beta=float(req.params.get("beta", 1.0)),
             )
-        if kind == OpKind.MATMUL:
-            return backend_module._write_matmul_kernel(
-                req.node_index,
-                req.op_spec,
-                req.input_shapes[0],
-                req.input_shapes[1],
-                req.input_strides[0],
-                req.input_strides[1],
-                req.dtype,
-            )
         raise RefBackendError(f"Unsupported kernel kind: {kind.value}")
 
 
@@ -403,8 +332,11 @@ def build_kind_emitters() -> Dict[OpKind, KindEmitter]:
     }
     kind_emitters: Dict[OpKind, KindEmitter] = {
         OpKind.ARANGE: ArangeEmitter(),
+        OpKind.ARG_REDUCTION: ArgReductionEmitter(),
         OpKind.FLIP: FlipEmitter(),
+        OpKind.MATMUL: MatmulEmitter(),
         OpKind.PAD: PadEmitter(),
+        OpKind.REDUCTION: ReductionEmitter(),
         OpKind.VIEW: ViewEmitter(),
         OpKind.RESIZE: ResizeEmitter(),
     }
