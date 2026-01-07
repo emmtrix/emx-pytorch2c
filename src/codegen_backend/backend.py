@@ -30,17 +30,12 @@ from codegen_backend.emitters.elementwise import (
     _FLOAT_ONLY_UNARY_OPS,
     _PARAMETRIC_UNARY_OPS,
 )
-from codegen_backend.emitters.registry import build_kind_emitters
 from codegen_backend.indexing import (
     _contiguous_strides,
     _emit_strided_access,
     _format_strided_access,
 )
-from codegen_backend.kinds import (
-    HandlerContext,
-    KernelEmitRequest,
-    build_kind_handlers,
-)
+from codegen_backend.kinds import HandlerContext, build_kind_handlers
 from codegen_backend.ops_registry import SUPPORTED_OPS
 from codegen_backend.param_normalize import (
     normalize_bool,
@@ -198,7 +193,8 @@ def _write_generic_source(graph: _GenericGraph) -> str:
                 "codegen backend does not support kind "
                 f"'{op_node.spec.kind.value}'"
             )
-        kernel_lines = handler.emit_kernel(index, op_node, graph)
+        handler.postprocess(op_node, graph)
+        kernel_lines = handler.emit(index, op_node, graph)
         kernels.append("\n".join(kernel_lines))
     input_args = ", ".join(
         [
@@ -397,7 +393,7 @@ def _infer_output_shape(
         raise RefBackendError(
             f"codegen backend does not support kind '{op_node.spec.kind.value}'"
         )
-    return handler.infer_output_shape(op_node, input_shapes)
+    return handler.infer_shapes(op_node, input_shapes)
 
 
 def _normalize_flip_dims(
@@ -4644,226 +4640,31 @@ def _analyze_generic_graph(
                     raise RefBackendError(f"Unsupported call_function: {node.target}")
                 op_spec = target_info.op_spec
                 inplace_input = target_info.inplace_arg_index
-            if op_spec.kind == OpKind.ARANGE:
-                op_node, dtype_info = _handle_arange_node(
-                    node,
-                    op_spec,
-                    dtype_info,
-                    shapes,
-                    strides,
-                    dtypes,
-                    scalar_values,
+            handler = _KIND_HANDLERS.get(op_spec.kind)
+            if handler is None:
+                raise RefBackendError(
+                    "codegen backend does not support kind "
+                    f"'{op_spec.kind.value}'"
                 )
-                op_nodes.append(op_node)
+            build_result = handler.build_op_node(
+                node,
+                op_spec,
+                dtype_info,
+                shapes,
+                strides,
+                dtypes,
+                scalar_values,
+                inplace_input,
+            )
+            if build_result is not None:
+                op_nodes.append(build_result.op_node)
+                if build_result.dtype_info is not None:
+                    dtype_info = build_result.dtype_info
                 continue
             if dtype_info is None:
                 raise RefBackendError(
                     "codegen backend requires at least one tensor input or a factory op dtype"
                 )
-            if op_spec.kind == OpKind.CONCAT:
-                op_nodes.append(
-                    _handle_concat_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            if op_spec.kind == OpKind.POOL1D:
-                op_nodes.append(
-                    _handle_pool1d_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            if op_spec.kind == OpKind.POOL2D:
-                op_nodes.append(
-                    _handle_pool2d_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            if op_spec.kind == OpKind.POOL3D:
-                op_nodes.append(
-                    _handle_pool3d_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            if op_spec.kind == OpKind.POOL2D_BACKWARD:
-                op_nodes.append(
-                    _handle_adaptive_avg_pool2d_backward_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            if op_spec.kind == OpKind.COL2IM:
-                op_nodes.append(
-                    _handle_col2im_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            if op_spec.kind == OpKind.BATCH_NORM:
-                op_nodes.append(
-                    _handle_batch_norm_node(
-                        node,
-                        op_spec,
-                        dtype_info,
-                        shapes,
-                        strides,
-                        dtypes,
-                        scalar_values,
-                    )
-                )
-                continue
-            if op_spec.kind == OpKind.PDIST:
-                op_nodes.append(
-                    _handle_pdist_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            if op_spec.kind == OpKind.CDIST:
-                op_nodes.append(
-                    _handle_cdist_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            if op_spec.kind == OpKind.CONV1D:
-                op_nodes.append(
-                    _handle_conv1d_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            if op_spec.kind == OpKind.CONV2D:
-                op_nodes.append(
-                    _handle_conv2d_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            if op_spec.kind == OpKind.DIAGONAL:
-                op_nodes.append(
-                    _handle_diagonal_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            elif op_spec.kind in {
-                OpKind.ADDMM,
-                OpKind.ADDBMM,
-                OpKind.ADDMV,
-                OpKind.ADDR,
-            }:
-                op_nodes.append(
-                    _handle_addmm_like_node(
-                        node,
-                        op_spec,
-                        dtype_info,
-                        shapes,
-                        strides,
-                        dtypes,
-                        inplace_input,
-                    )
-                )
-                continue
-            elif op_spec.kind == OpKind.SOFTMAX:
-                op_nodes.append(
-                    _handle_softmax_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            elif op_spec.kind == OpKind.FLIP:
-                op_nodes.append(
-                    _handle_flip_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            elif op_spec.kind == OpKind.CUMSUM:
-                op_nodes.append(
-                    _handle_cumsum_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            elif op_spec.kind == OpKind.PAD:
-                op_nodes.append(
-                    _handle_constant_pad_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            elif op_spec.kind == OpKind.GATHER:
-                op_nodes.append(
-                    _handle_gather_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            elif op_spec.kind == OpKind.EMBEDDING:
-                op_nodes.append(
-                    _handle_embedding_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            elif op_spec.kind == OpKind.EMBEDDING_BAG:
-                op_nodes.append(
-                    _handle_embedding_bag_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            elif op_spec.kind == OpKind.VIEW:
-                op_nodes.append(
-                    _handle_view_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            elif op_spec.kind == OpKind.EMPTY_STRIDED:
-                op_nodes.append(
-                    _handle_empty_strided_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            elif op_spec.name == "_to_copy":
-                op_nodes.append(
-                    _handle_to_copy_node(
-                        node, op_spec, dtype_info, shapes, strides, dtypes
-                    )
-                )
-                continue
-            elif op_spec.kind == OpKind.FILL:
-                op_nodes.append(
-                    _handle_fill_node(
-                        node,
-                        op_spec,
-                        dtype_info,
-                        shapes,
-                        strides,
-                        dtypes,
-                        inplace_input,
-                    )
-                )
-                continue
-            elif op_spec.name == "resize_":
-                op_nodes.append(
-                    _handle_resize_node(
-                        node,
-                        op_spec,
-                        dtype_info,
-                        shapes,
-                        strides,
-                        dtypes,
-                        inplace_input,
-                    )
-                )
-                continue
             reduction_dims: Tuple[int, ...] | None = None
             keepdim = False
             reduce_all = False
@@ -5281,6 +5082,7 @@ def _analyze_generic_graph(
                 keepdim=keepdim,
                 params=param_values,
             )
+            handler.validate(op_node, shape_input_shapes, input_dtypes, dtype_info)
             output_shape = _infer_output_shape(op_node, shape_input_shapes)
             op_node.output_shape = output_shape
             if out_arg is not None and shapes[out_arg] != output_shape:
@@ -5582,25 +5384,378 @@ def get_generic_source(
 
 
 class _KindHandlerContext(HandlerContext):
-    def __init__(self) -> None:
-        self._emitters = build_kind_emitters()
+    def handle_arange_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType | None,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        scalar_values: Dict[torch.fx.Node, object],
+    ) -> Tuple[_OpNode, _CodegenDType]:
+        return _handle_arange_node(
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            scalar_values,
+        )
 
-    def emit_kernel(self, kind: str, req: KernelEmitRequest) -> List[str]:
-        if isinstance(kind, OpKind):
-            resolved_kind = kind
-        else:
-            try:
-                resolved_kind = OpKind(kind)
-            except ValueError as exc:
-                raise RefBackendError(
-                    f"Unsupported kernel kind: {kind}"
-                ) from exc
-        emitter = self._emitters.get(resolved_kind)
-        if emitter is None:
-            raise RefBackendError(
-                f"Unsupported kernel kind: {resolved_kind.value}"
-            )
-        return emitter.emit(req)
+    def handle_concat_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_concat_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_pool1d_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_pool1d_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_pool2d_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_pool2d_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_pool3d_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_pool3d_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_pool2d_backward_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_adaptive_avg_pool2d_backward_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_col2im_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_col2im_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_batch_norm_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        scalar_values: Dict[torch.fx.Node, object],
+    ) -> _OpNode:
+        return _handle_batch_norm_node(
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            scalar_values,
+        )
+
+    def handle_pdist_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_pdist_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_cdist_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_cdist_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_conv1d_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_conv1d_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_conv2d_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_conv2d_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_diagonal_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_diagonal_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_addmm_like_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        inplace_input: int | None,
+    ) -> _OpNode:
+        return _handle_addmm_like_node(
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            inplace_input,
+        )
+
+    def handle_softmax_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_softmax_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_flip_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_flip_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_cumsum_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_cumsum_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_pad_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_constant_pad_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_gather_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_gather_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_embedding_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_embedding_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_embedding_bag_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_embedding_bag_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_view_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_view_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_empty_strided_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_empty_strided_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
+
+    def handle_fill_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        inplace_input: int | None,
+    ) -> _OpNode:
+        return _handle_fill_node(
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            inplace_input,
+        )
+
+    def handle_resize_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        inplace_input: int | None,
+    ) -> _OpNode:
+        return _handle_resize_node(
+            node,
+            op_spec,
+            dtype_info,
+            shapes,
+            strides,
+            dtypes,
+            inplace_input,
+        )
+
+    def handle_to_copy_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        shapes: Dict[torch.fx.Node, Tuple[int, ...]],
+        strides: Dict[torch.fx.Node, Tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+    ) -> _OpNode:
+        return _handle_to_copy_node(
+            node, op_spec, dtype_info, shapes, strides, dtypes
+        )
 
     def kernel_inputs(self, op_node: _OpNode) -> List[torch.fx.Node]:
         return _kernel_inputs(op_node)
