@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 import torch
 from codegen_backend import CodegenBackend
-from codegen_backend.backend import _emit_strided_access, _format_strided_access
+from codegen_backend.indexing import _emit_strided_access, _format_strided_access
 
 REFERENCE_DIR = Path(__file__).resolve().parent / "codegen_refs"
 BACKEND = CodegenBackend()

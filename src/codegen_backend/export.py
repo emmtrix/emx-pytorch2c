@@ -8,7 +8,8 @@ import torch
 import torch.fx
 
 from codegen_backend.errors import CodegenBackendError
-from codegen_backend.backend import CodegenBackend, _dtype_to_c_type, _input_c_type
+from codegen_backend.backend import CodegenBackend
+from codegen_backend.c_types import _dtype_to_c_type, _input_c_type
 from codegen_backend.dtypes import _CodegenDType
 from codegen_backend.graph import _GenericGraph
 
