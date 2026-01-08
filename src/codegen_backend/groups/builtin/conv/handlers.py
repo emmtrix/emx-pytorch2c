@@ -309,6 +309,7 @@ class Conv2dHandler(OpKindHandler):
                 "stride": op_node.p("stride", (1, 1)),
                 "padding": op_node.p("padding", (0, 0)),
                 "dilation": op_node.p("dilation", (1, 1)),
+                "output_padding": op_node.p("output_padding", (0, 0)),
                 "groups": op_node.p("groups", 1),
                 "has_bias": bool(op_node.p("has_bias", False)),
             },
@@ -557,14 +558,10 @@ class _BackendConv2dHandler(Conv2dHandler):
         weight_shape = shapes[weight_arg]
         if len(weight_shape) != 4:
             raise CodegenBackendError("codegen conv2d requires 4D weight tensors")
-        if bias_node is not None:
-            bias_shape = shapes[bias_node]
-            if len(bias_shape) != 1 or bias_shape[0] != weight_shape[0]:
-                raise CodegenBackendError(
-                    "codegen conv2d expects bias shape to match output channels"
-                )
-        if len(input_shape) != 4:
-            raise CodegenBackendError("codegen conv2d requires 4D input tensors")
+        if len(input_shape) not in (3, 4):
+            raise CodegenBackendError(
+                "codegen conv2d requires 3D or 4D input tensors"
+            )
         stride_pair = normalize_param(
             normalize_int_or_pair, "stride", stride
         )
@@ -590,6 +587,10 @@ class _BackendConv2dHandler(Conv2dHandler):
                 raise CodegenBackendError(
                     "codegen conv2d expects padding to be 'same', 'valid', or an int tuple"
                 )
+            if transposed_value:
+                raise CodegenBackendError(
+                    "codegen conv2d expects transposed padding to be an int tuple"
+                )
         else:
             if padding_pair[0] < 0 or padding_pair[1] < 0:
                 raise CodegenBackendError(
@@ -603,6 +604,16 @@ class _BackendConv2dHandler(Conv2dHandler):
             raise CodegenBackendError(
                 "codegen conv2d expects output_padding to be non-negative"
             )
+        if transposed_value and not isinstance(padding_pair, str):
+            if (
+                output_padding_pair[0]
+                >= max(stride_pair[0], dilation_pair[0])
+                or output_padding_pair[1]
+                >= max(stride_pair[1], dilation_pair[1])
+            ):
+                raise CodegenBackendError(
+                    "codegen conv2d expects output_padding to be smaller than stride or dilation"
+                )
         if groups <= 0:
             raise CodegenBackendError("codegen conv2d requires positive groups")
         inputs = (input_arg, weight_arg)

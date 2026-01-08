@@ -62,6 +62,10 @@ static const float weight_Gemm_network_output_bias[10] = {
 void node1_conv2d_f32(const float input[1][1][14][14], const float weight[20][1][5][5], float out[1][20][5][5]) {
     int64_t in_per_group = 1 / 1;
     int64_t out_per_group = 20 / 1;
+    int64_t out_pad_h = 0;
+    int64_t out_pad_w = 0;
+    (void)out_pad_h;
+    (void)out_pad_w;
     for (int64_t n = 0; n < 1; ++n) {
         for (int64_t oc = 0; oc < 20; ++oc) {
             int64_t group = oc / out_per_group;
@@ -109,6 +113,10 @@ void node2_relu_f32(const float a[1][20][5][5], float out[1][20][5][5]) {
 void node3_conv2d_f32(const float input[1][20][5][5], const float weight[12][20][3][3], float out[1][12][3][3]) {
     int64_t in_per_group = 20 / 1;
     int64_t out_per_group = 12 / 1;
+    int64_t out_pad_h = 0;
+    int64_t out_pad_w = 0;
+    (void)out_pad_h;
+    (void)out_pad_w;
     for (int64_t n = 0; n < 1; ++n) {
         for (int64_t oc = 0; oc < 12; ++oc) {
             int64_t group = oc / out_per_group;
