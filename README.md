@@ -18,6 +18,8 @@ emx-pytorch2c generates simple, correct, generic, and easily analyzable C code f
 * `torch.compile` backend for generating generic C code from PyTorch workloads.
 * Export utility for emitting standalone C sources from Python functions.
 * ONNX-to-C conversion via the `cli.onnx2c` command-line interface.
+* Supported dtypes for codegen graphs: `torch.float32`, `torch.int8`, `torch.int16`, `torch.int32`, `torch.uint8`, `torch.uint16`, `torch.uint32`, `torch.bool`.
+  * Index tensors for embedding/gather-style ops may also use `torch.int64`.
 
 ## Requirements
 
