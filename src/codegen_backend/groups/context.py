@@ -5,6 +5,7 @@ from typing import List, TYPE_CHECKING
 import torch
 
 from codegen_backend.backend_helpers import _kernel_inputs
+from codegen_backend.groups.builtin.elementwise.analysis import ElementwiseArgParser
 from codegen_backend.groups.builtin.reductions.args import ReductionsArgParser
 from codegen_backend.graph import _OpNode
 from codegen_backend.kinds import (
@@ -35,7 +36,13 @@ class _BackendKernelContext:
 
 
 class _BackendElementwiseContext(_BackendKernelContext):
-    pass
+    def __init__(self, backend: "CodegenBackend") -> None:
+        super().__init__(backend)
+        self._arg_parser = ElementwiseArgParser()
+
+    @property
+    def arg_parser(self) -> ElementwiseArgParser:
+        return self._arg_parser
 
 
 class _BackendReductionContext(_BackendKernelContext):
