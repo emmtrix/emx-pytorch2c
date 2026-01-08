@@ -24,6 +24,7 @@ from codegen_backend.emitters.diagonal import DiagonalEmitter
 from codegen_backend.emitters.empty_strided import EmptyStridedEmitter
 from codegen_backend.emitters.flip import FlipEmitter
 from codegen_backend.emitters.gather import GatherEmitter
+from codegen_backend.emitters.index_put import IndexPutEmitter
 from codegen_backend.emitters.index_select import IndexSelectEmitter
 from codegen_backend.emitters.linear import LinearEmitter
 from codegen_backend.emitters.matmul import MatmulEmitter
@@ -306,6 +307,20 @@ class GatherHandler(OpKindHandler):
         input_shapes: Sequence[Tuple[int, ...]],
     ) -> Tuple[int, ...]:
         return input_shapes[1]
+
+
+class IndexPutHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(node_index, op_node, graph)
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        return input_shapes[0]
 
 
 class MaskedScatterHandler(OpKindHandler):
@@ -1245,6 +1260,11 @@ def build_handlers(context: TensorContext) -> Dict[OpKind, OpKindHandler]:
             context,
             GatherEmitter(),
             builder=_build_with_dtype(context, "build_gather"),
+        ),
+        OpKind.INDEX_PUT: IndexPutHandler(
+            context,
+            IndexPutEmitter(),
+            builder=_build_with_inplace(context, "build_index_put"),
         ),
         OpKind.MASKED_SCATTER: MaskedScatterHandler(
             context,

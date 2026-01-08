@@ -970,8 +970,8 @@
 | `index_copy_` | — |
 | `index_fill` | — |
 | `index_fill_` | — |
-| `index_put` | — |
-| `index_put_` | — |
+| `index_put` | ✅ |
+| `index_put_` | ✅ |
 | `index_reduce` | — |
 | `index_reduce_` | — |
 | `index_select` | ✅ |
@@ -1719,5 +1719,5 @@
 
 ## Summary
 - total aten ops: 1714
-- supported by codegen: 274 / 1714 (16.0 %)
-- unsupported by codegen: 1440
+- supported by codegen: 276 / 1714 (16.1 %)
+- unsupported by codegen: 1438

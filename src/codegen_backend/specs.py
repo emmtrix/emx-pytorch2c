@@ -35,6 +35,7 @@ class OpKind(str, Enum):
     EMBEDDING_BAG = "embedding_bag"
     EMBEDDING_DENSE_BACKWARD = "embedding_dense_backward"
     GATHER = "gather"
+    INDEX_PUT = "index_put"
     INDEX_SELECT = "index_select"
     BATCH_NORM = "batch_norm"
     PDIST = "pdist"

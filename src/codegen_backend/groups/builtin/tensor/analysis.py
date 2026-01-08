@@ -33,6 +33,7 @@ from codegen_backend.groups.builtin.tensor.parsing import (
     parse_diagonal_args,
     parse_empty_strided_stride,
     parse_gather_args,
+    parse_index_put_args,
     parse_index_select_args,
     parse_linear_args,
     parse_masked_scatter_args,
@@ -711,6 +712,109 @@ class TensorOpBuilder:
             node, op_node, dtype_info, [input_shape, index_shape]
         )
 
+    def build_index_put(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        inplace_input: int | None,
+    ) -> _OpNode:
+        input_arg, indices, values, accumulate = parse_index_put_args(node)
+        if not isinstance(input_arg, torch.fx.Node) or input_arg not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if not isinstance(indices, (list, tuple)) or not indices:
+            raise CodegenBackendError(
+                "codegen index_put expects indices to be a non-empty sequence"
+            )
+        if not isinstance(values, torch.fx.Node) or values not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if isinstance(accumulate, torch.fx.Node):
+            raise CodegenBackendError(
+                "codegen index_put expects accumulate to be a constant"
+            )
+        if accumulate not in (None, False, True, 0, 1):
+            raise CodegenBackendError(
+                "codegen index_put expects accumulate to be a bool"
+            )
+        accumulate_value = accumulate in (True, 1)
+        index_nodes = []
+        index_shapes = []
+        for index in indices:
+            if not isinstance(index, torch.fx.Node) or index not in self._shapes:
+                raise error_expected_tensor(op_spec.name)
+            index_nodes.append(index)
+            index_shapes.append(self._shapes[index])
+        input_shape = self._shapes[input_arg]
+        if len(index_nodes) > len(input_shape):
+            raise CodegenBackendError(
+                "codegen index_put expects indices length <= input rank"
+            )
+        if any(shape != index_shapes[0] for shape in index_shapes[1:]):
+            raise CodegenBackendError(
+                "codegen index_put expects indices to share the same shape"
+            )
+        if self._dtypes[input_arg] is not dtype_info.torch_dtype:
+            raise CodegenBackendError(
+                "codegen index_put expects input to match the graph dtype"
+            )
+        if self._dtypes[values] is not dtype_info.torch_dtype:
+            raise CodegenBackendError(
+                "codegen index_put expects values to match the graph dtype"
+            )
+        uses_mask = False
+        for index in index_nodes:
+            index_dtype = self._dtypes[index]
+            if index_dtype is torch.bool:
+                uses_mask = True
+                continue
+            if index_dtype not in _EMBEDDING_INDEX_DTYPES:
+                raise CodegenBackendError(
+                    "codegen index_put expects indices to be int32, int64, or bool"
+                )
+        values_shape = self._shapes[values]
+        if uses_mask:
+            if len(index_nodes) != 1:
+                raise CodegenBackendError(
+                    "codegen index_put expects a single bool mask index"
+                )
+            if len(index_shapes[0]) != 1:
+                raise CodegenBackendError(
+                    "codegen index_put expects a 1D bool mask"
+                )
+            if input_shape and index_shapes[0][0] != input_shape[0]:
+                raise CodegenBackendError(
+                    "codegen index_put expects mask length to match input"
+                )
+            expected_values_shape = tuple(input_shape[1:])
+        else:
+            expected_values_shape = tuple(index_shapes[0]) + tuple(
+                input_shape[len(index_nodes) :]
+            )
+        if tuple(values_shape) != expected_values_shape:
+            if uses_mask:
+                raise CodegenBackendError(
+                    "codegen index_put expects values to match the tail shape"
+                )
+            raise CodegenBackendError(
+                "codegen index_put expects values to match indices + tail shape"
+            )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[input_arg, *index_nodes, values],
+            output_shape=(),
+            inplace_input=inplace_input,
+            params={"index_rank": len(index_nodes), "accumulate": accumulate_value},
+        )
+        input_shapes = [input_shape, *index_shapes, values_shape]
+        return self._finalize_node(
+            node,
+            op_node,
+            dtype_info,
+            input_shapes,
+            inplace_input=inplace_input,
+        )
+
     def build_masked_scatter(
         self,
         node: torch.fx.Node,
@@ -1200,6 +1304,7 @@ __all__ = [
     "parse_diagonal_args",
     "parse_empty_strided_stride",
     "parse_gather_args",
+    "parse_index_put_args",
     "parse_masked_scatter_args",
     "parse_linear_args",
     "parse_resize_size",
