@@ -46,22 +46,16 @@ def _write_sort_kernel(
         )
         rendered = sort_template.render(
             signature=signature,
-            loop_lines=[],
-            body_lines=[f"    {output_access} = {input_access};"],
-            footer_lines=["}"],
+            input_access=input_access,
+            output_access=output_access,
+            output_shape_len=0,
         )
         return rendered.splitlines()
 
     sort_size = output_shape[sort_dim]
-    loop_lines: List[str] = []
-    indent = "    "
-    for dim, size in enumerate(output_shape):
-        if dim == sort_dim:
-            continue
-        loop_lines.append(
-            f"{indent}for (ssize_t i{dim} = 0; i{dim} < {size}; ++i{dim}) {{"
-        )
-        indent += "    "
+    outer_dims = [
+        (dim, size) for dim, size in enumerate(output_shape) if dim != sort_dim
+    ]
 
     def _indices_for(expr: str) -> List[str]:
         return [
@@ -87,14 +81,6 @@ def _write_sort_kernel(
         sizes=output_shape,
         c_type=dtype.c_type,
     )
-    body_lines = [
-        f"{indent}for (ssize_t k = 0; k < {sort_size}; ++k) {{",
-        f"{indent}    {output_access} = {input_access};",
-        f"{indent}}}",
-        f"{indent}for (ssize_t pass = 0; pass < {sort_size}; ++pass) {{",
-        f"{indent}    ssize_t start = pass & 1;",
-        f"{indent}    for (ssize_t j = start; j + 1 < {sort_size}; j += 2) {{",
-    ]
     output_access_a = _emit_strided_access(
         "out",
         _indices_for("j"),
@@ -112,28 +98,17 @@ def _write_sort_kernel(
         c_type=dtype.c_type,
     )
     compare = f"a < b" if descending else "a > b"
-    body_lines.extend(
-        [
-            f"{indent}        {dtype.c_type} a = {output_access_a};",
-            f"{indent}        {dtype.c_type} b = {output_access_b};",
-            f"{indent}        if ({compare}) {{",
-            f"{indent}            {output_access_a} = b;",
-            f"{indent}            {output_access_b} = a;",
-            f"{indent}        }}",
-            f"{indent}    }}",
-            f"{indent}}}",
-        ]
-    )
-    footer_lines: List[str] = []
-    for _ in range(len(output_shape) - 1):
-        indent = indent[:-4]
-        footer_lines.append(f"{indent}}}")
-    footer_lines.append("}")
     rendered = sort_template.render(
         signature=signature,
-        loop_lines=loop_lines,
-        body_lines=body_lines,
-        footer_lines=footer_lines,
+        compare=compare,
+        dtype_c_type=dtype.c_type,
+        input_access=input_access,
+        output_access=output_access,
+        output_access_a=output_access_a,
+        output_access_b=output_access_b,
+        output_shape_len=len(output_shape),
+        outer_dims=outer_dims,
+        sort_size=sort_size,
     )
     return rendered.splitlines()
 

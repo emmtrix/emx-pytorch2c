@@ -1,10 +1,28 @@
 {{ signature }}
-{% for line in loop_lines %}
-{{ line }}
+{% if output_shape_len == 0 %}
+    {{ output_access }} = {{ input_access }};
+}
+{% else %}
+{% set outer_loop_count = outer_dims | length %}
+{% for dim, size in outer_dims %}
+{{ "    " * loop.index }}for (ssize_t i{{ dim }} = 0; i{{ dim }} < {{ size }}; ++i{{ dim }}) {
 {% endfor %}
-{% for line in body_lines %}
-{{ line }}
+{{ "    " * outer_loop_count }}for (ssize_t k = 0; k < {{ sort_size }}; ++k) {
+{{ "    " * (outer_loop_count + 1) }}{{ output_access }} = {{ input_access }};
+{{ "    " * outer_loop_count }}}
+{{ "    " * outer_loop_count }}for (ssize_t pass = 0; pass < {{ sort_size }}; ++pass) {
+{{ "    " * (outer_loop_count + 1) }}ssize_t start = pass & 1;
+{{ "    " * (outer_loop_count + 1) }}for (ssize_t j = start; j + 1 < {{ sort_size }}; j += 2) {
+{{ "    " * (outer_loop_count + 2) }}{{ dtype_c_type }} a = {{ output_access_a }};
+{{ "    " * (outer_loop_count + 2) }}{{ dtype_c_type }} b = {{ output_access_b }};
+{{ "    " * (outer_loop_count + 2) }}if ({{ compare }}) {
+{{ "    " * (outer_loop_count + 3) }}{{ output_access_a }} = b;
+{{ "    " * (outer_loop_count + 3) }}{{ output_access_b }} = a;
+{{ "    " * (outer_loop_count + 2) }}}
+{{ "    " * (outer_loop_count + 1) }}}
+{{ "    " * outer_loop_count }}}
+{% for dim, size in outer_dims %}
+{{ "    " * (outer_loop_count - loop.index0 - 1) }}}
 {% endfor %}
-{% for line in footer_lines %}
-{{ line }}
-{% endfor %}
+}
+{% endif %}
