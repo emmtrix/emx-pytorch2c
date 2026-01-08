@@ -83,8 +83,24 @@ opaque library calls.
 
 ### Example 2: Heap/Stack Temporary Allocation
 
-TBD
+The generic backend allocates intermediate buffers on the stack until they
+exceed `temp_allocation_threshold`, at which point they are allocated with
+`malloc` and freed after use. For example, generated C can contain both a
+stack temporary and a heap temporary:
 
+```c
+void ref_codegen_main_f32(const float input_0[1], const float input_1[1],
+                          const float input_2[1][2][2][5],
+                          const float input_3[1][2][2][5],
+                          float out[1][2][2][5]) {
+    float tmp_0[1];
+    float (*tmp_1)[2][2][5] = malloc(sizeof(float) * 1 * 2 * 2 * 5);
+    node1_add_f32(input_0, input_1, tmp_0);
+    node2_add_f32(input_2, input_3, tmp_1);
+    node3_add_f32(tmp_0, tmp_1, out);
+    free(tmp_1);
+}
+```
 
 
 ## Usage

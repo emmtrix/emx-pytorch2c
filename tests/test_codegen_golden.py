@@ -113,8 +113,8 @@ def max_pool2d_fn(a):
     )
 
 
-def temp_alloc_fn(a, b, c):
-    return (a + b) + c
+def temp_alloc_fn(a, b, c, d):
+    return (a + b) + (c + d)
 
 
 @pytest.mark.parametrize(
@@ -396,10 +396,11 @@ def test_elementwise_kernel_source_matches_expected():
 
 
 def test_codegen_generic_temp_allocations_exceed_threshold():
-    backend = CodegenBackend(temp_allocation_threshold=1)
-    a = torch.randn(1, 2, 2, 2, dtype=torch.float32)
-    b = torch.randn(1, 2, 2, 2, dtype=torch.float32)
-    c = torch.randn(1, 2, 2, 2, dtype=torch.float32)
+    backend = CodegenBackend(temp_allocation_threshold=64)
+    a = torch.randn(1, dtype=torch.float32)
+    b = torch.randn(1, dtype=torch.float32)
+    c = torch.randn(1, 2, 2, 5, dtype=torch.float32)
+    d = torch.randn(1, 2, 2, 5, dtype=torch.float32)
     _assert_codegen_source_matches(
-        "temp_alloc.c", backend.get_generic_source, temp_alloc_fn, (a, b, c)
+        "temp_alloc.c", backend.get_generic_source, temp_alloc_fn, (a, b, c, d)
     )
