@@ -75,18 +75,16 @@ def _write_select_scatter_kernel(
             sizes=src_shape,
             c_type=src_c_type,
         )
-    body_lines = [
-        f"{indent}if (i{select_dim} == {select_index}) {{",
-        f"{indent}    {output_access} = {src_access};",
-        f"{indent}}} else {{",
-        f"{indent}    {output_access} = {input_access};",
-        f"{indent}}}",
-    ]
     footer_lines = emit_footer(output_shape, indent)
     rendered = template.render(
         signature=signature,
         loop_lines=loop_lines,
-        body_lines=body_lines,
+        indent=indent,
+        output_access=output_access,
+        src_access=src_access,
+        input_access=input_access,
+        select_dim=select_dim,
+        select_index=select_index,
         footer_lines=footer_lines,
     )
     return rendered.splitlines()

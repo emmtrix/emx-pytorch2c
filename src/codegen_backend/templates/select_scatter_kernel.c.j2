@@ -2,9 +2,11 @@
 {% for line in loop_lines %}
 {{ line }}
 {% endfor %}
-{% for line in body_lines %}
-{{ line }}
-{% endfor %}
+{{ indent }}if (i{{ select_dim }} == {{ select_index }}) {
+{{ indent }}    {{ output_access }} = {{ src_access }};
+{{ indent }}} else {
+{{ indent }}    {{ output_access }} = {{ input_access }};
+{{ indent }}}
 {% for line in footer_lines %}
 {{ line }}
 {% endfor %}
