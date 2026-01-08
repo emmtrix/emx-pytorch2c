@@ -122,6 +122,13 @@ void ref_codegen_main_f32(const float input_0[1], const float input_1[1],
 }
 ```
 
+### More Examples
+
+More examples of generated C code can be found in
+
+* [`tests/codegen_refs`](tests/codegen_refs) ... generated C from pytorch.compile
+* [`tests/onnx2c_refs`](tests/onnx2c_refs) ... generated C from onnx2c CLI
+* [`tests/exportc_refs`](tests/exportc_refs) ... generated C from export utility
 
 ## Usage
 
