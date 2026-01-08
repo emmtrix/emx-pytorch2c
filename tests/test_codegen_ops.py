@@ -6,6 +6,7 @@ import sys
 import pytest
 import torch
 from codegen_backend import codegen_generic_backend
+from codegen_backend.dtypes import _CODEGEN_DTYPES, _INTEGER_CODEGEN_DTYPES
 from codegen_backend.param_normalize import normalize_int_or_pair, normalize_int_or_tuple
 from torch.testing._internal.common_device_type import instantiate_device_type_tests, ops
 from torch.testing._internal.common_methods_invocations import SampleInput, op_db
@@ -727,32 +728,6 @@ CODEGEN_SPECIAL_TEST_OPS = [
     torch.ops.aten.rand.default,
 ]
 CODEGEN_OP_TEST_CONFIG = {
-    torch.ops.aten.clamp.default: {
-        "allowed_dtypes": (
-            torch.float32,
-            torch.float64,
-            torch.int8,
-            torch.int32,
-            torch.int64,
-            torch.uint64,
-        ),
-    },
-    torch.ops.aten.clamp.Tensor: {
-        "allowed_dtypes": (torch.float32, torch.float64),
-    },
-    torch.ops.aten.clamp_.default: {
-        "allowed_dtypes": (
-            torch.float32,
-            torch.float64,
-            torch.int8,
-            torch.int32,
-            torch.int64,
-            torch.uint64,
-        ),
-    },
-    torch.ops.aten.clamp_.Tensor: {
-        "allowed_dtypes": (torch.float32, torch.float64),
-    },
     torch.ops.aten.where.self: {},
     torch.ops.aten.where.Scalar: {},
     torch.ops.aten.full_like.default: {},
@@ -764,11 +739,9 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.rand.default: {
         "allow_no_tensor_inputs": True,
-        "allowed_dtypes": (torch.float32, torch.float64),
     },
     torch.ops.aten.randn.default: {
         "allow_no_tensor_inputs": True,
-        "allowed_dtypes": (torch.float32, torch.float64),
     },
     torch.ops.aten.avg_pool2d_backward.default: {
         "requires_contiguous": True,
@@ -806,29 +779,9 @@ CODEGEN_OP_TEST_CONFIG = {
         "equal_nan": True,
         "sample_filter": _addmm_like_sample_filter,
     },
-    torch.ops.aten.conj_physical.default: {
-        "allowed_dtypes": (
-            torch.float32,
-            torch.int8,
-            torch.int32,
-            torch.int64,
-            torch.uint64,
-            torch.bool,
-        ),
-    },
 }
 DEFAULT_CONSTRAINTS = {
-    "allowed_dtypes": (
-        torch.float32,
-        torch.float64,
-        torch.int8,
-        torch.uint8,
-        torch.uint32,
-        torch.int32,
-        torch.int64,
-        torch.uint64,
-        torch.bool,
-    ),
+    "allowed_dtypes": tuple(_CODEGEN_DTYPES),
     "allow_noncontiguous": True,
     "allow_non_tensor_args": True,
     "allow_kwargs": True,
@@ -997,7 +950,7 @@ def _reference_for_dtype(
         expected = aten_overload(*inputs, **kwargs)
         torch.set_rng_state(rng_state)
         return expected
-    if dtype not in (torch.int8, torch.uint8, torch.uint32, torch.int32, torch.bool):
+    if dtype not in _INTEGER_CODEGEN_DTYPES and dtype is not torch.bool:
         return aten_overload(*inputs, **kwargs)
     try:
         expected = aten_overload(*inputs, **kwargs)
@@ -1068,7 +1021,7 @@ class TestCodegenOpInfo(TestCase):
             result = compiled(*inputs, **kwargs)
             expected = _match_expected_dtype(result, expected)
             compare_kwargs = {
-                "equal_nan": dtype in (torch.int8, torch.uint8, torch.uint32, torch.int32)
+                "equal_nan": dtype in _INTEGER_CODEGEN_DTYPES
             }
             if constraints.get("equal_nan"):
                 compare_kwargs["equal_nan"] = True
