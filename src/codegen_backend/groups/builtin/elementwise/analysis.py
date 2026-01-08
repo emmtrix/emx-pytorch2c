@@ -5,21 +5,19 @@ from typing import Dict, List, Tuple
 import torch
 import torch.fx
 
-from codegen_backend.analysis_helpers import (
-    error_expected_tensor,
-    parse_bitwise_scalar,
-    parse_constant_float,
-)
 from codegen_backend.c_types import _normalize_scalar_value
 from codegen_backend.dtypes import _CodegenDType
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.graph import _OpNode
 from codegen_backend.indexing import _contiguous_strides
+from codegen_backend.services import GraphAnalysisService
 from codegen_backend.specs import _OpSpec
 
 
 def parse_parametric_unary_args(
-    op_name: str, node: torch.fx.Node
+    op_name: str,
+    node: torch.fx.Node,
+    analysis_service: GraphAnalysisService,
 ) -> Tuple[torch.fx.Node, Dict[str, object]]:
     if not node.args:
         raise CodegenBackendError(f"codegen {op_name} expects one input")
@@ -67,13 +65,13 @@ def parse_parametric_unary_args(
             raise CodegenBackendError(
                 f"codegen elu got unexpected kwargs: {sorted(extra)}"
             )
-        params["alpha"] = parse_constant_float(
+        params["alpha"] = analysis_service.parse_constant_float(
             op_name, "alpha", params.get("alpha", 1.0)
         )
-        params["scale"] = parse_constant_float(
+        params["scale"] = analysis_service.parse_constant_float(
             op_name, "scale", params.get("scale", 1.0)
         )
-        params["input_scale"] = parse_constant_float(
+        params["input_scale"] = analysis_service.parse_constant_float(
             op_name, "input_scale", params.get("input_scale", 1.0)
         )
         return input_node, params
@@ -93,7 +91,7 @@ def parse_parametric_unary_args(
             raise CodegenBackendError(
                 f"codegen leaky_relu got unexpected kwargs: {sorted(extra)}"
             )
-        params["negative_slope"] = parse_constant_float(
+        params["negative_slope"] = analysis_service.parse_constant_float(
             op_name, "negative_slope", params.get("negative_slope", 0.01)
         )
         return input_node, params
@@ -119,10 +117,10 @@ def parse_parametric_unary_args(
             raise CodegenBackendError(
                 f"codegen softplus got unexpected kwargs: {sorted(extra)}"
             )
-        params["beta"] = parse_constant_float(
+        params["beta"] = analysis_service.parse_constant_float(
             op_name, "beta", params.get("beta", 1.0)
         )
-        params["threshold"] = parse_constant_float(
+        params["threshold"] = analysis_service.parse_constant_float(
             op_name, "threshold", params.get("threshold", 20.0)
         )
         return input_node, params
@@ -147,11 +145,11 @@ def parse_parametric_unary_args(
                 f"codegen clamp got unexpected kwargs: {sorted(extra)}"
             )
         if params.get("min_val") is not None:
-            params["min_val"] = parse_constant_float(
+            params["min_val"] = analysis_service.parse_constant_float(
                 op_name, "min", params["min_val"]
             )
         if params.get("max_val") is not None:
-            params["max_val"] = parse_constant_float(
+            params["max_val"] = analysis_service.parse_constant_float(
                 op_name, "max", params["max_val"]
             )
         return input_node, params
@@ -175,10 +173,10 @@ def parse_parametric_unary_args(
             raise CodegenBackendError(
                 f"codegen hardtanh got unexpected kwargs: {sorted(extra)}"
             )
-        params["min_val"] = parse_constant_float(
+        params["min_val"] = analysis_service.parse_constant_float(
             op_name, "min_val", params.get("min_val", -1.0)
         )
-        params["max_val"] = parse_constant_float(
+        params["max_val"] = analysis_service.parse_constant_float(
             op_name, "max_val", params.get("max_val", 1.0)
         )
         return input_node, params
@@ -190,6 +188,7 @@ def parse_where_inputs(
     node: torch.fx.Node,
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     scalar_values: Dict[torch.fx.Node, object],
+    analysis_service: GraphAnalysisService,
 ) -> Tuple[List[torch.fx.Node], List[Tuple[int, ...]], Dict[str, object]]:
     if len(node.args) < 3:
         raise CodegenBackendError(f"codegen {op_spec.name} expects three inputs")
@@ -200,9 +199,9 @@ def parse_where_inputs(
 
     def add_tensor_arg(arg: object) -> None:
         if not isinstance(arg, torch.fx.Node):
-            raise error_expected_tensor(op_spec.name)
+            raise analysis_service.error_expected_tensor(op_spec.name)
         if arg not in shapes:
-            raise error_expected_tensor(op_spec.name)
+            raise analysis_service.error_expected_tensor(op_spec.name)
         input_nodes.append(arg)
         input_shapes.append(shapes[arg])
 
@@ -217,7 +216,7 @@ def parse_where_inputs(
                     op_spec.name, scalar_values[arg]
                 )
                 return
-            raise error_expected_tensor(op_spec.name)
+            raise analysis_service.error_expected_tensor(op_spec.name)
         params[scalar_key] = _normalize_scalar_value(op_spec.name, arg)
 
     add_tensor_arg(cond_arg)
@@ -234,6 +233,7 @@ def handle_fill_node(
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
     inplace_input: int | None,
+    analysis_service: GraphAnalysisService,
     *,
     infer_output_shape,
 ) -> _OpNode:
@@ -241,7 +241,7 @@ def handle_fill_node(
         raise CodegenBackendError(f"codegen {op_spec.name} expects inputs")
     input_arg = node.args[0]
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     value = None
     if len(node.args) > 2:
         raise CodegenBackendError(
@@ -376,12 +376,13 @@ def handle_to_copy_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    analysis_service: GraphAnalysisService,
 ) -> _OpNode:
     if not node.args:
         raise CodegenBackendError(f"codegen {op_spec.name} expects one input")
     input_arg = node.args[0]
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     if dtypes[input_arg] is not dtype_info.torch_dtype:
         raise CodegenBackendError(
             f"codegen {op_spec.name} expects inputs to share the graph dtype"
@@ -417,6 +418,15 @@ def handle_to_copy_node(
     dtypes[node] = dtype_info.torch_dtype
     strides[node] = strides[input_arg]
     return op_node
+
+
+def parse_bitwise_scalar(
+    op_name: str,
+    value: object,
+    dtype: torch.dtype,
+    analysis_service: GraphAnalysisService,
+) -> object:
+    return analysis_service.parse_bitwise_scalar(op_name, value, dtype)
 
 
 __all__ = [

@@ -8,19 +8,20 @@ from typing import Sequence, Tuple
 import torch
 import torch.fx
 
-from codegen_backend.analysis_helpers import (
-    error_kwarg_specified_once,
-    normalize_reduction_dims,
-    parse_constant_int,
-)
 from codegen_backend.errors import CodegenBackendError
+from codegen_backend.services import GraphAnalysisService
 
 
 class ReductionsArgParser:
+    def __init__(self, analysis_service: GraphAnalysisService) -> None:
+        self._analysis_service = analysis_service
+
     def normalize_reduction_dims(
         self, op_name: str, dim: object | None, rank: int
     ) -> Tuple[int, ...]:
-        return normalize_reduction_dims(op_name, dim, rank)
+        return self._analysis_service.normalize_reduction_dims(
+            op_name, dim, rank
+        )
 
     def parse_reduction_args(
         self, op_name: str, node: torch.fx.Node, input_shape: Sequence[int]
@@ -32,15 +33,17 @@ class ReductionsArgParser:
         if op_name == "std":
             unbiased = True
             if len(node.args) > 2:
-                raise CodegenBackendError(
-                    "codegen std expects at most two inputs (self, unbiased)"
-                )
+                        raise CodegenBackendError(
+                            "codegen std expects at most two inputs (self, unbiased)"
+                        )
             if len(node.args) > 1:
                 unbiased = node.args[1]
             if node.kwargs:
                 if "unbiased" in node.kwargs:
                     if len(node.args) > 1:
-                        raise error_kwarg_specified_once(op_name, "unbiased")
+                        raise self._analysis_service.error_kwarg_specified_once(
+                            op_name, "unbiased"
+                        )
                     unbiased = node.kwargs["unbiased"]
                 extra = set(node.kwargs) - {"unbiased"}
                 if extra:
@@ -67,15 +70,21 @@ class ReductionsArgParser:
             if node.kwargs:
                 if "dim" in node.kwargs:
                     if dim is not None:
-                        raise error_kwarg_specified_once(op_name, "dim")
+                        raise self._analysis_service.error_kwarg_specified_once(
+                            op_name, "dim"
+                        )
                     dim = node.kwargs["dim"]
                 if "unbiased" in node.kwargs:
                     if len(node.args) > 2:
-                        raise error_kwarg_specified_once(op_name, "unbiased")
+                        raise self._analysis_service.error_kwarg_specified_once(
+                            op_name, "unbiased"
+                        )
                     unbiased = node.kwargs["unbiased"]
                 if "keepdim" in node.kwargs:
                     if len(node.args) > 3:
-                        raise error_kwarg_specified_once(op_name, "keepdim")
+                        raise self._analysis_service.error_kwarg_specified_once(
+                            op_name, "keepdim"
+                        )
                     keepdim = node.kwargs["keepdim"]
                 if "correction" in node.kwargs:
                     correction = node.kwargs["correction"]
@@ -118,15 +127,21 @@ class ReductionsArgParser:
         if node.kwargs:
             if "dim" in node.kwargs:
                 if dim is not None:
-                    raise error_kwarg_specified_once(op_name, "dim")
+                    raise self._analysis_service.error_kwarg_specified_once(
+                        op_name, "dim"
+                    )
                 dim = node.kwargs["dim"]
             if "keepdim" in node.kwargs:
                 if len(node.args) > 2:
-                    raise error_kwarg_specified_once(op_name, "keepdim")
+                    raise self._analysis_service.error_kwarg_specified_once(
+                        op_name, "keepdim"
+                    )
                 keepdim = node.kwargs["keepdim"]
             if "dtype" in node.kwargs:
                 if dtype is not None:
-                    raise error_kwarg_specified_once(op_name, "dtype")
+                    raise self._analysis_service.error_kwarg_specified_once(
+                        op_name, "dtype"
+                    )
                 dtype = node.kwargs["dtype"]
             extra = set(node.kwargs) - {"dim", "keepdim", "dtype"}
             if extra:
@@ -169,15 +184,21 @@ class ReductionsArgParser:
         if node.kwargs:
             if "p" in node.kwargs:
                 if len(node.args) > 1:
-                    raise error_kwarg_specified_once(op_name, "p")
+                    raise self._analysis_service.error_kwarg_specified_once(
+                        op_name, "p"
+                    )
                 p = node.kwargs["p"]
             if "dim" in node.kwargs:
                 if dim is not None:
-                    raise error_kwarg_specified_once(op_name, "dim")
+                    raise self._analysis_service.error_kwarg_specified_once(
+                        op_name, "dim"
+                    )
                 dim = node.kwargs["dim"]
             if "keepdim" in node.kwargs:
                 if len(node.args) > 3:
-                    raise error_kwarg_specified_once(op_name, "keepdim")
+                    raise self._analysis_service.error_kwarg_specified_once(
+                        op_name, "keepdim"
+                    )
                 keepdim = node.kwargs["keepdim"]
             extra = set(node.kwargs) - {"p", "dim", "keepdim"}
             if extra:
@@ -220,11 +241,15 @@ class ReductionsArgParser:
         if node.kwargs:
             if "dim" in node.kwargs:
                 if dim is not None:
-                    raise error_kwarg_specified_once(op_name, "dim")
+                    raise self._analysis_service.error_kwarg_specified_once(
+                        op_name, "dim"
+                    )
                 dim = node.kwargs["dim"]
             if "keepdim" in node.kwargs:
                 if len(node.args) > 2:
-                    raise error_kwarg_specified_once(op_name, "keepdim")
+                    raise self._analysis_service.error_kwarg_specified_once(
+                        op_name, "keepdim"
+                    )
                 keepdim = node.kwargs["keepdim"]
             extra = set(node.kwargs) - {"dim", "keepdim"}
             if extra:
@@ -245,7 +270,9 @@ class ReductionsArgParser:
             return reduction_dims, keepdim, reduce_all
         if isinstance(dim, (tuple, list)):
             raise CodegenBackendError(f"codegen {op_name} expects dim to be an int")
-        dim_value = parse_constant_int(op_name, "dim", dim)
+        dim_value = self._analysis_service.parse_constant_int(
+            op_name, "dim", dim
+        )
         rank = len(input_shape)
         if rank == 0:
             if dim_value not in (-1, 0):
@@ -276,18 +303,24 @@ class ReductionsArgParser:
         if node.kwargs:
             if "dim" in node.kwargs:
                 if dim is not None:
-                    raise error_kwarg_specified_once(op_name, "dim")
+                    raise self._analysis_service.error_kwarg_specified_once(
+                        op_name, "dim"
+                    )
                 dim = node.kwargs["dim"]
             if is_internal:
                 if "half_to_float" in node.kwargs:
                     if half_to_float is not None:
-                        raise error_kwarg_specified_once(op_name, "half_to_float")
+                        raise self._analysis_service.error_kwarg_specified_once(
+                            op_name, "half_to_float"
+                        )
                     half_to_float = node.kwargs["half_to_float"]
                 extra = set(node.kwargs) - {"dim", "half_to_float"}
             else:
                 if "dtype" in node.kwargs:
                     if dtype is not None:
-                        raise error_kwarg_specified_once(op_name, "dtype")
+                        raise self._analysis_service.error_kwarg_specified_once(
+                            op_name, "dtype"
+                        )
                     dtype = node.kwargs["dtype"]
                 extra = set(node.kwargs) - {"dim", "dtype"}
             if extra:

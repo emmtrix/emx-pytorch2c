@@ -7,16 +7,6 @@ from typing import Callable, Dict, List, Sequence, Tuple
 import torch
 import torch.fx
 
-from codegen_backend.analysis_helpers import (
-    channels_last_3d_strides,
-    channels_last_strides,
-    error_expected_tensor,
-    error_kwarg_specified_once,
-    normalize_as_strided_sequence,
-    normalize_flip_dims,
-    parse_constant_int,
-    resolve_scalar_arg,
-)
 from codegen_backend.c_types import _normalize_scalar_value
 from codegen_backend.dtypes import (
     _CODEGEN_DTYPES,
@@ -38,6 +28,7 @@ from codegen_backend.groups.builtin.tensor.parsing import (
 )
 from codegen_backend.graph import _OpNode
 from codegen_backend.indexing import _contiguous_strides
+from codegen_backend.services import GraphAnalysisService
 from codegen_backend.specs import _OpSpec
 
 
@@ -59,6 +50,7 @@ def handle_flip_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    analysis_service: GraphAnalysisService,
     *,
     infer_output_shape: Callable[[
         _OpNode, Sequence[Tuple[int, ...]]
@@ -70,14 +62,16 @@ def handle_flip_node(
         )
     input_arg = node.args[0]
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     if dtypes[input_arg] is not dtype_info.torch_dtype:
         raise CodegenBackendError(
             "codegen flip expects inputs to share the graph dtype"
         )
     input_shape = shapes[input_arg]
     dims = node.args[1] if len(node.args) > 1 else None
-    dims_value = normalize_flip_dims(op_spec.name, dims, len(input_shape))
+    dims_value = analysis_service.normalize_flip_dims(
+        op_spec.name, dims, len(input_shape)
+    )
     if node.kwargs:
         extra = set(node.kwargs)
         if extra:
@@ -108,6 +102,7 @@ def handle_batch_norm_node(
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
     scalar_values: Dict[torch.fx.Node, object],
+    analysis_service: GraphAnalysisService,
     *,
     infer_output_shape: Callable[[
         _OpNode, Sequence[Tuple[int, ...]]
@@ -153,20 +148,20 @@ def handle_batch_norm_node(
             eps,
         ) = node.args[:7]
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     if not isinstance(running_mean, torch.fx.Node) or running_mean not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     if not isinstance(running_var, torch.fx.Node) or running_var not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     weight_node = None
     bias_node = None
     if weight is not None:
         if not isinstance(weight, torch.fx.Node) or weight not in shapes:
-            raise error_expected_tensor(op_spec.name)
+            raise analysis_service.error_expected_tensor(op_spec.name)
         weight_node = weight
     if bias is not None:
         if not isinstance(bias, torch.fx.Node) or bias not in shapes:
-            raise error_expected_tensor(op_spec.name)
+            raise analysis_service.error_expected_tensor(op_spec.name)
         bias_node = bias
     if dtype_info.torch_dtype is not torch.float32:
         raise CodegenBackendError(
@@ -224,8 +219,12 @@ def handle_batch_norm_node(
                 f"codegen {op_spec.name} supports only torch.float32"
             )
     try:
-        _ = float(resolve_scalar_arg(op_spec.name, momentum, scalar_values))
-        eps_value = float(resolve_scalar_arg(op_spec.name, eps, scalar_values))
+        _ = float(
+            analysis_service.resolve_scalar_arg(op_spec.name, momentum, scalar_values)
+        )
+        eps_value = float(
+            analysis_service.resolve_scalar_arg(op_spec.name, eps, scalar_values)
+        )
     except (TypeError, ValueError) as exc:
         raise CodegenBackendError(
             f"codegen {op_spec.name} expects eps to be a float"
@@ -262,6 +261,7 @@ def handle_pdist_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    analysis_service: GraphAnalysisService,
     *,
     infer_output_shape: Callable[[
         _OpNode, Sequence[Tuple[int, ...]]
@@ -280,7 +280,7 @@ def handle_pdist_node(
                 f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
             )
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     if dtypes[input_arg] is not dtype_info.torch_dtype:
         raise CodegenBackendError(
             "codegen pdist expects inputs to share the graph dtype"
@@ -320,6 +320,7 @@ def handle_cdist_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    analysis_service: GraphAnalysisService,
     *,
     infer_output_shape: Callable[[
         _OpNode, Sequence[Tuple[int, ...]]
@@ -340,9 +341,9 @@ def handle_cdist_node(
                 f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
             )
     if not isinstance(x1, torch.fx.Node) or x1 not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     if not isinstance(x2, torch.fx.Node) or x2 not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     if dtypes[x1] is not dtype_info.torch_dtype:
         raise CodegenBackendError(
             "codegen cdist expects inputs to share the graph dtype"
@@ -394,6 +395,7 @@ def handle_addmm_like_node(
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
     inplace_input: int | None,
+    analysis_service: GraphAnalysisService,
     *,
     infer_output_shape: Callable[[
         _OpNode, Sequence[Tuple[int, ...]]
@@ -404,7 +406,7 @@ def handle_addmm_like_node(
     )
     for arg in input_nodes:
         if not isinstance(arg, torch.fx.Node) or arg not in shapes:
-            raise error_expected_tensor(op_spec.name)
+            raise analysis_service.error_expected_tensor(op_spec.name)
     input_shapes = [shapes[arg] for arg in input_nodes]
     input_dtypes = [dtypes[arg] for arg in input_nodes]
     if any(dtype is not dtype_info.torch_dtype for dtype in input_dtypes):
@@ -440,6 +442,7 @@ def handle_linear_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    analysis_service: GraphAnalysisService,
     *,
     infer_output_shape: Callable[[
         _OpNode, Sequence[Tuple[int, ...]]
@@ -447,15 +450,15 @@ def handle_linear_node(
 ) -> _OpNode:
     input_arg, weight_arg, bias = parse_linear_args(op_spec.name, node)
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     if not isinstance(weight_arg, torch.fx.Node) or weight_arg not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     input_nodes = [input_arg, weight_arg]
     input_shapes = [shapes[input_arg], shapes[weight_arg]]
     input_dtypes = [dtypes[arg] for arg in input_nodes]
     if bias is not None:
         if not isinstance(bias, torch.fx.Node) or bias not in shapes:
-            raise error_expected_tensor(op_spec.name)
+            raise analysis_service.error_expected_tensor(op_spec.name)
         input_nodes.append(bias)
         input_shapes.append(shapes[bias])
         input_dtypes.append(dtypes[bias])
@@ -486,6 +489,7 @@ def handle_diagonal_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    analysis_service: GraphAnalysisService,
     *,
     infer_output_shape: Callable[[
         _OpNode, Sequence[Tuple[int, ...]]
@@ -495,7 +499,7 @@ def handle_diagonal_node(
         raise CodegenBackendError(f"codegen {op_spec.name} expects one input")
     input_arg = node.args[0]
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     if dtypes[input_arg] is not dtype_info.torch_dtype:
         raise CodegenBackendError(
             "codegen diagonal expects input to match the graph dtype"
@@ -525,6 +529,7 @@ def handle_cumsum_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    analysis_service: GraphAnalysisService,
     *,
     infer_output_shape: Callable[[
         _OpNode, Sequence[Tuple[int, ...]]
@@ -534,7 +539,7 @@ def handle_cumsum_node(
         raise CodegenBackendError(f"codegen {op_spec.name} expects one input")
     input_arg = node.args[0]
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     if dtypes[input_arg] is not dtype_info.torch_dtype:
         raise CodegenBackendError(
             "codegen cumsum expects input to match the graph dtype"
@@ -568,6 +573,7 @@ def handle_constant_pad_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    analysis_service: GraphAnalysisService,
     *,
     infer_output_shape: Callable[[
         _OpNode, Sequence[Tuple[int, ...]]
@@ -587,7 +593,7 @@ def handle_constant_pad_node(
                 f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
             )
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     if dtypes[input_arg] is not dtype_info.torch_dtype:
         raise CodegenBackendError(
             "codegen constant_pad_nd expects input to match the graph dtype"
@@ -658,6 +664,7 @@ def handle_gather_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    analysis_service: GraphAnalysisService,
     *,
     infer_output_shape: Callable[[
         _OpNode, Sequence[Tuple[int, ...]]
@@ -665,9 +672,9 @@ def handle_gather_node(
 ) -> _OpNode:
     input_arg, dim, index, sparse_grad = parse_gather_args(node)
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     if not isinstance(index, torch.fx.Node) or index not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     if dtypes[input_arg] is not dtype_info.torch_dtype:
         raise CodegenBackendError(
             "codegen gather expects input to match the graph dtype"
@@ -688,7 +695,7 @@ def handle_gather_node(
         raise CodegenBackendError(
             "codegen gather expects index to have the same rank as input"
         )
-    dim_value = parse_constant_int(op_spec.name, "dim", dim)
+    dim_value = analysis_service.parse_constant_int(op_spec.name, "dim", dim)
     if dim_value < 0:
         dim_value += len(input_shape)
     if dim_value < 0 or dim_value >= len(input_shape):
@@ -725,6 +732,7 @@ def handle_view_node(
     shapes: Dict[torch.fx.Node, Tuple[int, ...]],
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
+    analysis_service: GraphAnalysisService,
     *,
     infer_output_shape: Callable[[
         _OpNode, Sequence[Tuple[int, ...]]
@@ -734,7 +742,7 @@ def handle_view_node(
         raise CodegenBackendError(f"codegen {op_spec.name} expects one input")
     input_arg = node.args[0]
     if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     if dtypes[input_arg] is not dtype_info.torch_dtype:
         raise CodegenBackendError(
             f"codegen {op_spec.name} expects inputs to share the graph dtype"
@@ -750,15 +758,19 @@ def handle_view_node(
         if node.kwargs:
             if "size" in node.kwargs:
                 if size is not None:
-                    raise error_kwarg_specified_once(op_spec.name, "size")
+                    raise analysis_service.error_kwarg_specified_once(
+                        op_spec.name, "size"
+                    )
                 size = node.kwargs["size"]
             if "stride" in node.kwargs:
                 if stride is not None:
-                    raise error_kwarg_specified_once(op_spec.name, "stride")
+                    raise analysis_service.error_kwarg_specified_once(
+                        op_spec.name, "stride"
+                    )
                 stride = node.kwargs["stride"]
             if "storage_offset" in node.kwargs:
                 if storage_offset is not None:
-                    raise error_kwarg_specified_once(
+                    raise analysis_service.error_kwarg_specified_once(
                         op_spec.name, "storage_offset"
                     )
                 storage_offset = node.kwargs["storage_offset"]
@@ -779,8 +791,10 @@ def handle_view_node(
             raise CodegenBackendError(
                 "codegen as_strided expects storage_offset to be an int"
             )
-        size_tuple = normalize_as_strided_sequence(op_spec.name, size, "size")
-        stride_tuple = normalize_as_strided_sequence(
+        size_tuple = analysis_service.normalize_as_strided_sequence(
+            op_spec.name, size, "size"
+        )
+        stride_tuple = analysis_service.normalize_as_strided_sequence(
             op_spec.name, stride, "stride"
         )
         if len(size_tuple) != len(stride_tuple):
@@ -820,7 +834,9 @@ def handle_view_node(
             if node.kwargs:
                 if "shape" in node.kwargs:
                     if shape_arg is not None:
-                        raise error_kwarg_specified_once(op_spec.name, "shape")
+                        raise analysis_service.error_kwarg_specified_once(
+                            op_spec.name, "shape"
+                        )
                     shape_arg = node.kwargs["shape"]
                 extra = set(node.kwargs) - {"shape"}
                 if extra:
@@ -851,7 +867,7 @@ def handle_view_node(
         unknown_dim = None
         known_product = 1
         for dim in shape_values:
-            dim_value = parse_constant_int(op_spec.name, "shape", dim)
+            dim_value = analysis_service.parse_constant_int(op_spec.name, "shape", dim)
             if dim_value == -1:
                 if unknown_dim is not None:
                     raise CodegenBackendError(
@@ -913,7 +929,9 @@ def handle_view_node(
             raise CodegenBackendError(
                 f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
             )
-    size = normalize_as_strided_sequence(op_spec.name, size_arg, "size")
+    size = analysis_service.normalize_as_strided_sequence(
+        op_spec.name, size_arg, "size"
+    )
     input_shape = shapes[input_arg]
     output_numel = math.prod(size) if size else 1
     input_numel = math.prod(input_shape) if input_shape else 1
@@ -945,6 +963,7 @@ def handle_resize_node(
     strides: Dict[torch.fx.Node, Tuple[int, ...]],
     dtypes: Dict[torch.fx.Node, torch.dtype],
     inplace_input: int | None,
+    analysis_service: GraphAnalysisService,
     *,
     infer_output_shape: Callable[[
         _OpNode, Sequence[Tuple[int, ...]]
@@ -961,9 +980,9 @@ def handle_resize_node(
         raise CodegenBackendError("codegen resize_ expects input and size arguments")
     input_arg, size_arg = node.args
     if not isinstance(input_arg, torch.fx.Node):
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     if input_arg not in shapes:
-        raise error_expected_tensor(op_spec.name)
+        raise analysis_service.error_expected_tensor(op_spec.name)
     if dtypes[input_arg] is not dtype_info.torch_dtype:
         raise CodegenBackendError(
             "codegen resize_ expects inputs to share the graph dtype"
@@ -993,9 +1012,9 @@ def handle_resize_node(
     if memory_format is None or memory_format is torch.contiguous_format:
         output_strides = _contiguous_strides(output_shape)
     elif memory_format is torch.channels_last:
-        output_strides = channels_last_strides(output_shape)
+        output_strides = analysis_service.channels_last_strides(output_shape)
     elif memory_format is torch.channels_last_3d:
-        output_strides = channels_last_3d_strides(output_shape)
+        output_strides = analysis_service.channels_last_3d_strides(output_shape)
     else:
         raise CodegenBackendError("Unsupported memory formatPreserve")
     strides[node] = output_strides

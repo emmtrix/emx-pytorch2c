@@ -41,7 +41,7 @@ class _BackendElementwiseContext(_BackendKernelContext):
 class _BackendReductionContext(_BackendKernelContext):
     def __init__(self, backend: "CodegenBackend") -> None:
         super().__init__(backend)
-        self._arg_parser = ReductionsArgParser()
+        self._arg_parser = ReductionsArgParser(backend.analysis_service)
 
     @property
     def arg_parser(self) -> ReductionsArgParser:

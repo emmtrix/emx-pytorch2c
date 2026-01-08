@@ -862,6 +862,7 @@ class _BackendAddrHandler(AddrHandler):
             strides,
             dtypes,
             inplace_input,
+            self._ctx.analysis_service,
             infer_output_shape=self._ctx.analysis_service.infer_output_shape,
         )
         if inplace_input is not None:
@@ -1272,6 +1273,7 @@ def _build_with_dtype(context, func):
             shapes,
             strides,
             dtypes,
+            context.analysis_service,
             infer_output_shape=context.analysis_service.infer_output_shape,
         )
         return OpNodeBuildResult(op_node)
@@ -1300,6 +1302,7 @@ def _build_with_scalar(context, func):
             strides,
             dtypes,
             scalar_values,
+            context.analysis_service,
             infer_output_shape=context.analysis_service.infer_output_shape,
         )
         return OpNodeBuildResult(op_node)
@@ -1328,6 +1331,7 @@ def _build_with_inplace(context, func):
             strides,
             dtypes,
             inplace_input,
+            context.analysis_service,
             infer_output_shape=context.analysis_service.infer_output_shape,
         )
         return OpNodeBuildResult(op_node)

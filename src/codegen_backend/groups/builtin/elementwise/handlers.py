@@ -146,7 +146,13 @@ class _BackendElementwiseHandler(ElementwiseHandler):
             if dtype_info is None:
                 return None
             op_node = handle_to_copy_node(
-                node, op_spec, dtype_info, shapes, strides, dtypes
+                node,
+                op_spec,
+                dtype_info,
+                shapes,
+                strides,
+                dtypes,
+                self._ctx.analysis_service,
             )
             return OpNodeBuildResult(op_node)
         if op_spec.kind == OpKind.FILL:
@@ -160,6 +166,7 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                 strides,
                 dtypes,
                 inplace_input,
+                self._ctx.analysis_service,
                 infer_output_shape=self._ctx.analysis_service.infer_output_shape,
             )
             return OpNodeBuildResult(op_node)
@@ -189,7 +196,10 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                 input_shapes = [shapes[input_arg]]
                 if op_spec.name in _BITWISE_OPS:
                     param_values["scalar"] = parse_bitwise_scalar(
-                        op_spec.name, scalar_arg, dtype_info.torch_dtype
+                        op_spec.name,
+                        scalar_arg,
+                        dtype_info.torch_dtype,
+                        self._ctx.analysis_service,
                     )
                 else:
                     param_values["scalar"] = _normalize_scalar_value(
@@ -209,7 +219,10 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                     input_shapes = [shapes[input_arg]]
                     if op_spec.name in _BITWISE_OPS:
                         param_values["scalar"] = parse_bitwise_scalar(
-                            op_spec.name, scalar_arg, dtype_info.torch_dtype
+                            op_spec.name,
+                            scalar_arg,
+                            dtype_info.torch_dtype,
+                            self._ctx.analysis_service,
                         )
                     else:
                         param_values["scalar"] = self._ctx.analysis_service.resolve_scalar_arg(
@@ -222,7 +235,7 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                 and op_spec.name in _PARAMETRIC_UNARY_OPS
             ):
                 input_node, param_values = parse_parametric_unary_args(
-                    op_spec.name, node
+                    op_spec.name, node, self._ctx.analysis_service
                 )
                 args_to_check = (input_node,)
             else:
@@ -329,7 +342,13 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                     input_nodes,
                     input_shapes,
                     where_params,
-                ) = parse_where_inputs(op_spec, node, shapes, scalar_values)
+                ) = parse_where_inputs(
+                    op_spec,
+                    node,
+                    shapes,
+                    scalar_values,
+                    self._ctx.analysis_service,
+                )
                 param_values.update(where_params)
             else:
                 for arg in args_to_check:
