@@ -86,6 +86,7 @@ class GraphBuilder:
                     strides[node] = tuple(example.stride())
                     dtypes[node] = example.dtype
                     tensor_placeholders.append(node)
+                    scalar_values[node] = example
                 else:
                     if isinstance(example, numbers.Number):
                         scalar_values[node] = example

@@ -343,6 +343,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.unsqueeze.default,
     torch.ops.aten.select.int,
     torch.ops.aten.narrow.default,
+    torch.ops.aten.nonzero.default,
     torch.ops.aten.slice.Tensor,
     torch.ops.aten.expand.default,
     torch.ops.aten.transpose.int,

@@ -29,6 +29,7 @@ from codegen_backend.emitters.index_select import IndexSelectEmitter
 from codegen_backend.emitters.linear import LinearEmitter
 from codegen_backend.emitters.matmul import MatmulEmitter
 from codegen_backend.emitters.masked_scatter import MaskedScatterEmitter
+from codegen_backend.emitters.nonzero import NonzeroEmitter
 from codegen_backend.emitters.pad import PadEmitter
 from codegen_backend.emitters.pdist import PdistEmitter
 from codegen_backend.emitters.resize import ResizeEmitter
@@ -359,6 +360,23 @@ class IndexSelectHandler(OpKindHandler):
         dim = int(op_node.p("dim"))
         output_shape = list(input_shape)
         output_shape[dim] = index_shape[0]
+        return tuple(output_shape)
+
+
+class NonzeroHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(node_index, op_node, graph)
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        output_shape = op_node.p("output_shape")
+        if output_shape is None:
+            raise CodegenBackendError("codegen nonzero expects output shape")
         return tuple(output_shape)
 
 
@@ -897,6 +915,75 @@ class _BackendMatmulHandler(MatmulHandler):
         return OpNodeBuildResult(op_node)
 
 
+class _BackendNonzeroHandler(NonzeroHandler):
+    def build_op_node(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType | None,
+        shapes: Dict[torch.fx.Node, tuple[int, ...]],
+        strides: Dict[torch.fx.Node, tuple[int, ...]],
+        dtypes: Dict[torch.fx.Node, torch.dtype],
+        scalar_values: Dict[torch.fx.Node, object],
+        inplace_input: int | None,
+    ) -> OpNodeBuildResult | None:
+        if dtype_info is None:
+            return None
+        if inplace_input is not None:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} does not support inplace variants"
+            )
+        if not node.args:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects an input tensor"
+            )
+        if len(node.args) > 1:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects exactly one input"
+            )
+        if node.kwargs:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects positional args only"
+            )
+        input_arg = node.args[0]
+        if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
+            raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
+        if dtypes[input_arg] is not dtype_info.torch_dtype:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects inputs to share the graph dtype"
+            )
+        input_shape = shapes[input_arg]
+        output_value = node.meta.get("val") or node.meta.get("example_value")
+        if not isinstance(output_value, torch.Tensor):
+            input_value = scalar_values.get(input_arg)
+            if not isinstance(input_value, torch.Tensor):
+                input_value = input_arg.meta.get("val") or input_arg.meta.get(
+                    "example_value"
+                )
+            if not isinstance(input_value, torch.Tensor):
+                raise CodegenBackendError(
+                    "codegen nonzero requires example tensor metadata to infer output shape"
+                )
+            output_value = torch.nonzero(input_value)
+        output_shape = tuple(int(dim) for dim in output_value.shape)
+        if len(output_shape) != 2 or output_shape[1] != len(input_shape):
+            raise CodegenBackendError(
+                "codegen nonzero expects output shape to be (count, input_rank)"
+            )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[input_arg],
+            output_shape=output_shape,
+            inplace_input=None,
+            params={"output_shape": output_shape},
+        )
+        shapes[node] = output_shape
+        strides[node] = _contiguous_strides(output_shape)
+        dtypes[node] = torch.int64
+        return OpNodeBuildResult(op_node)
+
+
 class _BackendAddrHandler(AddrHandler):
     def build_op_node(
         self,
@@ -1293,6 +1380,10 @@ def build_handlers(context: TensorContext) -> Dict[OpKind, OpKindHandler]:
             IndexSelectEmitter(),
             builder=_build_with_dtype(context, "build_index_select"),
         ),
+        OpKind.NONZERO: _BackendNonzeroHandler(
+            context,
+            NonzeroEmitter(),
+        ),
         OpKind.COL2IM: Col2imHandler(
             context,
             Col2imEmitter(),
@@ -1425,6 +1516,9 @@ def build_kind_handler_registrations() -> Dict[OpKind, "KindHandlerRegistration"
         ),
         OpKind.MASKED_SCATTER: KindHandlerRegistration(
             MaskedScatterHandler, MaskedScatterEmitter
+        ),
+        OpKind.NONZERO: KindHandlerRegistration(
+            _BackendNonzeroHandler, NonzeroEmitter
         ),
     }
 
