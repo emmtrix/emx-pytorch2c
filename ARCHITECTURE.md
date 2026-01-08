@@ -13,7 +13,7 @@ PyTorch workloads. The high-level flow is:
 
 - `src/codegen_backend/`: Core code generation backend and templates for
   emitting C.
-- `src/cli/`: Command-line tooling, including ONNX-to-C conversion.
+- `cli/`: Command-line tooling, including ONNX-to-C conversion.
 - `src/`: Export helpers and other supporting utilities.
 - `tests/`: Operator coverage, codegen validation, and golden reference checks.
 
