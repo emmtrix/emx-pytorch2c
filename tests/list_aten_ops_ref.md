@@ -1719,5 +1719,5 @@
 
 ## Summary
 - total aten ops: 1714
-- supported by codegen: 277 / 1714 (16.2 %)
-- unsupported by codegen: 1437
+- supported by codegen: 278 / 1714 (16.2 %)
+- unsupported by codegen: 1436
