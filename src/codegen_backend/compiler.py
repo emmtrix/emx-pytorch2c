@@ -189,6 +189,29 @@ class Compiler:
             env[node] = mean if index in (1, 1.0) else invstd
             return True
 
+        def _maybe_fill_dropout_mask(
+            node: torch.fx.Node, env: Dict[torch.fx.Node, object]
+        ) -> bool:
+            if node.op == "call_function" and node.target is operator.getitem:
+                source, index = node.args
+            elif node.op == "call_method" and node.target == "getitem":
+                source, index = node.args
+            else:
+                return False
+            if not isinstance(source, torch.fx.Node):
+                return False
+            op_node = op_node_by_node.get(source)
+            if op_node is None or op_node.spec.kind != OpKind.DROPOUT:
+                return False
+            if index not in (1, 1.0):
+                return False
+            input_node = op_node.inputs[0]
+            input_tensor = env.get(_resolve_alias(input_node, graph.alias_map))
+            if not isinstance(input_tensor, torch.Tensor):
+                return False
+            env[node] = torch.ones_like(input_tensor, dtype=torch.bool)
+            return True
+
         def compiled(*args: object, **kwargs: object) -> object:
             if kwargs:
                 placeholder_targets = [node.target for node in graph.placeholders]
@@ -301,6 +324,8 @@ class Compiler:
                 )
                 for node in graph.empty_outputs:
                     if _maybe_fill_batch_norm_stats(node, env):
+                        continue
+                    if _maybe_fill_dropout_mask(node, env):
                         continue
                     if node not in env:
                         env[node] = torch.empty(

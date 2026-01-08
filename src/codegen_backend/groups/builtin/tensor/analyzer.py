@@ -137,6 +137,11 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
             torch.ops.aten._embedding_bag,
             torch.ops.aten._embedding_bag.default,
             torch.ops.aten.max.dim,
+            torch.ops.aten.native_dropout,
+            torch.ops.aten.native_dropout.default,
+        }:
+            raise CodegenBackendError(
+                "codegen backend supports getitem only for _native_batch_norm_legit* ops, _embedding_bag, native_dropout, or max.dim"
             torch.ops.aten.min.dim,
         }:
             raise CodegenBackendError(
@@ -218,6 +223,19 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
             shapes[node] = shapes[source]
             strides[node] = strides[source]
             dtypes[node] = dtypes[source]
+            return None
+        if source.target in {
+            torch.ops.aten.native_dropout,
+            torch.ops.aten.native_dropout.default,
+        }:
+            if index not in (1, 1.0):
+                raise CodegenBackendError(
+                    "codegen backend supports native_dropout getitem only for indices 0 or 1"
+                )
+            shapes[node] = shapes[source]
+            strides[node] = _contiguous_strides(shapes[source])
+            dtypes[node] = torch.bool
+            empty_outputs.add(node)
             return None
         output_shape = (0,)
         if source.target in {

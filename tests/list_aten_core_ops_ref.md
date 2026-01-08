@@ -126,7 +126,7 @@
 | `mm` | ✅ |
 | `mul.Scalar` | ✅ |
 | `mul.Tensor` | ✅ |
-| `native_dropout` | — |
+| `native_dropout` | ✅ |
 | `native_group_norm` | — |
 | `native_group_norm_backward` | — |
 | `native_layer_norm` | — |
