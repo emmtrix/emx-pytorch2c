@@ -96,7 +96,7 @@
 | `gt.Tensor` | ✅ |
 | `hardtanh` | ✅ |
 | `index.Tensor` | — |
-| `index_put` | — |
+| `index_put` | ✅ |
 | `index_select` | — |
 | `isinf` | ✅ |
 | `isnan` | ✅ |
@@ -197,5 +197,5 @@
 
 ## Summary
 - total core aten ops: 192
-- supported by codegen: 139 / 192 (72.4%)
-- unsupported by codegen: 53
+- supported by codegen: 140 / 192 (72.9%)
+- unsupported by codegen: 52
