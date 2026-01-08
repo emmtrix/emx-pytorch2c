@@ -31,6 +31,7 @@ from codegen_backend.groups.builtin.tensor.parsing import (
     parse_diagonal_args,
     parse_empty_strided_stride,
     parse_gather_args,
+    parse_index_select_args,
     parse_linear_args,
     parse_resize_size,
 )
@@ -648,6 +649,49 @@ class TensorOpBuilder:
                 raise CodegenBackendError(
                     "codegen gather expects index shape to match input shape"
                 )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[input_arg, index],
+            output_shape=(),
+            inplace_input=None,
+            params={"dim": dim_value},
+        )
+        return self._finalize_node(
+            node, op_node, dtype_info, [input_shape, index_shape]
+        )
+
+    def build_index_select(
+        self, node: torch.fx.Node, op_spec: _OpSpec, dtype_info: _CodegenDType
+    ) -> _OpNode:
+        input_arg, dim, index = parse_index_select_args(node)
+        if not isinstance(input_arg, torch.fx.Node) or input_arg not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if not isinstance(index, torch.fx.Node) or index not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if self._dtypes[input_arg] is not dtype_info.torch_dtype:
+            raise CodegenBackendError(
+                "codegen index_select expects input to match the graph dtype"
+            )
+        if self._dtypes[index] not in _EMBEDDING_INDEX_DTYPES:
+            raise CodegenBackendError(
+                "codegen index_select expects index dtype to be torch.int32 or torch.int64"
+            )
+        input_shape = self._shapes[input_arg]
+        if not input_shape:
+            raise CodegenBackendError(
+                "codegen index_select expects input to have at least 1 dimension"
+            )
+        index_shape = self._shapes[index]
+        if len(index_shape) != 1:
+            raise CodegenBackendError(
+                "codegen index_select expects index to be a 1D tensor"
+            )
+        dim_value = parse_constant_int(op_spec.name, "dim", dim)
+        if dim_value < 0:
+            dim_value += len(input_shape)
+        if dim_value < 0 or dim_value >= len(input_shape):
+            raise CodegenBackendError("codegen index_select dim is out of range")
         op_node = _OpNode(
             node=node,
             spec=op_spec,

@@ -60,6 +60,11 @@ def build_supported_ops() -> dict[str, _OpSpec]:
         torch.ops.aten.gather.default,
         torch.ops.aten.gather,
     ).build()
+    registry.register_op("index_select", kind=OpKind.INDEX_SELECT).targets(
+        torch.index_select,
+        torch.ops.aten.index_select.default,
+        torch.ops.aten.index_select,
+    ).build()
     registry.register_op("diagonal", kind=OpKind.DIAGONAL).targets(
         torch.diagonal,
         torch.ops.aten.diagonal.default,

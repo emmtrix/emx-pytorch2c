@@ -266,6 +266,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.frac.default,
     torch.ops.aten.full_like.default,
     torch.ops.aten.gather.default,
+    torch.ops.aten.index_select.default,
     torch.ops.aten.heaviside.default,
     torch.ops.aten.hypot.default,
     torch.ops.aten.i0.default,
