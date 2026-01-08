@@ -7,8 +7,6 @@ from codegen_backend.emitters.base import (
     KindEmitterBase,
     _format_array_suffix,
     _is_contiguous,
-    emit_footer,
-    emit_loops,
 )
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.indexing import _emit_strided_access
@@ -38,7 +36,6 @@ def _write_split_with_sizes_kernel(
         f"const {dtype.c_type} input{input_suffix}, "
         f"{dtype.c_type} out{output_suffix}) {{"
     )
-    loop_lines, indent = emit_loops(output_shape)
     output_indices = [f"i{dim}" for dim in range(len(output_shape))]
     output_access = _emit_strided_access(
         "out",
@@ -60,13 +57,13 @@ def _write_split_with_sizes_kernel(
         sizes=input_shape,
         c_type=dtype.c_type,
     )
-    body_lines = [f"{indent}{output_access} = {input_access};"]
-    footer_lines = emit_footer(output_shape, indent)
     rendered = split_template.render(
         signature=signature,
-        loop_lines=loop_lines,
-        body_lines=body_lines,
-        footer_lines=footer_lines,
+        output_shape=output_shape,
+        split_dim=split_dim,
+        split_offset=split_offset,
+        input_access=input_access,
+        output_access=output_access,
     )
     return rendered.splitlines()
 

@@ -213,11 +213,13 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
             torch.ops.aten.native_group_norm_backward.default,
             torch.ops.aten.max_pool3d_with_indices,
             torch.ops.aten.max_pool3d_with_indices.default,
+            torch.ops.aten.sort,
+            torch.ops.aten.sort.default,
         }:
             raise CodegenBackendError(
                 "codegen backend supports getitem only for _native_batch_norm_legit* "
                 "ops, _embedding_bag, native_dropout, native_layer_norm, "
-                "native_group_norm, max_pool3d_with_indices, max.dim, or min.dim"
+                "native_group_norm, max_pool3d_with_indices, sort, max.dim, or min.dim"
             )
         if source.target in {torch.ops.aten.max.dim, torch.ops.aten.min.dim}:
             if index in (0, 0.0):
@@ -316,6 +318,16 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
             if index not in (1, 1.0):
                 raise CodegenBackendError(
                     "codegen backend supports max_pool3d_with_indices getitem only for indices 0 or 1"
+                )
+            shapes[node] = shapes[source]
+            strides[node] = _contiguous_strides(shapes[node])
+            dtypes[node] = torch.int64
+            empty_outputs.add(node)
+            return None
+        if source.target in {torch.ops.aten.sort, torch.ops.aten.sort.default}:
+            if index not in (1, 1.0):
+                raise CodegenBackendError(
+                    "codegen backend supports sort getitem only for indices 0 or 1"
                 )
             shapes[node] = shapes[source]
             strides[node] = _contiguous_strides(shapes[node])

@@ -1,10 +1,9 @@
 {{ signature }}
-{% for line in loop_lines %}
-{{ line }}
+{% for dim in range(output_shape | length) %}
+    for (ssize_t i{{ dim }} = 0; i{{ dim }} < {{ output_shape[dim] }}; ++i{{ dim }}) {
 {% endfor %}
-{% for line in body_lines %}
-{{ line }}
+    {{ output_access }} = {{ input_access }};
+{% for dim in range(output_shape | length) | reverse %}
+    }
 {% endfor %}
-{% for line in footer_lines %}
-{{ line }}
-{% endfor %}
+}
