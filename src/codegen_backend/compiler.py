@@ -157,15 +157,22 @@ class Compiler:
                 return type(value)(resolved)
             return value
 
+        def _parse_getitem_node(
+            node: torch.fx.Node,
+        ) -> Optional[Tuple[object, object]]:
+            if node.op == "call_function" and node.target is operator.getitem:
+                return node.args
+            if node.op == "call_method" and node.target == "getitem":
+                return node.args
+            return None
+
         def _maybe_fill_batch_norm_stats(
             node: torch.fx.Node, env: Dict[torch.fx.Node, object]
         ) -> bool:
-            if node.op == "call_function" and node.target is operator.getitem:
-                source, index = node.args
-            elif node.op == "call_method" and node.target == "getitem":
-                source, index = node.args
-            else:
+            parsed = _parse_getitem_node(node)
+            if parsed is None:
                 return False
+            source, index = parsed
             if not isinstance(source, torch.fx.Node):
                 return False
             op_node = op_node_by_node.get(source)
@@ -192,12 +199,10 @@ class Compiler:
         def _maybe_fill_dropout_mask(
             node: torch.fx.Node, env: Dict[torch.fx.Node, object]
         ) -> bool:
-            if node.op == "call_function" and node.target is operator.getitem:
-                source, index = node.args
-            elif node.op == "call_method" and node.target == "getitem":
-                source, index = node.args
-            else:
+            parsed = _parse_getitem_node(node)
+            if parsed is None:
                 return False
+            source, index = parsed
             if not isinstance(source, torch.fx.Node):
                 return False
             op_node = op_node_by_node.get(source)
@@ -215,12 +220,10 @@ class Compiler:
         def _maybe_fill_layer_norm_stats(
             node: torch.fx.Node, env: Dict[torch.fx.Node, object]
         ) -> bool:
-            if node.op == "call_function" and node.target is operator.getitem:
-                source, index = node.args
-            elif node.op == "call_method" and node.target == "getitem":
-                source, index = node.args
-            else:
+            parsed = _parse_getitem_node(node)
+            if parsed is None:
                 return False
+            source, index = parsed
             if not isinstance(source, torch.fx.Node):
                 return False
             op_node = op_node_by_node.get(source)
@@ -255,12 +258,10 @@ class Compiler:
         def _maybe_fill_group_norm_stats(
             node: torch.fx.Node, env: Dict[torch.fx.Node, object]
         ) -> bool:
-            if node.op == "call_function" and node.target is operator.getitem:
-                source, index = node.args
-            elif node.op == "call_method" and node.target == "getitem":
-                source, index = node.args
-            else:
+            parsed = _parse_getitem_node(node)
+            if parsed is None:
                 return False
+            source, index = parsed
             if not isinstance(source, torch.fx.Node):
                 return False
             op_node = op_node_by_node.get(source)
@@ -305,12 +306,10 @@ class Compiler:
         def _maybe_fill_layer_norm_backward_grads(
             node: torch.fx.Node, env: Dict[torch.fx.Node, object]
         ) -> bool:
-            if node.op == "call_function" and node.target is operator.getitem:
-                source, index = node.args
-            elif node.op == "call_method" and node.target == "getitem":
-                source, index = node.args
-            else:
+            parsed = _parse_getitem_node(node)
+            if parsed is None:
                 return False
+            source, index = parsed
             if not isinstance(source, torch.fx.Node):
                 return False
             op_node = op_node_by_node.get(source)
@@ -361,12 +360,10 @@ class Compiler:
         def _maybe_fill_group_norm_backward_grads(
             node: torch.fx.Node, env: Dict[torch.fx.Node, object]
         ) -> bool:
-            if node.op == "call_function" and node.target is operator.getitem:
-                source, index = node.args
-            elif node.op == "call_method" and node.target == "getitem":
-                source, index = node.args
-            else:
+            parsed = _parse_getitem_node(node)
+            if parsed is None:
                 return False
+            source, index = parsed
             if not isinstance(source, torch.fx.Node):
                 return False
             op_node = op_node_by_node.get(source)
@@ -415,12 +412,10 @@ class Compiler:
         def _maybe_fill_max_pool3d_indices(
             node: torch.fx.Node, env: Dict[torch.fx.Node, object]
         ) -> bool:
-            if node.op == "call_function" and node.target is operator.getitem:
-                source, index = node.args
-            elif node.op == "call_method" and node.target == "getitem":
-                source, index = node.args
-            else:
+            parsed = _parse_getitem_node(node)
+            if parsed is None:
                 return False
+            source, index = parsed
             if not isinstance(source, torch.fx.Node):
                 return False
             op_node = op_node_by_node.get(source)
