@@ -1151,8 +1151,8 @@
 | `margin_ranking_loss` | — |
 | `masked_fill` | — |
 | `masked_fill_` | — |
-| `masked_scatter` | — |
-| `masked_scatter_` | — |
+| `masked_scatter` | ✅ |
+| `masked_scatter_` | ✅ |
 | `masked_scatter_backward` | — |
 | `masked_select` | — |
 | `masked_select_backward` | — |
@@ -1719,5 +1719,5 @@
 
 ## Summary
 - total aten ops: 1714
-- supported by codegen: 268 / 1714 (15.6 %)
-- unsupported by codegen: 1446
+- supported by codegen: 270 / 1714 (15.8 %)
+- unsupported by codegen: 1444

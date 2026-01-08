@@ -32,6 +32,7 @@ from codegen_backend.groups.builtin.tensor.parsing import (
     parse_empty_strided_stride,
     parse_gather_args,
     parse_linear_args,
+    parse_masked_scatter_args,
     parse_resize_size,
 )
 from codegen_backend.graph import _OpNode
@@ -653,6 +654,55 @@ class TensorOpBuilder:
         )
         return self._finalize_node(
             node, op_node, dtype_info, [input_shape, index_shape]
+        )
+
+    def build_masked_scatter(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        inplace_input: int | None = None,
+    ) -> _OpNode:
+        input_arg, mask, source = parse_masked_scatter_args(node)
+        if not isinstance(input_arg, torch.fx.Node) or input_arg not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if not isinstance(mask, torch.fx.Node) or mask not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if not isinstance(source, torch.fx.Node) or source not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if self._dtypes[input_arg] is not dtype_info.torch_dtype:
+            raise CodegenBackendError(
+                "codegen masked_scatter expects input to match the graph dtype"
+            )
+        if self._dtypes[source] is not dtype_info.torch_dtype:
+            raise CodegenBackendError(
+                "codegen masked_scatter expects source to match the graph dtype"
+            )
+        if self._dtypes[mask] is not torch.bool:
+            raise CodegenBackendError(
+                "codegen masked_scatter expects mask dtype to be torch.bool"
+            )
+        input_shape = self._shapes[input_arg]
+        mask_shape = self._shapes[mask]
+        source_shape = self._shapes[source]
+        if input_shape != mask_shape:
+            raise CodegenBackendError(
+                "codegen masked_scatter expects mask shape to match input shape"
+            )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[input_arg, mask, source],
+            output_shape=(),
+            inplace_input=inplace_input,
+            params={},
+        )
+        return self._finalize_node(
+            node,
+            op_node,
+            dtype_info,
+            [input_shape, mask_shape, source_shape],
+            inplace_input=inplace_input,
         )
 
     def build_view(
