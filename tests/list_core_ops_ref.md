@@ -118,8 +118,8 @@ This list shows core ATen operators, whether the codegen backend supports them, 
 | `masked_scatter` | ✅ | 4 |
 | `max.dim` | ✅ | — |
 | `max_pool2d_with_indices` | — | — |
-| `max_pool2d_with_indices_backward` | — | 1440 |
-| `max_pool3d_with_indices` | — | — |
+| `max_pool2d_with_indices_backward` | ✅ | 1440 |
+| `max_pool3d_with_indices` | ✅ | — |
 | `maximum` | ✅ | 9 |
 | `mean` | ✅ | 20 |
 | `mean.dim` | ✅ | — |
@@ -129,10 +129,10 @@ This list shows core ATen operators, whether the codegen backend supports them, 
 | `mul.Scalar` | ✅ | — |
 | `mul.Tensor` | ✅ | — |
 | `native_dropout` | ✅ | — |
-| `native_group_norm` | — | — |
-| `native_group_norm_backward` | — | — |
-| `native_layer_norm` | — | 20 |
-| `native_layer_norm_backward` | — | — |
+| `native_group_norm` | ✅ | — |
+| `native_group_norm_backward` | ✅ | — |
+| `native_layer_norm` | ✅ | 20 |
+| `native_layer_norm_backward` | ✅ | — |
 | `ne.Scalar` | ✅ | — |
 | `ne.Tensor` | ✅ | — |
 | `neg` | ✅ | 1 |
@@ -143,8 +143,8 @@ This list shows core ATen operators, whether the codegen backend supports them, 
 | `pow.Tensor_Tensor` | ✅ | — |
 | `prod` | ✅ | 39 |
 | `prod.dim_int` | ✅ | — |
-| `rand` | — | — |
-| `randn` | — | 2 |
+| `rand` | ✅ | — |
+| `randn` | ✅ | 2 |
 | `randperm` | — | — |
 | `reciprocal` | ✅ | 3 |
 | `reflection_pad1d` | — | — |
@@ -199,5 +199,5 @@ This list shows core ATen operators, whether the codegen backend supports them, 
 
 ## Summary
 - total core aten ops: 192
-- supported by codegen: 155 / 192 (80.7%)
-- unsupported by codegen: 37
+- supported by codegen: 163 / 192 (84.9%)
+- unsupported by codegen: 29
