@@ -31,6 +31,7 @@ from codegen_backend.emitters.matmul import MatmulEmitter
 from codegen_backend.emitters.masked_scatter import MaskedScatterEmitter
 from codegen_backend.emitters.pad import PadEmitter
 from codegen_backend.emitters.pdist import PdistEmitter
+from codegen_backend.emitters.repeat import RepeatEmitter
 from codegen_backend.emitters.resize import ResizeEmitter
 from codegen_backend.emitters.view import ViewEmitter
 from codegen_backend.errors import CodegenBackendError
@@ -213,6 +214,31 @@ class ViewHandler(OpKindHandler):
         if op_node.spec.name == "_local_scalar_dense":
             return tuple(input_shapes[0])
         raise CodegenBackendError(f"Unsupported view op: {op_node.spec.name}")
+
+
+class RepeatHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(node_index, op_node, graph)
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        repeats = op_node.p("repeats", ())
+        input_shape = input_shapes[0]
+        if len(repeats) < len(input_shape):
+            raise CodegenBackendError(
+                "codegen repeat expects repeats to cover the input rank"
+            )
+        output_shape = []
+        pad = len(repeats) - len(input_shape)
+        output_shape.extend(repeats[:pad])
+        for size, repeat in zip(input_shape, repeats[pad:]):
+            output_shape.append(size * repeat)
+        return tuple(output_shape)
 
 
 class ResizeHandler(OpKindHandler):
@@ -1251,6 +1277,11 @@ def build_handlers(context: TensorContext) -> Dict[OpKind, OpKindHandler]:
             context,
             ViewEmitter(),
             builder=_build_with_dtype(context, "build_view"),
+        ),
+        OpKind.REPEAT: RepeatHandler(
+            context,
+            RepeatEmitter(),
+            builder=_build_with_dtype(context, "build_repeat"),
         ),
         OpKind.RESIZE: ResizeHandler(
             context,

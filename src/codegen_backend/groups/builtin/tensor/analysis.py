@@ -907,6 +907,64 @@ class TensorOpBuilder:
             node, op_node, dtype_info, [input_shape, index_shape]
         )
 
+    def build_repeat(
+        self, node: torch.fx.Node, op_spec: _OpSpec, dtype_info: _CodegenDType
+    ) -> _OpNode:
+        if not node.args:
+            raise CodegenBackendError(f"codegen {op_spec.name} expects one input")
+        input_arg = node.args[0]
+        if not isinstance(input_arg, torch.fx.Node) or input_arg not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if self._dtypes[input_arg] is not dtype_info.torch_dtype:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects inputs to share the graph dtype"
+            )
+        repeats_arg = None
+        if len(node.args) > 1:
+            if len(node.args) == 2:
+                repeats_arg = node.args[1]
+            else:
+                repeats_arg = node.args[1:]
+        if node.kwargs:
+            if "repeats" in node.kwargs:
+                if repeats_arg is not None and len(node.args) > 1:
+                    raise error_kwarg_specified_once(op_spec.name, "repeats")
+                repeats_arg = node.kwargs["repeats"]
+            extra = set(node.kwargs) - {"repeats"}
+            if extra:
+                raise CodegenBackendError(
+                    f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
+                )
+        if repeats_arg is None:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects repeats arguments"
+            )
+        repeats = normalize_as_strided_sequence(
+            op_spec.name,
+            repeats_arg,
+            "repeats",
+            scalar_values=self._scalar_values,
+        )
+        input_shape = self._shapes[input_arg]
+        if len(repeats) < len(input_shape):
+            raise CodegenBackendError(
+                "codegen repeat expects repeats to cover the input rank"
+            )
+        if any(repeat < 0 for repeat in repeats):
+            raise CodegenBackendError(
+                "codegen repeat expects repeats to be non-negative"
+            )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[input_arg],
+            output_shape=(),
+            params={"repeats": repeats},
+        )
+        return self._finalize_node(
+            node, op_node, dtype_info, [input_shape]
+        )
+
     def build_view(
         self, node: torch.fx.Node, op_spec: _OpSpec, dtype_info: _CodegenDType
     ) -> _OpNode:

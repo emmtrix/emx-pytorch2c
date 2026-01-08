@@ -14,6 +14,7 @@ class OpKind(str, Enum):
     FLIP = "flip"
     ARG_REDUCTION = "arg_reduction"
     REDUCTION = "reduction"
+    REPEAT = "repeat"
     ARANGE = "arange"
     SOFTMAX = "softmax"
     CUMSUM = "cumsum"

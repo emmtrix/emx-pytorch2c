@@ -54,6 +54,10 @@ def build_supported_ops() -> dict[str, _OpSpec]:
         torch.ops.aten.squeeze.dim,
         torch.ops.aten.squeeze.dims,
     ).build()
+    registry.register_op("repeat", kind=OpKind.REPEAT).targets(
+        torch.ops.aten.repeat.default,
+        torch.ops.aten.repeat,
+    ).build()
     registry.register_op("cat", kind=OpKind.CONCAT).targets(
         torch.cat,
         torch.ops.aten.cat.default,

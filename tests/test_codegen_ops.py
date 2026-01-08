@@ -311,6 +311,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.real.default,
     torch.ops.aten.reciprocal.default,
     torch.ops.aten.relu.default,
+    torch.ops.aten.repeat.default,
     torch.ops.aten.remainder.Tensor,
     torch.ops.aten.remainder.Scalar,
     torch.ops.aten.round.default,

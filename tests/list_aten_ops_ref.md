@@ -1378,7 +1378,7 @@
 | `rename_` | — |
 | `renorm` | — |
 | `renorm_` | — |
-| `repeat` | — |
+| `repeat` | ✅ |
 | `repeat_interleave` | — |
 | `replace` | — |
 | `replication_pad1d` | — |
@@ -1719,5 +1719,5 @@
 
 ## Summary
 - total aten ops: 1714
-- supported by codegen: 277 / 1714 (16.2 %)
-- unsupported by codegen: 1437
+- supported by codegen: 279 / 1714 (16.3 %)
+- unsupported by codegen: 1435
