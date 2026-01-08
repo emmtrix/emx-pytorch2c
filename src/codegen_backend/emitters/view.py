@@ -58,21 +58,21 @@ class ViewEmitter(KindEmitterBase):
                 f"(const {stride_c_type}*){stride_name};"
             )
             offset_terms = [
-                f"i{dim} * (int64_t)view_strides_ptr[{dim}]"
+                f"(ssize_t)i{dim} * (ssize_t)view_strides_ptr[{dim}]"
                 for dim in range(len(output_shape))
             ]
             offset_expr = " + ".join(offset_terms) if offset_terms else "0"
         elif view_strides:
             offset_terms = [
-                f"i{dim} * {stride}"
+                f"(ssize_t)i{dim} * (ssize_t){stride}"
                 for dim, stride in enumerate(view_strides)
             ]
             offset_expr = " + ".join(offset_terms)
         else:
             offset_expr = "0"
         if storage_offset:
-            offset_expr = f"{storage_offset} + {offset_expr}"
-        lines.append(f"{indent}int64_t offset = {offset_expr};")
+            offset_expr = f"(ssize_t){storage_offset} + {offset_expr}"
+        lines.append(f"{indent}ssize_t offset = {offset_expr};")
         output_access = emit_output_access(
             output_shape, output_strides, c_type=req.dtype.c_type
         )

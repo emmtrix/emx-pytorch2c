@@ -1,6 +1,6 @@
 {{ signature }}
 {% for dim in output_dims %}
-    for (int64_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
+    for (ssize_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
 {% endfor %}
     {{ output_access }} = {{ value }};
 {% for dim in output_dims | reverse %}

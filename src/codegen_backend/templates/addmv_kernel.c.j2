@@ -1,7 +1,7 @@
 {{ signature }}
-    for (int64_t i = 0; i < {{ m }}; ++i) {
+    for (ssize_t i = 0; i < {{ m }}; ++i) {
         {{ acc_type }} acc = {{ acc_init }};
-        for (int64_t t = 0; t < {{ n }}; ++t) {
+        for (ssize_t t = 0; t < {{ n }}; ++t) {
             acc += {{ mat_access }} * {{ vec_access }};
         }
         {{ out_access }} = ({{ beta }}) * {{ input_access }} + ({{ alpha }}) * acc;

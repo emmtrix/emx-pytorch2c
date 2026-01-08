@@ -1,6 +1,6 @@
 {{ signature }}
-    const int64_t outer_size = {{ outer_size }};
-    const int64_t inner_size = {{ inner_size }};
+    const ssize_t outer_size = {{ outer_size }};
+    const ssize_t inner_size = {{ inner_size }};
     const {{ c_type }} *input_ptr = &input{{ input_zero_indices }};
     {{ c_type }} *out_ptr = &out{{ output_zero_indices }};
 {% if has_weight %}
@@ -9,20 +9,20 @@
 {% if has_bias %}
     const {{ c_type }} *bias_ptr = &bias{{ bias_zero_indices }};
 {% endif %}
-    for (int64_t outer = 0; outer < outer_size; ++outer) {
+    for (ssize_t outer = 0; outer < outer_size; ++outer) {
         {{ c_type }} mean = 0;
-        for (int64_t inner = 0; inner < inner_size; ++inner) {
+        for (ssize_t inner = 0; inner < inner_size; ++inner) {
             mean += input_ptr[outer * inner_size + inner];
         }
         mean /= ({{ c_type }})inner_size;
         {{ c_type }} var = 0;
-        for (int64_t inner = 0; inner < inner_size; ++inner) {
+        for (ssize_t inner = 0; inner < inner_size; ++inner) {
             {{ c_type }} diff = input_ptr[outer * inner_size + inner] - mean;
             var += diff * diff;
         }
         var /= ({{ c_type }})inner_size;
         {{ c_type }} rstd = ({{ c_type }})1 / {{ sqrt_fn }}(var + {{ eps }});
-        for (int64_t inner = 0; inner < inner_size; ++inner) {
+        for (ssize_t inner = 0; inner < inner_size; ++inner) {
             {{ c_type }} val = (input_ptr[outer * inner_size + inner] - mean) * rstd;
 {% if has_weight %}
             val *= weight_ptr[inner];

@@ -63,7 +63,7 @@ def _write_cumsum_kernel(
     )
     lines.append(f"{indent}{output_dtype_info.c_type} acc = {acc_init};")
     lines.append(
-        f"{indent}for (int64_t r{cumsum_dim} = 0; r{cumsum_dim} <= i{cumsum_dim}; ++r{cumsum_dim}) {{"
+        f"{indent}for (ssize_t r{cumsum_dim} = 0; r{cumsum_dim} <= i{cumsum_dim}; ++r{cumsum_dim}) {{"
     )
     inner_indent = f"{indent}    "
     input_indices = [

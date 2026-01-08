@@ -1,12 +1,12 @@
 {{ signature }}
-    int64_t out_h = {{ out_h }};
-    int64_t out_w = {{ out_w }};
+    ssize_t out_h = {{ out_h }};
+    ssize_t out_w = {{ out_w }};
     {% if ceil_mode %}
     {
-        int64_t numerator_h = {{ in_h }} + 2 * {{ pad_h }} - {{ dil_h }} * ({{ k_h }} - 1) - 1;
-        int64_t numerator_w = {{ in_w }} + 2 * {{ pad_w }} - {{ dil_w }} * ({{ k_w }} - 1) - 1;
-        int64_t calc_out_h = (numerator_h + {{ stride_h }} - 1) / {{ stride_h }} + 1;
-        int64_t calc_out_w = (numerator_w + {{ stride_w }} - 1) / {{ stride_w }} + 1;
+        ssize_t numerator_h = {{ in_h }} + 2 * {{ pad_h }} - {{ dil_h }} * ({{ k_h }} - 1) - 1;
+        ssize_t numerator_w = {{ in_w }} + 2 * {{ pad_w }} - {{ dil_w }} * ({{ k_w }} - 1) - 1;
+        ssize_t calc_out_h = (numerator_h + {{ stride_h }} - 1) / {{ stride_h }} + 1;
+        ssize_t calc_out_w = (numerator_w + {{ stride_w }} - 1) / {{ stride_w }} + 1;
         if ((calc_out_h - 1) * {{ stride_h }} >= {{ in_h }} + {{ pad_h }}) {
             calc_out_h -= 1;
         }
@@ -17,22 +17,22 @@
         out_w = calc_out_w;
     }
     {% endif %}
-    for (int64_t n = 0; n < {{ batch }}; ++n) {
-        for (int64_t c = 0; c < {{ channels }}; ++c) {
-            for (int64_t oh = 0; oh < out_h; ++oh) {
-                for (int64_t ow = 0; ow < out_w; ++ow) {
-                    int64_t in_h_base = oh * {{ stride_h }} - {{ pad_h }};
-                    int64_t in_w_base = ow * {{ stride_w }} - {{ pad_w }};
+    for (ssize_t n = 0; n < {{ batch }}; ++n) {
+        for (ssize_t c = 0; c < {{ channels }}; ++c) {
+            for (ssize_t oh = 0; oh < out_h; ++oh) {
+                for (ssize_t ow = 0; ow < out_w; ++ow) {
+                    ssize_t in_h_base = (ssize_t)oh * {{ stride_h }} - {{ pad_h }};
+                    ssize_t in_w_base = (ssize_t)ow * {{ stride_w }} - {{ pad_w }};
                     {% if pool_kind == "max_pool2d" %}
                     bool has_value = false;
                     {{ c_type }} max_val = 0;
-                    for (int64_t kh = 0; kh < {{ k_h }}; ++kh) {
-                        int64_t in_h_idx = in_h_base + kh * {{ dil_h }};
+                    for (ssize_t kh = 0; kh < {{ k_h }}; ++kh) {
+                        ssize_t in_h_idx = in_h_base + (ssize_t)kh * {{ dil_h }};
                         if (in_h_idx < 0 || in_h_idx >= {{ in_h }}) {
                             continue;
                         }
-                        for (int64_t kw = 0; kw < {{ k_w }}; ++kw) {
-                            int64_t in_w_idx = in_w_base + kw * {{ dil_w }};
+                        for (ssize_t kw = 0; kw < {{ k_w }}; ++kw) {
+                            ssize_t in_w_idx = in_w_base + (ssize_t)kw * {{ dil_w }};
                             if (in_w_idx < 0 || in_w_idx >= {{ in_w }}) {
                                 continue;
                             }
@@ -47,15 +47,15 @@
                     {% else %}
                     {{ c_type }} acc = 0;
                     {% if not has_divisor_override and not count_include_pad %}
-                    int64_t count = 0;
+                    ssize_t count = 0;
                     {% endif %}
-                    for (int64_t kh = 0; kh < {{ k_h }}; ++kh) {
-                        int64_t in_h_idx = in_h_base + kh * {{ dil_h }};
+                    for (ssize_t kh = 0; kh < {{ k_h }}; ++kh) {
+                        ssize_t in_h_idx = in_h_base + (ssize_t)kh * {{ dil_h }};
                         if (in_h_idx < 0 || in_h_idx >= {{ in_h }}) {
                             continue;
                         }
-                        for (int64_t kw = 0; kw < {{ k_w }}; ++kw) {
-                            int64_t in_w_idx = in_w_base + kw * {{ dil_w }};
+                        for (ssize_t kw = 0; kw < {{ k_w }}; ++kw) {
+                            ssize_t in_w_idx = in_w_base + (ssize_t)kw * {{ dil_w }};
                             if (in_w_idx < 0 || in_w_idx >= {{ in_w }}) {
                                 continue;
                             }
@@ -66,11 +66,11 @@
                         }
                     }
                     {% if has_divisor_override %}
-                    int64_t divisor = {{ divisor_override }};
+                    ssize_t divisor = {{ divisor_override }};
                     {% elif count_include_pad %}
-                    int64_t divisor = {{ k_h }} * {{ k_w }};
+                    ssize_t divisor = {{ k_h }} * {{ k_w }};
                     {% else %}
-                    int64_t divisor = count;
+                    ssize_t divisor = count;
                     {% endif %}
                     out[n][c][oh][ow] = acc / ({{ c_type }})divisor;
                     {% endif %}

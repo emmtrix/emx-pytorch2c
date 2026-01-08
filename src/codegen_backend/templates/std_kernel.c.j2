@@ -1,6 +1,6 @@
 {{ signature }}
 {% for dim in output_dims %}
-    for (int64_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
+    for (ssize_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
 {% endfor %}
     {{ acc_type }} sum = 0;
     {{ acc_type }} sumsq = 0;
@@ -10,7 +10,7 @@
     sumsq += val * val;
 {% else %}
 {% for dim in reduction_dims %}
-    for (int64_t r{{ dim.dim }} = 0; r{{ dim.dim }} < {{ dim.size }}; ++r{{ dim.dim }}) {
+    for (ssize_t r{{ dim.dim }} = 0; r{{ dim.dim }} < {{ dim.size }}; ++r{{ dim.dim }}) {
 {% endfor %}
         {{ acc_type }} val = {{ input_access }};
         sum += val;
@@ -19,7 +19,7 @@
     }
 {% endfor %}
 {% endif %}
-    int64_t count = {{ reduction_count }};
+    ssize_t count = {{ reduction_count }};
     if (count == 0 || ({{ unbiased }} && count <= 1)) {
         {{ output_access }} = NAN;
     } else {

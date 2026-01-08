@@ -1,16 +1,16 @@
 {{ signature }}
 {% for dim in output_dims %}
-    for (int64_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
+    for (ssize_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
 {% endfor %}
     {{ c_type }} max_val = {{ input_access_zero }};
-    for (int64_t r{{ softmax_dim }} = 1; r{{ softmax_dim }} < {{ softmax_size }}; ++r{{ softmax_dim }}) {
+    for (ssize_t r{{ softmax_dim }} = 1; r{{ softmax_dim }} < {{ softmax_size }}; ++r{{ softmax_dim }}) {
         {{ c_type }} value = {{ input_access_r }};
         if (value > max_val) {
             max_val = value;
         }
     }
     {{ c_type }} sum = 0.0f;
-    for (int64_t r{{ softmax_dim }} = 0; r{{ softmax_dim }} < {{ softmax_size }}; ++r{{ softmax_dim }}) {
+    for (ssize_t r{{ softmax_dim }} = 0; r{{ softmax_dim }} < {{ softmax_size }}; ++r{{ softmax_dim }}) {
         sum += {{ exp_fn }}({{ input_access_r }} - max_val);
     }
 {% if is_log %}

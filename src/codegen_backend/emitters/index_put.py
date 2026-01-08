@@ -143,7 +143,7 @@ def _write_index_put_kernel(
         update_body_lines = []
         for dim, access in enumerate(index_accesses):
             update_body_lines.append(
-                f"{update_indent}int64_t idx{dim} = (int64_t)({access});"
+                f"{update_indent}ssize_t idx{dim} = (ssize_t)({access});"
             )
             update_body_lines.append(
                 f"{update_indent}if (idx{dim} < 0) {{ idx{dim} += {input_shape[dim]}; }}"

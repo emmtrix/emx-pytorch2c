@@ -75,7 +75,7 @@ def _write_gather_kernel(
         c_type=dtype.c_type,
     )
     body_lines = [
-        f"{indent}int64_t idx = (int64_t)({index_access});",
+        f"{indent}ssize_t idx = (ssize_t)({index_access});",
         f"{indent}{output_access} = {input_access};",
     ]
     footer_lines = emit_footer(output_shape, indent)
