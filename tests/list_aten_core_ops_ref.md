@@ -163,7 +163,7 @@
 | `scatter_add` | — |
 | `scatter_reduce.two` | — |
 | `select.int` | ✅ |
-| `select_scatter` | — |
+| `select_scatter` | ✅ |
 | `sigmoid` | ✅ |
 | `sign` | ✅ |
 | `sin` | ✅ |
@@ -197,5 +197,5 @@
 
 ## Summary
 - total core aten ops: 192
-- supported by codegen: 147 / 192 (76.6%)
-- unsupported by codegen: 45
+- supported by codegen: 149 / 192 (77.6%)
+- unsupported by codegen: 43

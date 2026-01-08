@@ -85,6 +85,10 @@ def build_supported_ops() -> dict[str, _OpSpec]:
         torch.ops.aten.masked_scatter_,
         arg_index=0,
     ).build()
+    registry.register_op("select_scatter", kind=OpKind.SELECT_SCATTER).targets(
+        torch.ops.aten.select_scatter.default,
+        torch.ops.aten.select_scatter,
+    ).build()
     registry.register_op("index_select", kind=OpKind.INDEX_SELECT).targets(
         torch.index_select,
         torch.ops.aten.index_select.default,

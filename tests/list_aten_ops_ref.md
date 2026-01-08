@@ -1444,7 +1444,7 @@
 | `select` | ✅ |
 | `select_backward` | — |
 | `select_copy` | — |
-| `select_scatter` | — |
+| `select_scatter` | ✅ |
 | `selu` | ✅ |
 | `selu_` | — |
 | `set` | — |
@@ -1719,5 +1719,5 @@
 
 ## Summary
 - total aten ops: 1714
-- supported by codegen: 277 / 1714 (16.2 %)
-- unsupported by codegen: 1437
+- supported by codegen: 279 / 1714 (16.3 %)
+- unsupported by codegen: 1435

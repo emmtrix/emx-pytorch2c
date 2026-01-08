@@ -37,6 +37,7 @@ from codegen_backend.groups.builtin.tensor.parsing import (
     parse_index_select_args,
     parse_linear_args,
     parse_masked_scatter_args,
+    parse_select_scatter_args,
     parse_resize_size,
 )
 from codegen_backend.graph import _OpNode
@@ -905,6 +906,69 @@ class TensorOpBuilder:
         )
         return self._finalize_node(
             node, op_node, dtype_info, [input_shape, index_shape]
+        )
+
+    def build_select_scatter(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        inplace_input: int | None = None,
+    ) -> _OpNode:
+        input_arg, src, dim, index = parse_select_scatter_args(node)
+        if not isinstance(input_arg, torch.fx.Node) or input_arg not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if not isinstance(src, torch.fx.Node) or src not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if self._dtypes[input_arg] is not dtype_info.torch_dtype:
+            raise CodegenBackendError(
+                "codegen select_scatter expects input to match the graph dtype"
+            )
+        if self._dtypes[src] is not dtype_info.torch_dtype:
+            raise CodegenBackendError(
+                "codegen select_scatter expects src to match the graph dtype"
+            )
+        input_shape = self._shapes[input_arg]
+        if not input_shape:
+            raise CodegenBackendError(
+                "codegen select_scatter expects input to have at least 1 dimension"
+            )
+        dim_value = parse_constant_int(op_spec.name, "dim", dim)
+        if dim_value < 0:
+            dim_value += len(input_shape)
+        if dim_value < 0 or dim_value >= len(input_shape):
+            raise CodegenBackendError("codegen select_scatter dim is out of range")
+        index_value = parse_constant_int(op_spec.name, "index", index)
+        if index_value < 0:
+            index_value += input_shape[dim_value]
+        if index_value < 0 or index_value >= input_shape[dim_value]:
+            raise CodegenBackendError(
+                "codegen select_scatter index is out of range"
+            )
+        src_shape = self._shapes[src]
+        expected_src_shape = tuple(
+            size
+            for dim_index, size in enumerate(input_shape)
+            if dim_index != dim_value
+        )
+        if src_shape != expected_src_shape:
+            raise CodegenBackendError(
+                "codegen select_scatter expects src to match input shape without dim"
+            )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[input_arg, src],
+            output_shape=(),
+            inplace_input=inplace_input,
+            params={"dim": dim_value, "index": index_value},
+        )
+        return self._finalize_node(
+            node,
+            op_node,
+            dtype_info,
+            [input_shape, src_shape],
+            inplace_input=inplace_input,
         )
 
     def build_view(

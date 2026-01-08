@@ -32,6 +32,7 @@ from codegen_backend.emitters.masked_scatter import MaskedScatterEmitter
 from codegen_backend.emitters.pad import PadEmitter
 from codegen_backend.emitters.pdist import PdistEmitter
 from codegen_backend.emitters.resize import ResizeEmitter
+from codegen_backend.emitters.select_scatter import SelectScatterEmitter
 from codegen_backend.emitters.view import ViewEmitter
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.graph import _GenericGraph, _OpNode
@@ -326,6 +327,20 @@ class IndexPutHandler(OpKindHandler):
 
 
 class MaskedScatterHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(node_index, op_node, graph)
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        return input_shapes[0]
+
+
+class SelectScatterHandler(OpKindHandler):
     def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
@@ -1288,6 +1303,11 @@ def build_handlers(context: TensorContext) -> Dict[OpKind, OpKindHandler]:
             MaskedScatterEmitter(),
             builder=_build_with_inplace(context, "build_masked_scatter"),
         ),
+        OpKind.SELECT_SCATTER: SelectScatterHandler(
+            context,
+            SelectScatterEmitter(),
+            builder=_build_with_inplace(context, "build_select_scatter"),
+        ),
         OpKind.INDEX_SELECT: IndexSelectHandler(
             context,
             IndexSelectEmitter(),
@@ -1425,6 +1445,9 @@ def build_kind_handler_registrations() -> Dict[OpKind, "KindHandlerRegistration"
         ),
         OpKind.MASKED_SCATTER: KindHandlerRegistration(
             MaskedScatterHandler, MaskedScatterEmitter
+        ),
+        OpKind.SELECT_SCATTER: KindHandlerRegistration(
+            SelectScatterHandler, SelectScatterEmitter
         ),
     }
 
