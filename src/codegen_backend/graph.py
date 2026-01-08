@@ -43,6 +43,10 @@ class _GenericGraph:
     dtype: _CodegenDType
     alias_map: Dict[torch.fx.Node, torch.fx.Node]
     empty_outputs: set[torch.fx.Node]
+    variable_dim_names: Dict[torch.fx.Node, Dict[int, str]] = field(
+        default_factory=dict
+    )
+    variable_dim_order: List[str] = field(default_factory=list)
 
 
 @dataclass

@@ -38,6 +38,9 @@ class KernelEmitRequest:
     input_shapes: Sequence[Sequence[int]] = field(default_factory=tuple)
     input_strides: Sequence[Sequence[int]] = field(default_factory=tuple)
     input_dtypes: Sequence[object] = field(default_factory=tuple)
+    input_dim_names: Sequence[Mapping[int, str]] = field(default_factory=tuple)
+    output_dim_names: Mapping[int, str] = field(default_factory=dict)
+    dim_order: Sequence[str] = field(default_factory=tuple)
     dtype: object | None = None
     reduction_dims: Sequence[int] | None = None
     keepdim: bool | None = None
@@ -266,6 +269,8 @@ def _make_request(
     graph: _GenericGraph,
     inputs: Sequence["torch.fx.Node"],
 ) -> KernelEmitRequest:
+    variable_dim_names = getattr(graph, "variable_dim_names", {})
+    dim_order = getattr(graph, "variable_dim_order", [])
     return KernelEmitRequest(
         node_index=node_index,
         op_node=op_node,
@@ -276,6 +281,11 @@ def _make_request(
         input_shapes=[graph.shapes[node] for node in inputs],
         input_strides=[graph.strides[node] for node in inputs],
         input_dtypes=[graph.dtypes[node] for node in inputs],
+        input_dim_names=[
+            variable_dim_names.get(node, {}) for node in inputs
+        ],
+        output_dim_names=variable_dim_names.get(op_node.node, {}),
+        dim_order=dim_order,
         dtype=graph.dtype,
         params=dict(op_node.params),
     )

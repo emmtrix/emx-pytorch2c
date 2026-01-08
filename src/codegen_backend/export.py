@@ -9,9 +9,10 @@ import torch.fx
 
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.backend import CodegenBackend
+from codegen_backend.backend_helpers import _resolve_alias
 from codegen_backend.c_types import _dtype_to_c_type, _input_c_type
 from codegen_backend.dtypes import _CodegenDType
-from codegen_backend.emitters.base import _format_array_suffix
+from codegen_backend.emitters.base import _format_array_suffix, _format_dim_args
 from codegen_backend.graph import _GenericGraph
 
 
@@ -251,14 +252,93 @@ def _insert_inline_weights(source: str, weight_lines: List[str]) -> str:
     return "\n".join(lines[:insert_at] + weight_lines + lines[insert_at:]) + "\n"
 
 
+def _build_variable_dim_names(
+    graph: _GenericGraph,
+    variable_dim_inputs: Dict[int, Sequence[int]],
+    variable_dim_outputs: Dict[int, Sequence[int]],
+) -> tuple[
+    List[str], Dict[int, Dict[int, str]], Dict[int, Dict[int, str]], Dict[torch.fx.Node, Dict[int, str]]
+]:
+    dim_order: List[str] = []
+    dim_names_inputs: Dict[int, Dict[int, str]] = {}
+    dim_names_outputs: Dict[int, Dict[int, str]] = {}
+    dim_vars: Dict[tuple[str, int, int], str] = {}
+
+    def _register_dim(kind: str, tensor_index: int, dim_index: int) -> str:
+        key = (kind, tensor_index, dim_index)
+        if key not in dim_vars:
+            dim_name = f"dim{len(dim_order) + 1}"
+            dim_vars[key] = dim_name
+            dim_order.append(dim_name)
+        return dim_vars[key]
+
+    def _build_dim_names(
+        kind: str,
+        tensor_index: int,
+        shape: Sequence[int],
+        variable_dims: Dict[int, Sequence[int]],
+    ) -> Dict[int, str]:
+        dim_names: Dict[int, str] = {}
+        for dim_index in variable_dims.get(tensor_index, ()):
+            if dim_index < 0 or dim_index >= len(shape):
+                raise ValueError(
+                    f"variable {kind} dim {dim_index} is out of range for shape {shape}"
+                )
+            dim_names[dim_index] = _register_dim(kind, tensor_index, dim_index)
+        return dim_names
+
+    for idx, node in enumerate(graph.tensor_placeholders):
+        dim_names = _build_dim_names(
+            "input", idx, graph.shapes[node], variable_dim_inputs
+        )
+        if dim_names:
+            dim_names_inputs[idx] = dim_names
+
+    for idx, node in enumerate(graph.output_nodes):
+        dim_names = _build_dim_names(
+            "output", idx, graph.shapes[node], variable_dim_outputs
+        )
+        if dim_names:
+            dim_names_outputs[idx] = dim_names
+
+    variable_dim_names: Dict[torch.fx.Node, Dict[int, str]] = {}
+    for idx, node in enumerate(graph.tensor_placeholders):
+        if idx in dim_names_inputs:
+            variable_dim_names[node] = dim_names_inputs[idx]
+    for idx, node in enumerate(graph.output_nodes):
+        if idx in dim_names_outputs:
+            variable_dim_names[node] = dim_names_outputs[idx]
+
+    for op_node in graph.op_nodes:
+        if op_node.node in variable_dim_names:
+            continue
+        for input_node in op_node.inputs:
+            resolved = _resolve_alias(input_node, graph.alias_map)
+            if resolved in variable_dim_names and graph.shapes[resolved] == tuple(
+                op_node.output_shape
+            ):
+                variable_dim_names[op_node.node] = variable_dim_names[resolved]
+                break
+
+    for idx, node in enumerate(graph.output_nodes):
+        if idx not in dim_names_outputs and node in variable_dim_names:
+            dim_names_outputs[idx] = variable_dim_names[node]
+
+    return dim_order, dim_names_inputs, dim_names_outputs, variable_dim_names
+
+
 def _emit_model_wrapper(
     graph: _GenericGraph,
     weight_placeholders: Dict[torch.fx.Node, str],
     function_name: str,
+    dim_order: Sequence[str],
+    input_dim_names: Dict[int, Dict[int, str]],
+    output_dim_names: Dict[int, Dict[int, str]],
 ) -> str:
     input_args: List[str] = []
     call_args: List[str] = []
     array_lines: List[str] = []
+
     use_array_signature = function_name in {"entry", "model_run"}
     input_index = 0
     for placeholder in graph.tensor_placeholders:
@@ -268,8 +348,9 @@ def _emit_model_wrapper(
             continue
         c_type = _input_c_type(graph.dtypes[placeholder], graph.dtype)
         arg_name = f"in{input_index}"
+        dim_names = input_dim_names.get(input_index, {})
         input_index += 1
-        input_suffix = _format_array_suffix(graph.shapes[placeholder])
+        input_suffix = _format_array_suffix(graph.shapes[placeholder], dim_names)
         if use_array_signature:
             input_args.append(f"const {c_type} {arg_name}{input_suffix}")
             call_args.append(arg_name)
@@ -285,7 +366,8 @@ def _emit_model_wrapper(
     for idx, output_node in enumerate(graph.output_nodes):
         output_c_type = _dtype_to_c_type(graph.dtypes[output_node], graph.dtype)
         output_name = f"out{idx}"
-        output_suffix = _format_array_suffix(graph.shapes[output_node])
+        dim_names = output_dim_names.get(idx, {})
+        output_suffix = _format_array_suffix(graph.shapes[output_node], dim_names)
         if use_array_signature:
             output_args.append(f"{output_c_type} {output_name}{output_suffix}")
             call_args.append(output_name)
@@ -297,8 +379,18 @@ def _emit_model_wrapper(
                 f"({output_c_type} (*){output_suffix}){output_name};"
             )
             call_args.append(f"*{array_name}")
-    signature_args = ", ".join([*input_args, *output_args])
-    call = ", ".join(call_args)
+    signature_parts = []
+    dim_args = _format_dim_args(dim_order)
+    if dim_args:
+        signature_parts.append(dim_args)
+    signature_parts.extend(input_args)
+    signature_parts.extend(output_args)
+    signature_args = ", ".join(signature_parts)
+    call_parts = []
+    if dim_order:
+        call_parts.append(", ".join(dim_order))
+    call_parts.extend(call_args)
+    call = ", ".join(call_parts)
     wrapper_lines = [
         f"void {function_name}({signature_args}) {{",
         *array_lines,
@@ -315,6 +407,8 @@ def export_generic_c(
     function_name: str = "model_run",
     truncate_weights_after: int | None = None,
     temp_allocation_threshold: int = 1024,
+    variable_dim_inputs: Dict[int, Sequence[int]] | None = None,
+    variable_dim_outputs: Dict[int, Sequence[int]] | None = None,
 ) -> str:
     if truncate_weights_after is not None and truncate_weights_after < 1:
         raise ValueError("truncate_weights_after must be >= 1")
@@ -328,6 +422,20 @@ def export_generic_c(
     ) = _lift_get_attr_to_placeholders(gm, example_inputs)
     backend = CodegenBackend(temp_allocation_threshold=temp_allocation_threshold)
     graph = backend._analyze_generic_graph(lifted_gm, lifted_inputs)
+    variable_dim_inputs = variable_dim_inputs or {}
+    variable_dim_outputs = variable_dim_outputs or {}
+    (
+        dim_order,
+        input_dim_names,
+        output_dim_names,
+        variable_dim_names,
+    ) = _build_variable_dim_names(
+        graph,
+        variable_dim_inputs,
+        variable_dim_outputs,
+    )
+    graph.variable_dim_names = variable_dim_names
+    graph.variable_dim_order = dim_order
     source = backend._write_generic_source(graph)
     weights = {
         weight_placeholders[node]: tensor
@@ -337,7 +445,14 @@ def export_generic_c(
         weights, graph.dtype, truncate_weights_after=truncate_weights_after
     )
     source = _insert_inline_weights(source, weight_lines)
-    wrapper = _emit_model_wrapper(graph, weight_placeholders, function_name)
+    wrapper = _emit_model_wrapper(
+        graph,
+        weight_placeholders,
+        function_name,
+        dim_order=dim_order,
+        input_dim_names=input_dim_names,
+        output_dim_names=output_dim_names,
+    )
     final_source = source.rstrip() + "\n\n" + wrapper
     Path(out_path).write_text(final_source, encoding="utf-8")
     return final_source
