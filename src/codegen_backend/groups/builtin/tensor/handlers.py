@@ -1032,22 +1032,37 @@ class _BackendConcatHandler(ConcatHandler):
             raise CodegenBackendError(
                 "codegen cat expects a non-empty tensor list input"
             )
-        rank = len(input_shapes[0])
+        base_shape = next(
+            (shape for shape in input_shapes if math.prod(shape) > 0),
+            input_shapes[0],
+        )
+        rank = len(base_shape)
         if rank == 0:
             raise CodegenBackendError("codegen cat expects inputs with rank >= 1")
         if concat_dim < 0:
             concat_dim += rank
         if concat_dim < 0 or concat_dim >= rank:
             raise CodegenBackendError("codegen cat dim is out of range")
+        normalized_shapes: List[tuple[int, ...]] = []
         for shape in input_shapes:
             if len(shape) != rank:
+                if len(shape) == 1 and math.prod(shape) == 0:
+                    normalized_shapes.append(
+                        tuple(
+                            0 if dim == concat_dim else base_shape[dim]
+                            for dim in range(rank)
+                        )
+                    )
+                    continue
                 raise CodegenBackendError(
                     "codegen cat expects inputs with the same rank"
                 )
+            normalized_shapes.append(shape)
+        for shape in normalized_shapes:
             for dim, size in enumerate(shape):
                 if dim == concat_dim:
                     continue
-                if size != input_shapes[0][dim]:
+                if size != normalized_shapes[0][dim]:
                     raise CodegenBackendError(
                         "codegen cat expects input shapes to match except in the concat dimension"
                     )
@@ -1065,7 +1080,7 @@ class _BackendConcatHandler(ConcatHandler):
             params={"dim": concat_dim},
         )
         output_shape = self._ctx.analysis_service.infer_output_shape(
-            op_node, input_shapes
+            op_node, normalized_shapes
         )
         op_node.output_shape = output_shape
         shapes[node] = output_shape

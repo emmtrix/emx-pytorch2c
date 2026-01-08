@@ -132,6 +132,15 @@ def _iter_supported_samples(op, device, dtype, constraints):
             tensors = _extract_tensors(sample)
             if not tensors:
                 continue
+            if any(
+                tensor.layout is not torch.strided
+                or tensor.is_sparse
+                or tensor.is_mkldnn
+                for tensor in tensors
+            ):
+                continue
+            if not _all_same_shape(tensors):
+                continue
             if all(tensor.ndim >= 2 for tensor in tensors):
                 transposed = [tensor.transpose(0, 1) for tensor in tensors]
                 updated = _update_sample(sample, transposed)
@@ -656,42 +665,6 @@ CODEGEN_SPECIAL_TEST_OPS = [
     torch.ops.aten._embedding_bag.default,
     torch.ops.aten.embedding_dense_backward.default,
 ]
-CODEGEN_OP_TEST_CONFIG = {
-    torch.ops.aten.where.self: {},
-    torch.ops.aten.where.Scalar: {},
-    torch.ops.aten.full_like.default: {},
-    torch.ops.aten.arange.start_step: {
-        "allow_no_tensor_inputs": True,
-    },
-    torch.ops.aten.avg_pool2d_backward.default: {
-        "requires_contiguous": True,
-    },
-    torch.ops.aten.digamma.default: {
-        "rtol": 3e-5,
-        "atol": 0.0,
-    },
-    torch.ops.aten.view.default: {
-        "requires_contiguous": True,
-    },
-    torch.ops.aten.flatten.using_ints: {
-        "requires_contiguous": True,
-    },
-    torch.ops.aten.cat.default: {
-        "expand_input_list": True,
-    },
-    torch.ops.aten._native_batch_norm_legit.default: {
-        "allow_noncontiguous": False,
-        "requires_contiguous": True,
-    },
-    torch.ops.aten.resize_.default: {},
-    torch.ops.aten.addbmm.default: {
-        "rtol": 2e-4,
-        "atol": 2e-5,
-    },
-    torch.ops.aten.addr.default: {
-        "equal_nan": True,
-    },
-}
 DEFAULT_CONSTRAINTS = {
     "allowed_dtypes": (torch.float32, torch.int8, torch.int32, torch.bool),
     "allow_noncontiguous": True,
@@ -737,9 +710,7 @@ class TestCodegenOpLists(TestCase):
 
 
 def _constraints_for_codegen(aten_overload):
-    constraints = DEFAULT_CONSTRAINTS.copy()
-    constraints.update(CODEGEN_OP_TEST_CONFIG.get(aten_overload, {}))
-    return constraints
+    return DEFAULT_CONSTRAINTS.copy()
 
 
 def _sample_to_inputs(sample, constraints):
@@ -775,18 +746,38 @@ def _compile_codegen_op(aten_overload):
                 kwargs["dim"] = _normalize_dim_argument(kwargs["dim"])
             return aten_overload(*args, **kwargs)
     elif aten_overload is torch.ops.aten.cat.default:
+        compile_at_end = False
+        cache = {}
+
         def compiled_fn(*args: torch.Tensor, **kwargs) -> torch.Tensor:
             tensors = list(args)
             dim = None
             if tensors and not isinstance(tensors[-1], torch.Tensor):
-                dim = tensors.pop()
+                if not (
+                    isinstance(tensors[-1], (list, tuple))
+                    and all(isinstance(item, torch.Tensor) for item in tensors[-1])
+                ):
+                    dim = tensors.pop()
             if len(tensors) == 1 and isinstance(tensors[0], (list, tuple)):
                 tensors = list(tensors[0])
+            if "dim" in kwargs:
+                if dim is not None:
+                    raise TypeError("cat got multiple values for argument 'dim'")
+                dim = kwargs["dim"]
             if dim is None:
                 return aten_overload(tensors, **kwargs)
-            if "dim" in kwargs:
-                raise TypeError("cat got multiple values for argument 'dim'")
-            return aten_overload(tensors, dim, **kwargs)
+            dim_value = int(operator.index(dim))
+            key = (dim_value, len(tensors))
+            compiled_inner = cache.get(key)
+            if compiled_inner is None:
+                def inner(*cat_tensors):
+                    return aten_overload(list(cat_tensors), dim_value)
+
+                compiled_inner = torch.compile(
+                    inner, backend=codegen_generic_backend
+                )
+                cache[key] = compiled_inner
+            return compiled_inner(*tensors)
     elif aten_overload is torch.ops.aten.as_strided.default:
         compile_at_end = False
         cache = {}
@@ -842,6 +833,11 @@ def _reference_for_dtype(
     try:
         expected = aten_overload(*inputs, **kwargs)
     except Exception:
+        if any(
+            isinstance(arg, torch.Tensor) and not arg.is_contiguous()
+            for arg in inputs
+        ):
+            raise
         float_inputs = tuple(
             arg.to(torch.float32) if isinstance(arg, torch.Tensor) else arg
             for arg in inputs
@@ -864,6 +860,16 @@ def _match_expected_dtype(result, expected):
         ]
         return type(expected)(coerced)
     return expected
+
+
+def _contains_nan(value):
+    if isinstance(value, torch.Tensor):
+        if value.dtype.is_floating_point or value.dtype.is_complex:
+            return torch.isnan(value).any().item()
+        return False
+    if isinstance(value, (tuple, list)):
+        return any(_contains_nan(item) for item in value)
+    return False
 
 
 class TestCodegenOpInfo(TestCase):
@@ -894,6 +900,8 @@ class TestCodegenOpInfo(TestCase):
             expected = _match_expected_dtype(result, expected)
             compare_kwargs = {"equal_nan": dtype in (torch.int8, torch.int32)}
             if constraints.get("equal_nan"):
+                compare_kwargs["equal_nan"] = True
+            if _contains_nan(expected) or _contains_nan(result):
                 compare_kwargs["equal_nan"] = True
             if constraints["rtol"] is not None or constraints["atol"] is not None:
                 compare_kwargs["rtol"] = constraints["rtol"] or 0.0

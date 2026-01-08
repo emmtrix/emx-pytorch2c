@@ -197,15 +197,10 @@ def parse_concat_args(
             raise CodegenBackendError(
                 f"codegen cat got unexpected kwargs: {sorted(extra)}"
             )
-    if isinstance(dim, torch.fx.Node):
-        raise CodegenBackendError("codegen cat expects dim to be an int")
     if dim is None:
         dim_value = 0
     else:
-        try:
-            dim_value = operator.index(dim)
-        except TypeError as exc:
-            raise CodegenBackendError("codegen cat expects dim to be an int") from exc
+        dim_value = parse_constant_int("cat", "dim", dim)
     if not isinstance(tensors_arg, (list, tuple)) or not tensors_arg:
         raise CodegenBackendError("codegen cat expects a non-empty tensor list input")
     for item in tensors_arg:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import List, Sequence
 
 from codegen_backend.errors import CodegenBackendError
@@ -40,6 +41,12 @@ def _write_concat_kernel(
     output_is_contiguous = _is_contiguous(output_shape, output_strides)
     offset = 0
     for idx, (shape, strides) in enumerate(zip(input_shapes, input_strides)):
+        if len(shape) != len(output_shape):
+            if math.prod(shape) == 0:
+                continue
+            raise CodegenBackendError(
+                "codegen cat expects inputs with the same rank"
+            )
         loop_lines, indent = emit_loops(shape)
         lines.extend(loop_lines)
         indices = [f"i{dim}" for dim in range(len(shape))]
