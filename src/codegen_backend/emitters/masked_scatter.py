@@ -73,7 +73,7 @@ def _write_masked_scatter_kernel(
         broadcast_contiguous=False,
         c_type=mask_c_type,
     )
-    preamble_lines = ["    size_t source_index = 0;"]
+    preamble_lines = ["    ssize_t source_index = 0;"]
     body_lines = [f"{indent}if ({mask_access} != 0) {{"]
     inner_indent = f"{indent}    "
     if source_shape:
@@ -86,11 +86,11 @@ def _write_masked_scatter_kernel(
             sizes=source_shape,
             c_type=source_c_type,
         )
-        body_lines.append(f"{inner_indent}size_t src_linear = source_index;")
+        body_lines.append(f"{inner_indent}ssize_t src_linear = source_index;")
         for dim in reversed(range(len(source_shape))):
             size = source_shape[dim]
             body_lines.append(
-                f"{inner_indent}size_t src_i{dim} = src_linear % {size};"
+                f"{inner_indent}ssize_t src_i{dim} = src_linear % {size};"
             )
             body_lines.append(
                 f"{inner_indent}src_linear /= {size};"

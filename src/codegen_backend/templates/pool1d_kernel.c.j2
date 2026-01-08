@@ -1,12 +1,12 @@
 {{ signature }}
-    for (size_t n = 0; n < {{ batch }}; ++n) {
-        for (size_t c = 0; c < {{ channels }}; ++c) {
-            for (size_t ol = 0; ol < {{ out_l }}; ++ol) {
+    for (ssize_t n = 0; n < {{ batch }}; ++n) {
+        for (ssize_t c = 0; c < {{ channels }}; ++c) {
+            for (ssize_t ol = 0; ol < {{ out_l }}; ++ol) {
                 int64_t in_l_base = (int64_t)ol * {{ stride }} - {{ padding }};
                 {% if pool_kind == "max_pool1d" %}
                 bool has_value = false;
                 {{ c_type }} max_val = 0;
-                for (size_t kl = 0; kl < {{ k_l }}; ++kl) {
+                for (ssize_t kl = 0; kl < {{ k_l }}; ++kl) {
                     int64_t in_l_idx = in_l_base + (int64_t)kl * {{ dilation }};
                     if (in_l_idx < 0 || in_l_idx >= {{ in_l }}) {
                         continue;
@@ -21,7 +21,7 @@
                 {% else %}
                 {{ c_type }} acc = 0;
                 int64_t count = 0;
-                for (size_t kl = 0; kl < {{ k_l }}; ++kl) {
+                for (ssize_t kl = 0; kl < {{ k_l }}; ++kl) {
                     int64_t in_l_idx = in_l_base + (int64_t)kl * {{ dilation }};
                     if (in_l_idx < 0 || in_l_idx >= {{ in_l }}) {
                         continue;

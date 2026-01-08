@@ -1,19 +1,19 @@
 #include <stdint.h>
-#include <stddef.h>
+#include <sys/types.h>
 #include <stdbool.h>
 #include "ops_scalar_i32.h"
 
 void node1_mul_i32(const int32_t a[2][3], const int32_t b[2][3], int32_t out[2][3]) {
-    for (size_t i0 = 0; i0 < 2; ++i0) {
-        for (size_t i1 = 0; i1 < 3; ++i1) {
+    for (ssize_t i0 = 0; i0 < 2; ++i0) {
+        for (ssize_t i1 = 0; i1 < 3; ++i1) {
             out[i0][i1] = ref_scalar_i32_mul(a[i0][i1], b[i0][i1]);
         }
     }
 }
 
 void node2_mul_i32(const int32_t a[2][3], const int32_t b[2][3], int32_t out[2][3]) {
-    for (size_t i0 = 0; i0 < 2; ++i0) {
-        for (size_t i1 = 0; i1 < 3; ++i1) {
+    for (ssize_t i0 = 0; i0 < 2; ++i0) {
+        for (ssize_t i1 = 0; i1 < 3; ++i1) {
             out[i0][i1] = ref_scalar_i32_mul(a[i0][i1], b[i0][i1]);
         }
     }

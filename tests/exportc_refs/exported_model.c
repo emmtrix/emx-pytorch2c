@@ -1,5 +1,5 @@
 #include <stdint.h>
-#include <stddef.h>
+#include <sys/types.h>
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
@@ -23,10 +23,10 @@ static const float weight_weight[4][3] = {
 };
 
 void node1_addmm_f32(const float input[3], const float mat1[2][4], const float mat2[4][3], float out[2][3]) {
-    for (size_t i = 0; i < 2; ++i) {
-        for (size_t j = 0; j < 3; ++j) {
+    for (ssize_t i = 0; i < 2; ++i) {
+        for (ssize_t j = 0; j < 3; ++j) {
             float acc = 0.0f;
-            for (size_t t = 0; t < 4; ++t) {
+            for (ssize_t t = 0; t < 4; ++t) {
                 acc += mat1[i][t] * mat2[t][j];
             }
             out[i][j] = (1.0f) * ((float*)input)[j * 1] + (1.0f) * acc;

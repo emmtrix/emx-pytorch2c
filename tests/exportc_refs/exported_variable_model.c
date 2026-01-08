@@ -1,11 +1,11 @@
 #include <stdint.h>
-#include <stddef.h>
+#include <sys/types.h>
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
 void node1_add_f32(int dim1, const float a[dim1][4], float out[dim1][4]) {
-    for (size_t i0 = 0; i0 < dim1; ++i0) {
-        for (size_t i1 = 0; i1 < 4; ++i1) {
+    for (ssize_t i0 = 0; i0 < dim1; ++i0) {
+        for (ssize_t i1 = 0; i1 < 4; ++i1) {
             out[i0][i1] = ref_scalar_f32_add(a[i0][i1], 1.0f);
         }
     }

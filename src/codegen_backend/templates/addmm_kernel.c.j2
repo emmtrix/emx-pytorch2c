@@ -1,8 +1,8 @@
 {{ signature }}
-    for (size_t i = 0; i < {{ m }}; ++i) {
-        for (size_t j = 0; j < {{ n }}; ++j) {
+    for (ssize_t i = 0; i < {{ m }}; ++i) {
+        for (ssize_t j = 0; j < {{ n }}; ++j) {
             {{ acc_type }} acc = {{ acc_init }};
-            for (size_t t = 0; t < {{ k }}; ++t) {
+            for (ssize_t t = 0; t < {{ k }}; ++t) {
                 acc += {{ mat1_access }} * {{ mat2_access }};
             }
             {{ out_access }} = ({{ beta }}) * {{ input_access }} + ({{ alpha }}) * acc;

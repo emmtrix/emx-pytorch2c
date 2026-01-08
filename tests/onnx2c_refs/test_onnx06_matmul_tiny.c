@@ -1,5 +1,5 @@
 #include <stdint.h>
-#include <stddef.h>
+#include <sys/types.h>
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
@@ -13,10 +13,10 @@ static const float weight_MatMul_my_weight[2][2] = {
 };
 
 void node1_linear_f32(const float input[1][2], const float weight[2][2], float out[1][2]) {
-    for (size_t i0 = 0; i0 < 1; ++i0) {
-        for (size_t j = 0; j < 2; ++j) {
+    for (ssize_t i0 = 0; i0 < 1; ++i0) {
+        for (ssize_t j = 0; j < 2; ++j) {
             float acc = 0.0f;
-            for (size_t t = 0; t < 2; ++t) {
+            for (ssize_t t = 0; t < 2; ++t) {
                 acc += input[i0][t] * ((float*)weight)[j * 1 + t * 2];
             }
             out[i0][j] = acc + 0;

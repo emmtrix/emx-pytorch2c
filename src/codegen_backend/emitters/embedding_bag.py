@@ -96,28 +96,28 @@ def _write_embedding_bag_kernel(
     )
     zero_literal = _format_scalar_literal(0.0, dtype)
     body_lines = [
-        f"{indent}size_t start = (size_t)({offsets_access});",
+        f"{indent}ssize_t start = (ssize_t)({offsets_access});",
     ]
     if include_last_offset:
         body_lines.append(
-            f"{indent}size_t end = (size_t)({offsets_next_access});"
+            f"{indent}ssize_t end = (ssize_t)({offsets_next_access});"
         )
     else:
         body_lines.append(
-            f"{indent}size_t end = (i0 + 1 < {offsets_shape[0]}) "
-            f"? (size_t)({offsets_next_access}) "
+            f"{indent}ssize_t end = (i0 + 1 < {offsets_shape[0]}) "
+            f"? (ssize_t)({offsets_next_access}) "
             f": {indices_shape[0]};"
         )
     body_lines.extend(
         [
             f"{indent}{dtype.c_type} acc = {zero_literal};",
-            f"{indent}size_t count = 0;",
-            f"{indent}for (size_t j = start; j < end; ++j) {{",
+            f"{indent}ssize_t count = 0;",
+            f"{indent}for (ssize_t j = start; j < end; ++j) {{",
         ]
     )
     inner_indent = f"{indent}    "
     body_lines.append(
-        f"{inner_indent}size_t idx = (size_t)({indices_access});"
+        f"{inner_indent}ssize_t idx = (ssize_t)({indices_access});"
     )
     if padding_idx != -1:
         body_lines.extend(

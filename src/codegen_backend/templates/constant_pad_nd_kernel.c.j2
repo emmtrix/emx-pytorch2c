@@ -1,7 +1,7 @@
 {{ signature }}
 {% if has_input_shape %}
 {% for dim in range(output_shape | length) %}
-    for (size_t i{{ dim }} = 0; i{{ dim }} < {{ output_shape[dim] }}; ++i{{ dim }}) {
+    for (ssize_t i{{ dim }} = 0; i{{ dim }} < {{ output_shape[dim] }}; ++i{{ dim }}) {
 {% endfor %}
     bool in_bounds = true;
 {% for dim in range(input_shape | length) %}

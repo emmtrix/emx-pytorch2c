@@ -1,5 +1,5 @@
 #include <stdint.h>
-#include <stddef.h>
+#include <sys/types.h>
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
@@ -10,22 +10,22 @@ void node1_conv2d_f32(const float input[1][2][5][5], const float weight[3][2][3]
     int64_t out_pad_w = 0;
     (void)out_pad_h;
     (void)out_pad_w;
-    for (size_t n = 0; n < 1; ++n) {
-        for (size_t oc = 0; oc < 3; ++oc) {
+    for (ssize_t n = 0; n < 1; ++n) {
+        for (ssize_t oc = 0; oc < 3; ++oc) {
             int64_t group = (int64_t)oc / out_per_group;
-            for (size_t oh = 0; oh < 3; ++oh) {
-                for (size_t ow = 0; ow < 3; ++ow) {
+            for (ssize_t oh = 0; oh < 3; ++oh) {
+                for (ssize_t ow = 0; ow < 3; ++ow) {
                     float acc = 0.0f;
                     int64_t in_h_base = (int64_t)oh * 1 - 0;
                     int64_t in_w_base = (int64_t)ow * 1 - 0;
-                    for (size_t ic = 0; ic < in_per_group; ++ic) {
+                    for (ssize_t ic = 0; ic < in_per_group; ++ic) {
                         int64_t in_c = group * in_per_group + (int64_t)ic;
-                        for (size_t kh = 0; kh < 3; ++kh) {
+                        for (ssize_t kh = 0; kh < 3; ++kh) {
                             int64_t in_h_idx = in_h_base + (int64_t)kh * 1;
                             if (in_h_idx < 0 || in_h_idx >= 5) {
                                 continue;
                             }
-                            for (size_t kw = 0; kw < 3; ++kw) {
+                            for (ssize_t kw = 0; kw < 3; ++kw) {
                                 int64_t in_w_idx = in_w_base + (int64_t)kw * 1;
                                 if (in_w_idx < 0 || in_w_idx >= 5) {
                                     continue;

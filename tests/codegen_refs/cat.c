@@ -1,16 +1,16 @@
 #include <stdint.h>
-#include <stddef.h>
+#include <sys/types.h>
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
 void node1_cat_f32(const float a0[2][2], const float a1[2][1], float out[2][3]) {
-    for (size_t i0 = 0; i0 < 2; ++i0) {
-        for (size_t i1 = 0; i1 < 2; ++i1) {
+    for (ssize_t i0 = 0; i0 < 2; ++i0) {
+        for (ssize_t i1 = 0; i1 < 2; ++i1) {
             out[i0][i1 + 0] = a0[i0][i1];
         }
     }
-    for (size_t i0 = 0; i0 < 2; ++i0) {
-        for (size_t i1 = 0; i1 < 1; ++i1) {
+    for (ssize_t i0 = 0; i0 < 2; ++i0) {
+        for (ssize_t i1 = 0; i1 < 1; ++i1) {
             out[i0][i1 + 2] = a1[i0][i1];
         }
     }

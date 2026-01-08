@@ -1,15 +1,15 @@
 {{ signature }}
     int64_t in_per_group = {{ in_channels }} / {{ groups }};
     int64_t out_per_group = {{ out_channels }} / {{ groups }};
-    for (size_t n = 0; n < {{ batch }}; ++n) {
-        for (size_t oc = 0; oc < {{ out_channels }}; ++oc) {
+    for (ssize_t n = 0; n < {{ batch }}; ++n) {
+        for (ssize_t oc = 0; oc < {{ out_channels }}; ++oc) {
             int64_t group = (int64_t)oc / out_per_group;
-            for (size_t ol = 0; ol < {{ out_l }}; ++ol) {
+            for (ssize_t ol = 0; ol < {{ out_l }}; ++ol) {
                 {{ c_type }} acc = 0.0f;
                 int64_t in_l_base = (int64_t)ol * {{ stride }} - {{ padding }};
-                for (size_t ic = 0; ic < in_per_group; ++ic) {
+                for (ssize_t ic = 0; ic < in_per_group; ++ic) {
                     int64_t in_c = group * in_per_group + (int64_t)ic;
-                    for (size_t kl = 0; kl < {{ k_l }}; ++kl) {
+                    for (ssize_t kl = 0; kl < {{ k_l }}; ++kl) {
                         int64_t in_l_idx = in_l_base + (int64_t)kl * {{ dilation }};
                         if (in_l_idx < 0 || in_l_idx >= {{ in_l }}) {
                             continue;

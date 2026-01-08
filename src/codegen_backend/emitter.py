@@ -76,7 +76,7 @@ class Emitter:
         op_nodes = graph.op_nodes
         headers = [
             "#include <stdint.h>",
-            "#include <stddef.h>",
+            "#include <sys/types.h>",
             "#include <stdbool.h>",
             f"#include \"{graph.dtype.scalar_header}\"",
         ]

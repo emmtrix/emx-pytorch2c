@@ -1,14 +1,14 @@
 {{ signature }}
 {% for batch in batch_dims %}
-  for (size_t {{ batch.index }} = 0; {{ batch.index }} < {{ batch.size }}; ++{{ batch.index }}) {
+  for (ssize_t {{ batch.index }} = 0; {{ batch.index }} < {{ batch.size }}; ++{{ batch.index }}) {
 {% endfor %}
-  for (size_t i = 0; i < {{ n }}; ++i) {
-    for (size_t j = 0; j < {{ r }}; ++j) {
+  for (ssize_t i = 0; i < {{ n }}; ++i) {
+    for (ssize_t j = 0; j < {{ r }}; ++j) {
 {% if use_mm %}
       {{ c_type }} dot = 0;
       {{ c_type }} x1_norm = 0;
       {{ c_type }} x2_norm = 0;
-      for (size_t k = 0; k < {{ m }}; ++k) {
+      for (ssize_t k = 0; k < {{ m }}; ++k) {
         {{ c_type }} x1_val = {{ x1_access }};
         {{ c_type }} x2_val = {{ x2_access }};
         dot += x1_val * x2_val;
@@ -22,28 +22,28 @@
       {{ output_access }} = {{ sqrt_fn }}(dist_sq);
 {% elif p_zero %}
       {{ c_type }} acc = 0;
-      for (size_t k = 0; k < {{ m }}; ++k) {
+      for (ssize_t k = 0; k < {{ m }}; ++k) {
         {{ c_type }} diff = {{ x1_access }} - {{ x2_access }};
         acc += diff != {{ zero_literal }} ? {{ one_literal }} : {{ zero_literal }};
       }
       {{ output_access }} = acc;
 {% elif p_inf %}
       {{ c_type }} acc = {{ zero_literal }};
-      for (size_t k = 0; k < {{ m }}; ++k) {
+      for (ssize_t k = 0; k < {{ m }}; ++k) {
         {{ c_type }} diff = {{ abs_fn }}({{ x1_access }} - {{ x2_access }});
         acc = {{ max_fn }}(acc, diff);
       }
       {{ output_access }} = acc;
 {% elif p_two %}
       {{ c_type }} acc = 0;
-      for (size_t k = 0; k < {{ m }}; ++k) {
+      for (ssize_t k = 0; k < {{ m }}; ++k) {
         {{ c_type }} diff = {{ x1_access }} - {{ x2_access }};
         acc += diff * diff;
       }
       {{ output_access }} = {{ sqrt_fn }}(acc);
 {% else %}
       {{ c_type }} acc = 0;
-      for (size_t k = 0; k < {{ m }}; ++k) {
+      for (ssize_t k = 0; k < {{ m }}; ++k) {
         {{ c_type }} diff = {{ x1_access }} - {{ x2_access }};
         acc += {{ pow_fn }}({{ abs_fn }}(diff), {{ p_literal }});
       }

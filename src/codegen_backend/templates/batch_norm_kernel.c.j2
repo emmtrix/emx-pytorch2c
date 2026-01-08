@@ -1,10 +1,10 @@
 {{ signature }}
-  for (size_t c = 0; c < {{ channels }}; ++c) {
+  for (ssize_t c = 0; c < {{ channels }}; ++c) {
 {% if training %}
     {{ c_type }} sum = {{ zero_literal }};
     {{ c_type }} sumsq = {{ zero_literal }};
-    for (size_t n = 0; n < {{ batch }}; ++n) {
-      for (size_t i = 0; i < {{ inner_size }}; ++i) {
+    for (ssize_t n = 0; n < {{ batch }}; ++n) {
+      for (ssize_t i = 0; i < {{ inner_size }}; ++i) {
         int64_t idx = (n * {{ channels }} + c) * {{ inner_size }} + i;
         {{ c_type }} value = (({{ c_type }}*)input)[idx];
         sum += value;
@@ -29,8 +29,8 @@
 {% else %}
     {{ c_type }} offset = {{ zero_literal }};
 {% endif %}
-    for (size_t n = 0; n < {{ batch }}; ++n) {
-      for (size_t i = 0; i < {{ inner_size }}; ++i) {
+    for (ssize_t n = 0; n < {{ batch }}; ++n) {
+      for (ssize_t i = 0; i < {{ inner_size }}; ++i) {
         int64_t idx = (n * {{ channels }} + c) * {{ inner_size }} + i;
         {{ c_type }} value = (({{ c_type }}*)input)[idx];
         (({{ c_type }}*)out)[idx] = (value - mean) * inv * scale + offset;

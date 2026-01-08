@@ -1,20 +1,20 @@
 #include <stdint.h>
-#include <stddef.h>
+#include <sys/types.h>
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 #include <stdlib.h>
 
 void node1_add_f32(const float a[1], const float b[1], float out[1]) {
-    for (size_t i0 = 0; i0 < 1; ++i0) {
+    for (ssize_t i0 = 0; i0 < 1; ++i0) {
         out[i0] = ref_scalar_f32_add(a[0], b[0]);
     }
 }
 
 void node2_add_f32(const float a[1][2][2][5], const float b[1][2][2][5], float out[1][2][2][5]) {
-    for (size_t i0 = 0; i0 < 1; ++i0) {
-        for (size_t i1 = 0; i1 < 2; ++i1) {
-            for (size_t i2 = 0; i2 < 2; ++i2) {
-                for (size_t i3 = 0; i3 < 5; ++i3) {
+    for (ssize_t i0 = 0; i0 < 1; ++i0) {
+        for (ssize_t i1 = 0; i1 < 2; ++i1) {
+            for (ssize_t i2 = 0; i2 < 2; ++i2) {
+                for (ssize_t i3 = 0; i3 < 5; ++i3) {
                     out[i0][i1][i2][i3] = ref_scalar_f32_add(a[0][i1][i2][i3], b[0][i1][i2][i3]);
                 }
             }
@@ -23,10 +23,10 @@ void node2_add_f32(const float a[1][2][2][5], const float b[1][2][2][5], float o
 }
 
 void node3_add_f32(const float a[1], const float b[1][2][2][5], float out[1][2][2][5]) {
-    for (size_t i0 = 0; i0 < 1; ++i0) {
-        for (size_t i1 = 0; i1 < 2; ++i1) {
-            for (size_t i2 = 0; i2 < 2; ++i2) {
-                for (size_t i3 = 0; i3 < 5; ++i3) {
+    for (ssize_t i0 = 0; i0 < 1; ++i0) {
+        for (ssize_t i1 = 0; i1 < 2; ++i1) {
+            for (ssize_t i2 = 0; i2 < 2; ++i2) {
+                for (ssize_t i3 = 0; i3 < 5; ++i3) {
                     out[i0][i1][i2][i3] = ref_scalar_f32_add(a[0], b[0][i1][i2][i3]);
                 }
             }
