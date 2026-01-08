@@ -6,7 +6,9 @@ from typing import Callable, Dict, List, Sequence, Tuple
 
 import torch
 import torch.fx
+from torch.fx.immutable_collections import immutable_list
 
+from codegen_backend.backend_helpers import _resolve_alias
 from codegen_backend.dtypes import _CODEGEN_DTYPES, _EMBEDDING_INDEX_DTYPES
 from codegen_backend.emitters.base import _is_contiguous
 from codegen_backend.errors import CodegenBackendError
@@ -151,16 +153,22 @@ class GraphBuilder:
         output_value, output_structure = self._parser.unwrap_output_node(output_node)
         while output_value in alias_map:
             output_value = alias_map[output_value]
+        output_nodes = self._collect_output_nodes(output_structure, alias_map)
+        if not output_nodes:
+            raise CodegenBackendError("codegen backend expects a single output node")
+        output_value = output_nodes[0]
         if output_value not in shapes:
             raise CodegenBackendError("codegen backend expects a single output node")
-        if output_value not in {op.node for op in op_nodes}:
+        op_node_set = {op.node for op in op_nodes}
+        if output_value not in op_node_set:
             raise CodegenBackendError("codegen backend output must be an operator result")
 
         output_op = next(op for op in op_nodes if op.node is output_value)
+        output_nodes_set = set(output_nodes)
         for op_node in op_nodes:
             if (
                 op_node.spec.kind == OpKind.EMPTY_STRIDED
-                and op_node.node is not output_value
+                and op_node.node not in output_nodes_set
                 and not _is_contiguous(op_node.output_shape, strides[op_node.node])
             ):
                 raise CodegenBackendError(
@@ -168,12 +176,13 @@ class GraphBuilder:
                 )
 
         output_inplace_input = None
-        for op_node in op_nodes:
-            if op_node.node is output_value and op_node.inplace_input is not None:
-                candidate = op_node.inputs[op_node.inplace_input]
-                if candidate in tensor_placeholders:
-                    output_inplace_input = candidate
-                break
+        if len(output_nodes) == 1:
+            for op_node in op_nodes:
+                if op_node.node is output_value and op_node.inplace_input is not None:
+                    candidate = op_node.inputs[op_node.inplace_input]
+                    if candidate in tensor_placeholders:
+                        output_inplace_input = candidate
+                    break
 
         return _GenericGraph(
             placeholders=placeholders,
@@ -181,6 +190,7 @@ class GraphBuilder:
             op_nodes=op_nodes,
             output_node=output_node,
             output_value=output_value,
+            output_nodes=output_nodes,
             output_op=output_op,
             output_inplace_input=output_inplace_input,
             output_structure=output_structure,
@@ -191,3 +201,23 @@ class GraphBuilder:
             alias_map=alias_map,
             empty_outputs=empty_outputs,
         )
+
+    @staticmethod
+    def _collect_output_nodes(
+        output_structure: object,
+        alias_map: Dict[torch.fx.Node, torch.fx.Node],
+    ) -> List[torch.fx.Node]:
+        output_nodes: List[torch.fx.Node] = []
+
+        def visit(value: object) -> None:
+            if isinstance(value, torch.fx.Node):
+                resolved = _resolve_alias(value, alias_map)
+                if resolved not in output_nodes:
+                    output_nodes.append(resolved)
+                return
+            if isinstance(value, (list, tuple, immutable_list)):
+                for item in value:
+                    visit(item)
+
+        visit(output_structure)
+        return output_nodes

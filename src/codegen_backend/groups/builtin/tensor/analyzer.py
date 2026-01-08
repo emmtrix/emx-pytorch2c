@@ -6,12 +6,24 @@ from typing import Dict, Mapping, Tuple
 import torch
 import torch.fx
 
+from codegen_backend.dtypes import _CodegenDType
 from codegen_backend.analysis_helpers import resolve_scalar_arg
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.groups.analysis import GroupAnalysisResult, RegistryGroupAnalyzer
+from codegen_backend.groups.builtin.reductions.args import ReductionsArgParser
+from codegen_backend.graph import _OpNode
 from codegen_backend.indexing import _contiguous_strides
+from codegen_backend.kinds import OpKind, OpKindHandler
 from codegen_backend.registry import _TargetInfo
 from codegen_backend.specs import _OpSpec
+
+
+_ARGMAX_SPEC = _OpSpec(
+    name="argmax",
+    kind=OpKind.ARG_REDUCTION,
+    symbol=None,
+    supported_targets=set(),
+)
 
 
 class TensorAnalyzer(RegistryGroupAnalyzer):
@@ -49,16 +61,18 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
         if node.op == "call_method" and node.target == "item":
             return GroupAnalysisResult(op_node=None)
         if node.op == "call_function" and node.target is operator.getitem:
-            self._handle_getitem_node(
+            op_node = self._handle_getitem_node(
                 node,
+                dtype_info=dtype_info,
                 shapes=shapes,
                 strides=strides,
                 dtypes=dtypes,
                 scalar_values=scalar_values,
                 alias_map=alias_map,
                 empty_outputs=empty_outputs,
+                kind_handlers=kind_handlers,
             )
-            return GroupAnalysisResult(op_node=None)
+            return GroupAnalysisResult(op_node=op_node)
         return super().build_op_node(
             node,
             dtype_info=dtype_info,
@@ -75,13 +89,15 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
         self,
         node: torch.fx.Node,
         *,
+        dtype_info: _CodegenDType | None,
         shapes: Dict[torch.fx.Node, Tuple[int, ...]],
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
         scalar_values: Dict[torch.fx.Node, object],
         alias_map: Dict[torch.fx.Node, torch.fx.Node],
         empty_outputs: set[torch.fx.Node],
-    ) -> None:
+        kind_handlers: Dict[OpKind, OpKindHandler],
+    ) -> _OpNode | None:
         if node.kwargs:
             raise CodegenBackendError(
                 "codegen backend expects getitem to use positional args"
@@ -114,15 +130,82 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
             torch.ops.aten._native_batch_norm_legit_no_training.default,
             torch.ops.aten._embedding_bag,
             torch.ops.aten._embedding_bag.default,
+            torch.ops.aten.max.dim,
         }:
             raise CodegenBackendError(
-                "codegen backend supports getitem only for _native_batch_norm_legit* ops"
+                "codegen backend supports getitem only for _native_batch_norm_legit* ops, _embedding_bag, or max.dim"
             )
+        if source.target is torch.ops.aten.max.dim:
+            if index in (0, 0.0):
+                alias_map[node] = source
+                shapes[node] = shapes[source]
+                strides[node] = strides[source]
+                dtypes[node] = dtypes[source]
+                return None
+            if index not in (1, 1.0):
+                raise CodegenBackendError(
+                    "codegen backend supports max.dim getitem only for indices 0 or 1"
+                )
+            if dtype_info is None:
+                raise CodegenBackendError(
+                    "codegen backend requires at least one tensor input or a factory op dtype"
+                )
+            input_arg = source.args[0] if source.args else None
+            if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
+                raise CodegenBackendError(
+                    "codegen max.dim expects a tensor input"
+                )
+            if dtypes[input_arg] is not dtype_info.torch_dtype:
+                raise CodegenBackendError(
+                    "codegen max.dim expects inputs to share the graph dtype"
+                )
+            parser = ReductionsArgParser()
+            reduction_dims, keepdim, reduce_all = parser.parse_argminmax_args(
+                "argmax", source, shapes[input_arg]
+            )
+            reduction_count = 1
+            if reduce_all:
+                for size in shapes[input_arg]:
+                    reduction_count *= size
+            else:
+                for dim in reduction_dims:
+                    reduction_count *= shapes[input_arg][dim]
+            if reduction_count == 0:
+                raise CodegenBackendError(
+                    "codegen max.dim expects a non-empty reduction dimension"
+                )
+            op_node = _OpNode(
+                node=node,
+                spec=_ARGMAX_SPEC,
+                inputs=[input_arg],
+                output_shape=(),
+                inplace_input=None,
+                reduction_dims=reduction_dims,
+                keepdim=keepdim,
+                params={"reduce_all": reduce_all},
+            )
+            handler = kind_handlers.get(OpKind.ARG_REDUCTION)
+            if handler is None:
+                raise CodegenBackendError(
+                    "codegen backend does not support kind 'arg_reduction'"
+                )
+            output_shape = handler.infer_shapes(op_node, [shapes[input_arg]])
+            op_node.output_shape = output_shape
+            shapes[node] = output_shape
+            strides[node] = _contiguous_strides(output_shape)
+            dtypes[node] = torch.int64
+            return op_node
         if index in (0, 0.0):
             alias_map[node] = source
             shapes[node] = shapes[source]
             strides[node] = strides[source]
             dtypes[node] = dtypes[source]
+            return None
+        shapes[node] = (0,)
+        strides[node] = _contiguous_strides(shapes[node])
+        dtypes[node] = dtypes[source]
+        empty_outputs.add(node)
+        return None
         else:
             output_shape = (0,)
             if source.target in {

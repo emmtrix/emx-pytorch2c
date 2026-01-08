@@ -114,7 +114,7 @@
 | `lt.Scalar` | ✅ |
 | `lt.Tensor` | ✅ |
 | `masked_scatter` | — |
-| `max.dim` | — |
+| `max.dim` | ✅ |
 | `max_pool2d_with_indices` | — |
 | `max_pool2d_with_indices_backward` | — |
 | `max_pool3d_with_indices` | — |

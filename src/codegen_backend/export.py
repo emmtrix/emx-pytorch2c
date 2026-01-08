@@ -245,10 +245,13 @@ def _emit_model_wrapper(
         input_index += 1
         input_args.append(f"const {c_type}* {arg_name}")
         call_args.append(arg_name)
-    output_c_type = _dtype_to_c_type(graph.dtypes[graph.output_value], graph.dtype)
-    output_name = "out0"
-    signature_args = ", ".join([*input_args, f"{output_c_type}* {output_name}"])
-    call_args.append(output_name)
+    output_args: List[str] = []
+    for idx, output_node in enumerate(graph.output_nodes):
+        output_c_type = _dtype_to_c_type(graph.dtypes[output_node], graph.dtype)
+        output_name = f"out{idx}"
+        output_args.append(f"{output_c_type}* {output_name}")
+        call_args.append(output_name)
+    signature_args = ", ".join([*input_args, *output_args])
     call = ", ".join(call_args)
     return (
         f"void {function_name}({signature_args}) {{\n"

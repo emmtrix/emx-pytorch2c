@@ -161,6 +161,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.argmin.default,
     torch.ops.aten.amax.default,
     torch.ops.aten.amin.default,
+    torch.ops.aten.max.dim,
     torch.ops.aten.asin.default,
     torch.ops.aten.asinh.default,
     torch.ops.aten.atan.default,
@@ -545,6 +546,7 @@ CODEGEN_OPINFO_OVERRIDES = {
     torch.ops.aten.std.default: _lookup_opinfo("std", ""),
     torch.ops.aten.var.dim: _lookup_opinfo("var", ""),
     torch.ops.aten.norm.ScalarOpt_dim: _lookup_opinfo("norm", ""),
+    torch.ops.aten.max.dim: _lookup_opinfo("max", "reduction_with_dim"),
     torch.ops.aten.softmax.int: _lookup_opinfo("softmax", ""),
     torch.ops.aten.log_softmax.int: _lookup_opinfo("log_softmax", ""),
     torch.ops.aten.embedding.default: _lookup_opinfo(

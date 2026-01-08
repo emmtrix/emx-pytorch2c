@@ -41,7 +41,7 @@ def compile_or_load(
     include_dirs: Sequence[Path],
     input_shapes: Tuple[Tuple[int, ...], ...],
     input_strides: Tuple[Tuple[int, ...], ...],
-    output_shape: Tuple[int, ...],
+    output_shapes: Tuple[Tuple[int, ...], ...],
     dtype: _CodegenDType,
 ) -> _GenericLibrary:
     cached = _LIBRARY_CACHE.get(key)
@@ -82,7 +82,7 @@ def compile_or_load(
 
     lib = ctypes.CDLL(str(so_path))
     argtypes = [ctypes.c_void_p for _ in input_shapes]
-    argtypes.append(ctypes.c_void_p)
+    argtypes.extend(ctypes.c_void_p for _ in output_shapes)
     getattr(lib, entry_name).argtypes = argtypes
     getattr(lib, entry_name).restype = None
 
@@ -91,7 +91,7 @@ def compile_or_load(
         lib=lib,
         input_shapes=input_shapes,
         input_strides=input_strides,
-        output_shape=output_shape,
+        output_shapes=output_shapes,
         dtype=dtype,
     )
     _LIBRARY_CACHE[key] = compiled

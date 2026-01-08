@@ -54,7 +54,9 @@ class Compiler:
             include_dirs=[_C_SRC_DIR],
             input_shapes=input_shapes,
             input_strides=input_strides,
-            output_shape=graph.shapes[graph.output_value],
+            output_shapes=tuple(
+                graph.shapes[node] for node in graph.output_nodes
+            ),
             dtype=graph.dtype,
         )
 
@@ -119,6 +121,7 @@ class Compiler:
         lib = self._compile_generic_library(graph)
         output_structure = graph.output_structure
         output_value = graph.output_value
+        output_nodes = graph.output_nodes
         output_inplace_input = graph.output_inplace_input
         op_node_by_node = {op.node: op for op in graph.op_nodes}
         library_cache: Dict[
@@ -129,10 +132,12 @@ class Compiler:
         }
 
         def _recompile(new_inputs: Sequence[object]) -> None:
-            nonlocal graph, lib, output_inplace_input
+            nonlocal graph, lib, output_inplace_input, output_nodes, output_value
             graph = self._builder.build(gm, _normalize_conv_inputs(new_inputs))
             lib = self._compile_generic_library(graph)
             output_inplace_input = graph.output_inplace_input
+            output_nodes = graph.output_nodes
+            output_value = graph.output_value
             op_node_by_node.clear()
             op_node_by_node.update({op.node: op for op in graph.op_nodes})
 
@@ -239,32 +244,42 @@ class Compiler:
                     )
                 inplace_index = graph.tensor_placeholders.index(output_inplace_input)
                 inplace_out = contiguous_inputs[inplace_index]
-                lib.run(contiguous_inputs, inplace_out)
+                lib.run(contiguous_inputs, [inplace_out])
                 if inplace_out is not original_input:
                     original_input.copy_(inplace_out)
                 env[output_value] = original_input
             else:
-                output_dtype = graph.dtypes[output_value]
                 device = (
                     contiguous_inputs[0].device
                     if contiguous_inputs
                     else torch.device("cpu")
                 )
-                if graph.output_op.spec.kind == OpKind.EMPTY_STRIDED:
-                    out = torch.empty_strided(
-                        graph.shapes[output_value],
-                        graph.strides[output_value],
-                        dtype=output_dtype,
-                        device=device,
-                    )
-                else:
-                    out = torch.empty(
-                        lib.output_shape,
-                        dtype=output_dtype,
-                        device=device,
-                    )
-                lib.run(contiguous_inputs, out)
-                env[output_value] = out
+                output_map = {
+                    op_node.node: op_node for op_node in graph.op_nodes
+                }
+                outputs = []
+                for output_node in output_nodes:
+                    output_dtype = graph.dtypes[output_node]
+                    output_op = output_map.get(output_node)
+                    if (
+                        output_op is not None
+                        and output_op.spec.kind == OpKind.EMPTY_STRIDED
+                    ):
+                        out = torch.empty_strided(
+                            graph.shapes[output_node],
+                            graph.strides[output_node],
+                            dtype=output_dtype,
+                            device=device,
+                        )
+                    else:
+                        out = torch.empty(
+                            graph.shapes[output_node],
+                            dtype=output_dtype,
+                            device=device,
+                        )
+                    outputs.append(out)
+                    env[output_node] = out
+                lib.run(contiguous_inputs, outputs)
             if graph.alias_map:
                 for alias, source in graph.alias_map.items():
                     resolved = _resolve_alias(source, graph.alias_map)

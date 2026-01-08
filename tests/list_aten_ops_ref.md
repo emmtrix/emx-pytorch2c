@@ -1163,7 +1163,7 @@
 | `matrix_exp` | — |
 | `matrix_exp_backward` | — |
 | `matrix_power` | — |
-| `max` | — |
+| `max` | ✅ |
 | `max_pool1d` | ✅ |
 | `max_pool1d_with_indices` | — |
 | `max_pool2d` | ✅ |

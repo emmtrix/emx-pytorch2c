@@ -49,6 +49,11 @@ _REDUCTION_CONFIG = {
         "reduce_op": None,
         "post_op": None,
     },
+    "max": {
+        "init_value": 0,
+        "reduce_op": None,
+        "post_op": None,
+    },
     "amin": {
         "init_value": 0,
         "reduce_op": None,
@@ -59,14 +64,17 @@ _REDUCTION_CONFIG = {
 _MINMAX_INIT_VALUES = {
     torch.float32: {
         "amax": "-INFINITY",
+        "max": "-INFINITY",
         "amin": "INFINITY",
     },
     torch.int8: {
         "amax": "INT8_MIN",
+        "max": "INT8_MIN",
         "amin": "INT8_MAX",
     },
     torch.int32: {
         "amax": "INT32_MIN",
+        "max": "INT32_MIN",
         "amin": "INT32_MAX",
     },
 }
@@ -314,7 +322,7 @@ def _write_reduction_kernel(
                 "post_op": None,
                 "bool_reduction": True,
             }
-        elif op_spec.name == "amax":
+        elif op_spec.name in {"amax", "max"}:
             config = {
                 "init_value": 0,
                 "reduce_op": "|=",
@@ -362,9 +370,10 @@ def _write_reduction_kernel(
         )
     compare_op = None
     isnan_fn = None
-    if op_spec.name in {"amax", "amin"} and dtype.torch_dtype is not torch.bool:
-        compare_op = ">" if op_spec.name == "amax" else "<"
-        init_value_config = _MINMAX_INIT_VALUES[dtype.torch_dtype][op_spec.name]
+    minmax_name = "amax" if op_spec.name == "max" else op_spec.name
+    if minmax_name in {"amax", "amin"} and dtype.torch_dtype is not torch.bool:
+        compare_op = ">" if minmax_name == "amax" else "<"
+        init_value_config = _MINMAX_INIT_VALUES[dtype.torch_dtype][minmax_name]
         config = {
             "init_value": init_value_config,
             "post_op": None,
@@ -405,9 +414,9 @@ def _write_reduction_kernel(
         input_access=input_access,
         bool_reduction=bool_reduction,
         reduce_op=config.get("reduce_op"),
-        is_minmax=op_spec.name in {"amax", "amin"}
+        is_minmax=minmax_name in {"amax", "amin"}
         and dtype.torch_dtype is not torch.bool,
-        compare_op=compare_op if op_spec.name in {"amax", "amin"} else None,
+        compare_op=compare_op if minmax_name in {"amax", "amin"} else None,
         is_float=dtype.torch_dtype is torch.float32,
         isnan_fn=isnan_fn,
         output_access=output_access,

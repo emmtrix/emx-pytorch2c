@@ -33,6 +33,7 @@ class _GenericGraph:
     op_nodes: List[_OpNode]
     output_node: torch.fx.Node
     output_value: torch.fx.Node
+    output_nodes: List[torch.fx.Node]
     output_op: _OpNode
     output_inplace_input: torch.fx.Node | None
     output_structure: object
@@ -50,11 +51,13 @@ class _GenericLibrary:
     lib: object
     input_shapes: Tuple[Tuple[int, ...], ...]
     input_strides: Tuple[Tuple[int, ...], ...]
-    output_shape: Tuple[int, ...]
+    output_shapes: Tuple[Tuple[int, ...], ...]
     dtype: _CodegenDType
 
-    def run(self, inputs: Sequence[torch.Tensor], out: torch.Tensor) -> None:
+    def run(
+        self, inputs: Sequence[torch.Tensor], outputs: Sequence[torch.Tensor]
+    ) -> None:
         fn = getattr(self.lib, f"ref_codegen_main_{self.dtype.suffix}")
         args = [tensor.data_ptr() for tensor in inputs]
-        args.append(out.data_ptr())
+        args.extend(output.data_ptr() for output in outputs)
         fn(*args)

@@ -72,25 +72,43 @@ class Emitter:
             ]
         )
         input_args = f"{input_args}, " if input_args else ""
-        output_dtype = graph.dtypes[graph.output_value]
-        output_c_type = _dtype_to_c_type(output_dtype, graph.dtype)
+        output_nodes = graph.output_nodes
+        if len(output_nodes) == 1:
+            output_names = ["out"]
+        else:
+            output_names = [f"out_{idx}" for idx in range(len(output_nodes))]
+        output_args = ", ".join(
+            [
+                (
+                    f"{_dtype_to_c_type(graph.dtypes[node], graph.dtype)} "
+                    f"{name}{_format_array_suffix(graph.shapes[node])}"
+                )
+                for name, node in zip(output_names, output_nodes)
+            ]
+        )
         signature = (
             f"void ref_codegen_main_{graph.dtype.suffix}("
-            f"{input_args}{output_c_type} out{_format_array_suffix(graph.shapes[graph.output_value])}) {{"
+            f"{input_args}{output_args}) {{"
         )
         name_map: Dict[torch.fx.Node, str] = {}
         for idx, placeholder in enumerate(placeholders):
             name_map[placeholder] = f"input_{idx}"
+        for output_name, output_node in zip(output_names, output_nodes):
+            name_map[output_node] = output_name
         temp_index = 0
         temp_decls: List[str] = []
         for op_node in op_nodes:
-            if op_node.node is graph.output_value:
+            if op_node.node in output_nodes:
                 if op_node.inplace_input is not None:
-                    name_map[op_node.node] = name_map[
-                        op_node.inputs[op_node.inplace_input]
-                    ]
+                    if (
+                        len(output_nodes) == 1
+                        and op_node.node is graph.output_value
+                    ):
+                        name_map[op_node.node] = name_map[
+                            op_node.inputs[op_node.inplace_input]
+                        ]
                 else:
-                    name_map[op_node.node] = "out"
+                    name_map[op_node.node] = name_map[op_node.node]
                 continue
             if op_node.inplace_input is not None:
                 name_map[op_node.node] = name_map[
