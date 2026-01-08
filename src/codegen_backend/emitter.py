@@ -14,6 +14,26 @@ from codegen_backend.graph import _GenericGraph
 from codegen_backend.kinds import OpKind, OpKindHandler
 
 
+def _format_c_indentation(source: str, *, indent: str = "    ") -> str:
+    formatted_lines: List[str] = []
+    indent_level = 0
+    for line in source.splitlines():
+        stripped = line.lstrip()
+        if not stripped:
+            formatted_lines.append("")
+            continue
+        if stripped.startswith("}"):
+            indent_level = max(indent_level - 1, 0)
+        formatted_lines.append(f"{indent * indent_level}{stripped}")
+        open_count = stripped.count("{")
+        close_count = stripped.count("}")
+        if stripped.startswith("}"):
+            close_count = max(close_count - 1, 0)
+        indent_level += open_count - close_count
+        indent_level = max(indent_level, 0)
+    return "\n".join(formatted_lines)
+
+
 class Emitter:
     def __init__(
         self,
@@ -61,7 +81,7 @@ class Emitter:
                 )
             handler.postprocess(op_node, graph)
             kernel_lines = handler.emit(index, op_node, graph)
-            kernels.append("\n".join(kernel_lines))
+            kernels.append(_format_c_indentation("\n".join(kernel_lines)))
         input_args = ", ".join(
             [
                 (

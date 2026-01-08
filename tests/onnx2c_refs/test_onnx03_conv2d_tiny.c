@@ -49,8 +49,7 @@ void node1_conv2d_f32(const float input[1][1][5][5], const float weight[1][1][3]
                                 if (in_w_idx < 0 || in_w_idx >= 5) {
                                     continue;
                                 }
-                                acc += input[n][in_c][in_h_idx][in_w_idx] *
-                                    weight[oc][ic][kh][kw];
+                                acc += input[n][in_c][in_h_idx][in_w_idx] * weight[oc][ic][kh][kw];
                             }
                         }
                     }
