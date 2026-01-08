@@ -21,6 +21,7 @@ emx-pytorch2c generates simple, correct, generic, and easily analyzable C code f
 * Export utility for emitting standalone C sources from Python functions.
 * `torch.compile` backend for generating generic C code from PyTorch workloads for verification.
 * ONNX-to-C conversion via the `cli.onnx2c` command-line interface.
+* Variable-length input support via C99 variable-length arrays (VLAs) in generated C.
 * Supported dtypes:
   * `torch.float32` / `torch.float64`
   * `torch.int8` / `torch.uint8`
@@ -81,7 +82,26 @@ In other words, shapes are materialized as explicit array extents, and compute
 is expressed as deterministic, nested `for` loops rather than vectorized or
 opaque library calls.
 
-### Example 2: Heap/Stack Temporary Allocation
+### Example 2: Variable-Length Inputs (C99 VLA)
+
+For workloads with variable input sizes, the emitted C can use C99
+variable-length arrays (VLAs) in function signatures. This relies on the C99
+VLA feature (not C++): GCC and Clang support it, while MSVC does not.
+
+```c
+void node1_add_f32(int64_t n, int64_t m,
+                   const float a[n][m],
+                   const float b[n][m],
+                   float out[n][m]) {
+    for (int64_t i0 = 0; i0 < n; ++i0) {
+        for (int64_t i1 = 0; i1 < m; ++i1) {
+            out[i0][i1] = ref_scalar_f32_add(a[i0][i1], b[i0][i1]);
+        }
+    }
+}
+```
+
+### Example 3: Heap/Stack Temporary Allocation
 
 The generic backend allocates intermediate buffers on the stack until they
 exceed `temp_allocation_threshold`, at which point they are allocated with
