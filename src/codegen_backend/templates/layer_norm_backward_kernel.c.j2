@@ -12,12 +12,12 @@
 {% if has_bias %}
     (void)bias;
 {% endif %}
-    for (int64_t outer = 0; outer < outer_size; ++outer) {
+    for (size_t outer = 0; outer < outer_size; ++outer) {
         {{ c_type }} mean = mean_ptr[outer];
         {{ c_type }} rstd = rstd_ptr[outer];
         {{ c_type }} sum1 = 0;
         {{ c_type }} sum2 = 0;
-        for (int64_t inner = 0; inner < inner_size; ++inner) {
+        for (size_t inner = 0; inner < inner_size; ++inner) {
             int64_t idx = outer * inner_size + inner;
             {{ c_type }} dy = grad_ptr[idx];
 {% if has_weight %}
@@ -31,7 +31,7 @@
             sum2 += dxhat * (x - mean);
         }
         {{ c_type }} inv_inner = ({{ c_type }})1 / ({{ c_type }})inner_size;
-        for (int64_t inner = 0; inner < inner_size; ++inner) {
+        for (size_t inner = 0; inner < inner_size; ++inner) {
             int64_t idx = outer * inner_size + inner;
             {{ c_type }} dy = grad_ptr[idx];
 {% if has_weight %}

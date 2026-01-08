@@ -1,6 +1,6 @@
 {{ signature }}
 {% for dim in output_dims %}
-    for (int64_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
+    for (size_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
 {% endfor %}
     {{ acc_type }} acc = {{ init_value }};
 {% if input_rank == 0 %}
@@ -19,7 +19,7 @@
 {% endif %}
 {% else %}
 {% for dim in reduction_dims %}
-    for (int64_t r{{ dim.dim }} = 0; r{{ dim.dim }} < {{ dim.size }}; ++r{{ dim.dim }}) {
+    for (size_t r{{ dim.dim }} = 0; r{{ dim.dim }} < {{ dim.size }}; ++r{{ dim.dim }}) {
 {% endfor %}
 {% if is_minmax %}
 {% if is_float %}

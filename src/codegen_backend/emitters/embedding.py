@@ -73,7 +73,7 @@ def _write_embedding_kernel(
         sizes=weight_shape,
         c_type=dtype.c_type,
     )
-    body_lines = [f"{indent}int64_t idx = (int64_t)({index_access});"]
+    body_lines = [f"{indent}size_t idx = (size_t)({index_access});"]
     if padding_idx != -1:
         zero_literal = _format_scalar_literal(0.0, dtype)
         body_lines.extend(

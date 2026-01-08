@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 #include <stdlib.h>
@@ -67,23 +68,23 @@ void node1_conv2d_f32(const float input[1][1][14][14], const float weight[20][1]
     int64_t out_pad_w = 0;
     (void)out_pad_h;
     (void)out_pad_w;
-    for (int64_t n = 0; n < 1; ++n) {
-        for (int64_t oc = 0; oc < 20; ++oc) {
-            int64_t group = oc / out_per_group;
-            for (int64_t oh = 0; oh < 5; ++oh) {
-                for (int64_t ow = 0; ow < 5; ++ow) {
+    for (size_t n = 0; n < 1; ++n) {
+        for (size_t oc = 0; oc < 20; ++oc) {
+            int64_t group = (int64_t)oc / out_per_group;
+            for (size_t oh = 0; oh < 5; ++oh) {
+                for (size_t ow = 0; ow < 5; ++ow) {
                     float acc = 0.0f;
-                    int64_t in_h_base = oh * 2 - 0;
-                    int64_t in_w_base = ow * 2 - 0;
-                    for (int64_t ic = 0; ic < in_per_group; ++ic) {
-                        int64_t in_c = group * in_per_group + ic;
-                        for (int64_t kh = 0; kh < 5; ++kh) {
-                            int64_t in_h_idx = in_h_base + kh * 1;
+                    int64_t in_h_base = (int64_t)oh * 2 - 0;
+                    int64_t in_w_base = (int64_t)ow * 2 - 0;
+                    for (size_t ic = 0; ic < in_per_group; ++ic) {
+                        int64_t in_c = group * in_per_group + (int64_t)ic;
+                        for (size_t kh = 0; kh < 5; ++kh) {
+                            int64_t in_h_idx = in_h_base + (int64_t)kh * 1;
                             if (in_h_idx < 0 || in_h_idx >= 14) {
                                 continue;
                             }
-                            for (int64_t kw = 0; kw < 5; ++kw) {
-                                int64_t in_w_idx = in_w_base + kw * 1;
+                            for (size_t kw = 0; kw < 5; ++kw) {
+                                int64_t in_w_idx = in_w_base + (int64_t)kw * 1;
                                 if (in_w_idx < 0 || in_w_idx >= 14) {
                                     continue;
                                 }
@@ -99,10 +100,10 @@ void node1_conv2d_f32(const float input[1][1][14][14], const float weight[20][1]
 }
 
 void node2_relu_f32(const float a[1][20][5][5], float out[1][20][5][5]) {
-    for (int64_t i0 = 0; i0 < 1; ++i0) {
-        for (int64_t i1 = 0; i1 < 20; ++i1) {
-            for (int64_t i2 = 0; i2 < 5; ++i2) {
-                for (int64_t i3 = 0; i3 < 5; ++i3) {
+    for (size_t i0 = 0; i0 < 1; ++i0) {
+        for (size_t i1 = 0; i1 < 20; ++i1) {
+            for (size_t i2 = 0; i2 < 5; ++i2) {
+                for (size_t i3 = 0; i3 < 5; ++i3) {
                     out[i0][i1][i2][i3] = ref_scalar_f32_relu(a[i0][i1][i2][i3]);
                 }
             }
@@ -117,23 +118,23 @@ void node3_conv2d_f32(const float input[1][20][5][5], const float weight[12][20]
     int64_t out_pad_w = 0;
     (void)out_pad_h;
     (void)out_pad_w;
-    for (int64_t n = 0; n < 1; ++n) {
-        for (int64_t oc = 0; oc < 12; ++oc) {
-            int64_t group = oc / out_per_group;
-            for (int64_t oh = 0; oh < 3; ++oh) {
-                for (int64_t ow = 0; ow < 3; ++ow) {
+    for (size_t n = 0; n < 1; ++n) {
+        for (size_t oc = 0; oc < 12; ++oc) {
+            int64_t group = (int64_t)oc / out_per_group;
+            for (size_t oh = 0; oh < 3; ++oh) {
+                for (size_t ow = 0; ow < 3; ++ow) {
                     float acc = 0.0f;
-                    int64_t in_h_base = oh * 1 - 0;
-                    int64_t in_w_base = ow * 1 - 0;
-                    for (int64_t ic = 0; ic < in_per_group; ++ic) {
-                        int64_t in_c = group * in_per_group + ic;
-                        for (int64_t kh = 0; kh < 3; ++kh) {
-                            int64_t in_h_idx = in_h_base + kh * 1;
+                    int64_t in_h_base = (int64_t)oh * 1 - 0;
+                    int64_t in_w_base = (int64_t)ow * 1 - 0;
+                    for (size_t ic = 0; ic < in_per_group; ++ic) {
+                        int64_t in_c = group * in_per_group + (int64_t)ic;
+                        for (size_t kh = 0; kh < 3; ++kh) {
+                            int64_t in_h_idx = in_h_base + (int64_t)kh * 1;
                             if (in_h_idx < 0 || in_h_idx >= 5) {
                                 continue;
                             }
-                            for (int64_t kw = 0; kw < 3; ++kw) {
-                                int64_t in_w_idx = in_w_base + kw * 1;
+                            for (size_t kw = 0; kw < 3; ++kw) {
+                                int64_t in_w_idx = in_w_base + (int64_t)kw * 1;
                                 if (in_w_idx < 0 || in_w_idx >= 5) {
                                     continue;
                                 }
@@ -150,19 +151,19 @@ void node3_conv2d_f32(const float input[1][20][5][5], const float weight[12][20]
 
 void node4_reshape_f32(const float a[1][12][3][3], float out[1][108]) {
     const float* a_ptr = (const float*)a;
-    for (int64_t i0 = 0; i0 < 1; ++i0) {
-        for (int64_t i1 = 0; i1 < 108; ++i1) {
-            int64_t offset = i0 * 108 + i1 * 1;
+    for (size_t i0 = 0; i0 < 1; ++i0) {
+        for (size_t i1 = 0; i1 < 108; ++i1) {
+            size_t offset = (size_t)i0 * (size_t)108 + (size_t)i1 * (size_t)1;
             out[i0][i1] = a_ptr[offset];
         }
     }
 }
 
 void node5_linear_f32(const float input[1][108], const float weight[10][108], const float bias[10], float out[1][10]) {
-    for (int64_t i0 = 0; i0 < 1; ++i0) {
-        for (int64_t j = 0; j < 10; ++j) {
+    for (size_t i0 = 0; i0 < 1; ++i0) {
+        for (size_t j = 0; j < 10; ++j) {
             float acc = 0.0f;
-            for (int64_t t = 0; t < 108; ++t) {
+            for (size_t t = 0; t < 108; ++t) {
                 acc += input[i0][t] * weight[j][t];
             }
             out[i0][j] = acc + bias[j];

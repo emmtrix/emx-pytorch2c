@@ -89,7 +89,7 @@ def _write_embedding_dense_backward_kernel(
         sizes=output_shape,
         c_type=dtype.c_type,
     )
-    grad_body_lines = [f"{grad_indent}int64_t idx = (int64_t)({index_access});"]
+    grad_body_lines = [f"{grad_indent}size_t idx = (size_t)({index_access});"]
     if padding_idx != -1:
         grad_body_lines.extend(
             [

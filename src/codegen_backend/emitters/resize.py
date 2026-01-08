@@ -48,15 +48,15 @@ class ResizeEmitter(KindEmitterBase):
             linear_expr = " + ".join(linear_terms)
         else:
             linear_expr = "0"
-        lines.append(f"{indent}int64_t linear = {linear_expr};")
+        lines.append(f"{indent}size_t linear = {linear_expr};")
         if input_shape:
-            lines.append(f"{indent}int64_t remaining = linear;")
+            lines.append(f"{indent}size_t remaining = linear;")
             index_vars = []
             for dim in range(len(input_shape) - 1, -1, -1):
                 size = input_shape[dim]
                 index_name = f"idx{dim}"
                 lines.append(
-                    f"{indent}int64_t {index_name} = remaining % {size};"
+                    f"{indent}size_t {index_name} = remaining % {size};"
                 )
                 if dim != 0:
                     lines.append(f"{indent}remaining /= {size};")
@@ -69,7 +69,7 @@ class ResizeEmitter(KindEmitterBase):
             offset_expr = " + ".join(offset_terms) if offset_terms else "0"
         else:
             offset_expr = "0"
-        lines.append(f"{indent}int64_t offset = {offset_expr};")
+        lines.append(f"{indent}size_t offset = {offset_expr};")
         output_access = emit_output_access(
             output_shape, output_strides, c_type=req.dtype.c_type
         )

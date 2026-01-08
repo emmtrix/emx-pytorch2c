@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
@@ -7,8 +8,8 @@ static const float weight_initializer_b[4] = {
 };
 
 void node1_add_f32(const float a[1][4], const float b[4], float out[1][4]) {
-    for (int64_t i0 = 0; i0 < 1; ++i0) {
-        for (int64_t i1 = 0; i1 < 4; ++i1) {
+    for (size_t i0 = 0; i0 < 1; ++i0) {
+        for (size_t i1 = 0; i1 < 4; ++i1) {
             out[i0][i1] = ref_scalar_f32_add(a[0][i1], b[i1]);
         }
     }

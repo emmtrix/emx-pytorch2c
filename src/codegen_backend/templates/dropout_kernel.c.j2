@@ -1,7 +1,7 @@
 {{ signature }}
 {% set loop_count = output_dims | length %}
 {% for dim in output_dims %}
-{{ "    " * (loop.index0 + 1) }}for (int64_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
+{{ "    " * (loop.index0 + 1) }}for (size_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
 {% endfor %}
 {% set body_indent = "    " * (loop_count + 1) %}
 {{ body_indent }}{{ output_access }} = {{ input_access }};

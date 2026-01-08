@@ -80,7 +80,7 @@ def _write_nonzero_kernel(
         f"int64_t out{out_suffix}) {{"
     )
     loop_lines, indent = emit_loops(input_shape)
-    loop_lines = ["    int64_t out_index = 0;"] + loop_lines
+    loop_lines = ["    size_t out_index = 0;"] + loop_lines
     input_is_contiguous = _is_contiguous(input_shape, input_strides)
     output_is_contiguous = _is_contiguous(output_shape, output_strides)
     input_access = _emit_nonzero_input_access(
@@ -98,7 +98,9 @@ def _write_nonzero_kernel(
             dim,
             output_is_contiguous=output_is_contiguous,
         )
-        body_lines.append(f"{inner_indent}{output_access} = i{dim};")
+        body_lines.append(
+            f"{inner_indent}{output_access} = (int64_t)i{dim};"
+        )
     body_lines.append(f"{inner_indent}out_index += 1;")
     body_lines.append(f"{indent}}}")
     footer_lines = emit_footer(input_shape, indent)
@@ -127,4 +129,3 @@ class NonzeroEmitter(KindEmitterBase):
             req.input_dtypes[0],
             dtype,
         )
-

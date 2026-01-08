@@ -1,11 +1,11 @@
 {{ signature }}
 {% if has_input_shape %}
 {% for dim in range(output_shape | length) %}
-    for (int64_t i{{ dim }} = 0; i{{ dim }} < {{ output_shape[dim] }}; ++i{{ dim }}) {
+    for (size_t i{{ dim }} = 0; i{{ dim }} < {{ output_shape[dim] }}; ++i{{ dim }}) {
 {% endfor %}
     bool in_bounds = true;
 {% for dim in range(input_shape | length) %}
-    int64_t in_{{ dim }} = i{{ dim }} - {{ pad_before[dim] }};
+    int64_t in_{{ dim }} = (int64_t)i{{ dim }} - {{ pad_before[dim] }};
     if (in_{{ dim }} < 0 || in_{{ dim }} >= {{ input_shape[dim] }}) {
         in_bounds = false;
     }

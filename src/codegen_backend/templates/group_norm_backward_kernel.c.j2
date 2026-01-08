@@ -12,14 +12,14 @@
 {% if has_weight %}
     const {{ c_type }} *weight_ptr = &weight{{ weight_zero_indices }};
 {% endif %}
-    for (int64_t n = 0; n < batch; ++n) {
-        for (int64_t g = 0; g < groups; ++g) {
+    for (size_t n = 0; n < batch; ++n) {
+        for (size_t g = 0; g < groups; ++g) {
             const int64_t c_start = g * channels_per_group;
             {{ c_type }} mean = mean_ptr[n * groups + g];
             {{ c_type }} rstd = rstd_ptr[n * groups + g];
             {{ c_type }} sum1 = 0;
             {{ c_type }} sum2 = 0;
-            for (int64_t c = 0; c < channels_per_group; ++c) {
+            for (size_t c = 0; c < channels_per_group; ++c) {
                 const int64_t channel = c_start + c;
 {% if has_weight %}
                 {{ c_type }} w = weight_ptr[channel];
@@ -27,7 +27,7 @@
                 {{ c_type }} w = 1;
 {% endif %}
                 const int64_t base = (n * channels + channel) * spatial;
-                for (int64_t s = 0; s < spatial; ++s) {
+                for (size_t s = 0; s < spatial; ++s) {
                     const int64_t idx = base + s;
                     {{ c_type }} dy = grad_ptr[idx];
                     {{ c_type }} dxhat = dy * w;
@@ -36,7 +36,7 @@
                 }
             }
             const {{ c_type }} inv_group = ({{ c_type }})1 / ({{ c_type }})(channels_per_group * spatial);
-            for (int64_t c = 0; c < channels_per_group; ++c) {
+            for (size_t c = 0; c < channels_per_group; ++c) {
                 const int64_t channel = c_start + c;
 {% if has_weight %}
                 {{ c_type }} w = weight_ptr[channel];
@@ -44,7 +44,7 @@
                 {{ c_type }} w = 1;
 {% endif %}
                 const int64_t base = (n * channels + channel) * spatial;
-                for (int64_t s = 0; s < spatial; ++s) {
+                for (size_t s = 0; s < spatial; ++s) {
                     const int64_t idx = base + s;
                     {{ c_type }} dy = grad_ptr[idx];
                     {{ c_type }} dxhat = dy * w;

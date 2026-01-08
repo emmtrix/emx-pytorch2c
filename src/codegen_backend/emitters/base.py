@@ -191,7 +191,7 @@ def emit_loops(
         for dim, size in enumerate(output_shape):
             size = dim_names.get(dim, size)
             lines.append(
-                f"{indent}for (int64_t i{dim} = 0; i{dim} < {size}; ++i{dim}) {{"
+                f"{indent}for (size_t i{dim} = 0; i{dim} < {size}; ++i{dim}) {{"
             )
             indent += "    "
     return lines, indent

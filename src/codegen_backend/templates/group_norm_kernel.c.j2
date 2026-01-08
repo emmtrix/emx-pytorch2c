@@ -12,30 +12,30 @@
 {% if has_bias %}
     const {{ c_type }} *bias_ptr = &bias{{ bias_zero_indices }};
 {% endif %}
-    for (int64_t n = 0; n < batch; ++n) {
-        for (int64_t g = 0; g < groups; ++g) {
+    for (size_t n = 0; n < batch; ++n) {
+        for (size_t g = 0; g < groups; ++g) {
             const int64_t c_start = g * channels_per_group;
             const int64_t group_offset = (n * channels + c_start) * spatial;
             {{ c_type }} mean = 0;
-            for (int64_t c = 0; c < channels_per_group; ++c) {
+            for (size_t c = 0; c < channels_per_group; ++c) {
                 const int64_t base = group_offset + c * spatial;
-                for (int64_t s = 0; s < spatial; ++s) {
+                for (size_t s = 0; s < spatial; ++s) {
                     mean += input_ptr[base + s];
                 }
             }
             const {{ c_type }} group_size = ({{ c_type }})(channels_per_group * spatial);
             mean /= group_size;
             {{ c_type }} var = 0;
-            for (int64_t c = 0; c < channels_per_group; ++c) {
+            for (size_t c = 0; c < channels_per_group; ++c) {
                 const int64_t base = group_offset + c * spatial;
-                for (int64_t s = 0; s < spatial; ++s) {
+                for (size_t s = 0; s < spatial; ++s) {
                     {{ c_type }} diff = input_ptr[base + s] - mean;
                     var += diff * diff;
                 }
             }
             var /= group_size;
             {{ c_type }} rstd = ({{ c_type }})1 / {{ sqrt_fn }}(var + {{ eps }});
-            for (int64_t c = 0; c < channels_per_group; ++c) {
+            for (size_t c = 0; c < channels_per_group; ++c) {
                 const int64_t channel = c_start + c;
 {% if has_weight %}
                 {{ c_type }} w = weight_ptr[channel];
@@ -48,7 +48,7 @@
                 {{ c_type }} b = 0;
 {% endif %}
                 const int64_t base = (n * channels + channel) * spatial;
-                for (int64_t s = 0; s < spatial; ++s) {
+                for (size_t s = 0; s < spatial; ++s) {
                     {{ c_type }} val = (input_ptr[base + s] - mean) * rstd;
                     out_ptr[base + s] = val * w + b;
                 }

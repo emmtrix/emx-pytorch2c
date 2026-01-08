@@ -1,6 +1,6 @@
 {{ signature }}
 {% for dim in output_dims %}
-    for (int64_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
+    for (size_t i{{ dim.dim }} = 0; i{{ dim.dim }} < {{ dim.size }}; ++i{{ dim.dim }}) {
 {% endfor %}
 {% if input_rank == 0 %}
     {{ output_access }} = 0;
@@ -10,7 +10,7 @@
     {{ input_c_type }} best_value = 0;
     int64_t best_index = 0;
 {% for dim in reduction_dims %}
-    for (int64_t r{{ dim.dim }} = 0; r{{ dim.dim }} < {{ dim.size }}; ++r{{ dim.dim }}) {
+    for (size_t r{{ dim.dim }} = 0; r{{ dim.dim }} < {{ dim.size }}; ++r{{ dim.dim }}) {
 {% endfor %}
         int64_t linear_index = {{ linear_index }};
         {{ input_c_type }} value = {{ input_access }};
@@ -29,7 +29,7 @@
 {% else %}
     {{ input_c_type }} best_value = {{ init_access }};
     int64_t best_index = 0;
-    for (int64_t r{{ reduction_dim }} = 1; r{{ reduction_dim }} < {{ reduction_size }}; ++r{{ reduction_dim }}) {
+    for (size_t r{{ reduction_dim }} = 1; r{{ reduction_dim }} < {{ reduction_size }}; ++r{{ reduction_dim }}) {
         {{ input_c_type }} value = {{ loop_access }};
         if (value {{ compare_op }} best_value) {
             best_value = value;
