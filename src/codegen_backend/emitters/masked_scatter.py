@@ -10,9 +10,7 @@ from codegen_backend.emitters.base import (
     KindEmitterBase,
     _format_array_suffix,
     _is_contiguous,
-    emit_footer,
     emit_input_access,
-    emit_loops,
     emit_output_access,
 )
 from codegen_backend.errors import CodegenBackendError
@@ -53,7 +51,6 @@ def _write_masked_scatter_kernel(
         f"const {source_c_type} source{source_suffix}, "
         f"{dtype.c_type} out{out_suffix}) {{"
     )
-    loop_lines, indent = emit_loops(output_shape)
     output_access = emit_output_access(
         output_shape, output_strides, c_type=dtype.c_type
     )
@@ -73,44 +70,25 @@ def _write_masked_scatter_kernel(
         broadcast_contiguous=False,
         c_type=mask_c_type,
     )
-    preamble_lines = ["    ssize_t source_index = 0;"]
-    body_lines = [f"{indent}if ({mask_access} != 0) {{"]
-    inner_indent = f"{indent}    "
-    if source_shape:
-        source_indices = [f"src_i{dim}" for dim in range(len(source_shape))]
-        source_access = _emit_strided_access(
-            "source",
-            source_indices,
-            source_strides,
-            _is_contiguous(source_shape, source_strides),
-            sizes=source_shape,
-            c_type=source_c_type,
-        )
-        body_lines.append(f"{inner_indent}ssize_t src_linear = source_index;")
-        for dim in reversed(range(len(source_shape))):
-            size = source_shape[dim]
-            body_lines.append(
-                f"{inner_indent}ssize_t src_i{dim} = src_linear % {size};"
-            )
-            body_lines.append(
-                f"{inner_indent}src_linear /= {size};"
-            )
-        body_lines.append(
-            f"{inner_indent}{output_access} = {source_access};"
-        )
-    else:
-        body_lines.append(f"{inner_indent}{output_access} = source[0];")
-    body_lines.append(f"{inner_indent}source_index++;")
-    body_lines.append(f"{indent}}} else {{")
-    body_lines.append(f"{inner_indent}{output_access} = {input_access};")
-    body_lines.append(f"{indent}}}")
-    footer_lines = emit_footer(output_shape, indent)
+    source_is_contiguous = _is_contiguous(source_shape, source_strides)
+    source_indices = [f"src_i{dim}" for dim in range(len(source_shape))]
+    source_access = _emit_strided_access(
+        "source",
+        source_indices,
+        source_strides,
+        source_is_contiguous,
+        sizes=source_shape,
+        c_type=source_c_type,
+    )
     rendered = template.render(
         signature=signature,
-        preamble_lines=preamble_lines,
-        loop_lines=loop_lines,
-        body_lines=body_lines,
-        footer_lines=footer_lines,
+        source_shape=source_shape,
+        output_shape=output_shape,
+        mask_access=mask_access,
+        input_access=input_access,
+        output_access=output_access,
+        source_access=source_access,
+        source_is_contiguous=source_is_contiguous,
     )
     return rendered.splitlines()
 

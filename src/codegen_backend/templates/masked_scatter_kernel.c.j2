@@ -1,13 +1,29 @@
 {{ signature }}
-{% for line in preamble_lines %}
-{{ line }}
+    ssize_t source_index = 0;
+{% set ns = namespace(indent="    ") %}
+{% for size in output_shape %}
+{{ ns.indent }}for (ssize_t i{{ loop.index0 }} = 0; i{{ loop.index0 }} < {{ size }}; ++i{{ loop.index0 }}) {
+{% set ns.indent = ns.indent + "    " %}
 {% endfor %}
-{% for line in loop_lines %}
-{{ line }}
+{{ ns.indent }}if ({{ mask_access }} != 0) {
+{% if source_shape %}
+{{ ns.indent }}    ssize_t src_linear = source_index;
+{% set source_rank = source_shape | length %}
+{% for size in source_shape | reverse %}
+{% set dim = source_rank - loop.index0 - 1 %}
+{{ ns.indent }}    ssize_t src_i{{ dim }} = src_linear % {{ size }};
+{{ ns.indent }}    src_linear /= {{ size }};
 {% endfor %}
-{% for line in body_lines %}
-{{ line }}
+{{ ns.indent }}    {{ output_access }} = {{ source_access }};
+{% else %}
+{{ ns.indent }}    {{ output_access }} = source[0];
+{% endif %}
+{{ ns.indent }}    source_index++;
+{{ ns.indent }}} else {
+{{ ns.indent }}    {{ output_access }} = {{ input_access }};
+{{ ns.indent }}}
+{% for _ in output_shape | reverse %}
+{% set ns.indent = ns.indent[:-4] %}
+{{ ns.indent }}}
 {% endfor %}
-{% for line in footer_lines %}
-{{ line }}
-{% endfor %}
+}
