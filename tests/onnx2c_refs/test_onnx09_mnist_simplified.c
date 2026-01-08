@@ -61,6 +61,12 @@ static const float weight_Gemm_network_output_bias[10] = {
     -0x1.553391p-4f, 0x1.1ae21ep-4f
 };
 
+/*
+* op: conv2d (kind: conv2d)
+* inputs: [shape=(1, 1, 14, 14), size=196, shape=(20, 1, 5, 5), size=500]
+* output: shape=(1, 20, 5, 5), size=500
+* params: {'stride': (2, 2), 'padding': (0, 0), 'dilation': (1, 1), 'groups': 1, 'transposed': False, 'output_padding': (0, 0), 'has_bias': False}
+*/
 void node1_conv2d_f32(const float input[1][1][14][14], const float weight[20][1][5][5], float out[1][20][5][5]) {
     ssize_t in_per_group = 1 / 1;
     ssize_t out_per_group = 20 / 1;
@@ -99,6 +105,12 @@ void node1_conv2d_f32(const float input[1][1][14][14], const float weight[20][1]
     }
 }
 
+/*
+* op: relu (kind: unary)
+* inputs: [shape=(1, 20, 5, 5), size=500]
+* output: shape=(1, 20, 5, 5), size=500
+* params: {}
+*/
 void node2_relu_f32(const float a[1][20][5][5], float out[1][20][5][5]) {
     for (ssize_t i0 = 0; i0 < 1; ++i0) {
         for (ssize_t i1 = 0; i1 < 20; ++i1) {
@@ -111,6 +123,12 @@ void node2_relu_f32(const float a[1][20][5][5], float out[1][20][5][5]) {
     }
 }
 
+/*
+* op: conv2d (kind: conv2d)
+* inputs: [shape=(1, 20, 5, 5), size=500, shape=(12, 20, 3, 3), size=2160]
+* output: shape=(1, 12, 3, 3), size=108
+* params: {'stride': (1, 1), 'padding': (0, 0), 'dilation': (1, 1), 'groups': 1, 'transposed': False, 'output_padding': (0, 0), 'has_bias': False}
+*/
 void node3_conv2d_f32(const float input[1][20][5][5], const float weight[12][20][3][3], float out[1][12][3][3]) {
     ssize_t in_per_group = 20 / 1;
     ssize_t out_per_group = 12 / 1;
@@ -149,6 +167,12 @@ void node3_conv2d_f32(const float input[1][20][5][5], const float weight[12][20]
     }
 }
 
+/*
+* op: reshape (kind: view)
+* inputs: [shape=(1, 12, 3, 3), size=108]
+* output: shape=(1, 108), size=108
+* params: {'size': (1, 108), 'view_strides': (108, 1), 'storage_offset': 0}
+*/
 void node4_reshape_f32(const float a[1][12][3][3], float out[1][108]) {
     const float* a_ptr = (const float*)a;
     for (ssize_t i0 = 0; i0 < 1; ++i0) {
@@ -159,6 +183,12 @@ void node4_reshape_f32(const float a[1][12][3][3], float out[1][108]) {
     }
 }
 
+/*
+* op: linear (kind: linear)
+* inputs: [shape=(1, 108), size=108, shape=(10, 108), size=1080, shape=(10,), size=10]
+* output: shape=(1, 10), size=10
+* params: {'has_bias': True}
+*/
 void node5_linear_f32(const float input[1][108], const float weight[10][108], const float bias[10], float out[1][10]) {
     for (ssize_t i0 = 0; i0 < 1; ++i0) {
         for (ssize_t j = 0; j < 10; ++j) {

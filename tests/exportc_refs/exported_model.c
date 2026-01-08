@@ -22,6 +22,12 @@ static const float weight_weight[4][3] = {
     }
 };
 
+/*
+* op: addmm (kind: addmm)
+* inputs: [shape=(3,), size=3, shape=(2, 4), size=8, shape=(4, 3), size=12]
+* output: shape=(2, 3), size=6
+* params: {'alpha': 1.0, 'beta': 1.0}
+*/
 void node1_addmm_f32(const float input[3], const float mat1[2][4], const float mat2[4][3], float out[2][3]) {
     for (ssize_t i = 0; i < 2; ++i) {
         for (ssize_t j = 0; j < 3; ++j) {

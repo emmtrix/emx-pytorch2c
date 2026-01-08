@@ -3,6 +3,12 @@
 #include <stdbool.h>
 #include "ops_scalar_i32.h"
 
+/*
+* op: mul (kind: binary)
+* inputs: [shape=(2, 3), size=6, shape=(2, 3), size=6]
+* output: shape=(2, 3), size=6
+* params: {}
+*/
 void node1_mul_i32(const int32_t a[2][3], const int32_t b[2][3], int32_t out[2][3]) {
     for (ssize_t i0 = 0; i0 < 2; ++i0) {
         for (ssize_t i1 = 0; i1 < 3; ++i1) {
@@ -11,6 +17,12 @@ void node1_mul_i32(const int32_t a[2][3], const int32_t b[2][3], int32_t out[2][
     }
 }
 
+/*
+* op: mul (kind: binary)
+* inputs: [shape=(2, 3), size=6, shape=(2, 3), size=6]
+* output: shape=(2, 3), size=6
+* params: {}
+*/
 void node2_mul_i32(const int32_t a[2][3], const int32_t b[2][3], int32_t out[2][3]) {
     for (ssize_t i0 = 0; i0 < 2; ++i0) {
         for (ssize_t i1 = 0; i1 < 3; ++i1) {

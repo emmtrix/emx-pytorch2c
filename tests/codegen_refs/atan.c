@@ -3,6 +3,12 @@
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
+/*
+* op: atan (kind: unary)
+* inputs: [shape=(2, 3), size=6]
+* output: shape=(2, 3), size=6
+* params: {}
+*/
 void node1_atan_f32(const float a[2][3], float out[2][3]) {
     for (ssize_t i0 = 0; i0 < 2; ++i0) {
         for (ssize_t i1 = 0; i1 < 3; ++i1) {

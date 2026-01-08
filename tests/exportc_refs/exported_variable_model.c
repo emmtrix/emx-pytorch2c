@@ -3,6 +3,12 @@
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
+/*
+* op: add (kind: binary)
+* inputs: [shape=(2, 4), size=8]
+* output: shape=(2, 4), size=8
+* params: {'scalar': 1}
+*/
 void node1_add_f32(int dim1, const float a[dim1][4], float out[dim1][4]) {
     for (ssize_t i0 = 0; i0 < dim1; ++i0) {
         for (ssize_t i1 = 0; i1 < 4; ++i1) {

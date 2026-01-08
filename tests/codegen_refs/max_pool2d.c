@@ -3,6 +3,12 @@
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
+/*
+* op: max_pool2d (kind: pool2d)
+* inputs: [shape=(1, 2, 4, 4), size=32]
+* output: shape=(1, 2, 3, 3), size=18
+* params: {'kernel_size': (2, 2), 'stride': (1, 1), 'padding': (0, 0), 'dilation': (1, 1), 'ceil_mode': False, 'count_include_pad': False, 'divisor_override': None}
+*/
 void node1_max_pool2d_f32(const float input[1][2][4][4], float out[1][2][3][3]) {
     ssize_t out_h = 3;
     ssize_t out_w = 3;

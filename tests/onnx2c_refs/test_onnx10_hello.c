@@ -67,6 +67,12 @@ static const float weight_MatMul_dense_4_bias[1] = {
     -0x1.712c2bp-2f
 };
 
+/*
+* op: linear (kind: linear)
+* inputs: [shape=(1, 1), size=1, shape=(16, 1), size=16, shape=(16,), size=16]
+* output: shape=(1, 16), size=16
+* params: {'has_bias': True}
+*/
 void node1_linear_f32(const float input[1][1], const float weight[16][1], const float bias[16], float out[1][16]) {
     for (ssize_t i0 = 0; i0 < 1; ++i0) {
         for (ssize_t j = 0; j < 16; ++j) {
@@ -79,6 +85,12 @@ void node1_linear_f32(const float input[1][1], const float weight[16][1], const 
     }
 }
 
+/*
+* op: relu (kind: unary)
+* inputs: [shape=(1, 16), size=16]
+* output: shape=(1, 16), size=16
+* params: {}
+*/
 void node2_relu_f32(const float a[1][16], float out[1][16]) {
     for (ssize_t i0 = 0; i0 < 1; ++i0) {
         for (ssize_t i1 = 0; i1 < 16; ++i1) {
@@ -87,6 +99,12 @@ void node2_relu_f32(const float a[1][16], float out[1][16]) {
     }
 }
 
+/*
+* op: linear (kind: linear)
+* inputs: [shape=(1, 16), size=16, shape=(16, 16), size=256, shape=(16,), size=16]
+* output: shape=(1, 16), size=16
+* params: {'has_bias': True}
+*/
 void node3_linear_f32(const float input[1][16], const float weight[16][16], const float bias[16], float out[1][16]) {
     for (ssize_t i0 = 0; i0 < 1; ++i0) {
         for (ssize_t j = 0; j < 16; ++j) {
@@ -99,6 +117,12 @@ void node3_linear_f32(const float input[1][16], const float weight[16][16], cons
     }
 }
 
+/*
+* op: relu (kind: unary)
+* inputs: [shape=(1, 16), size=16]
+* output: shape=(1, 16), size=16
+* params: {}
+*/
 void node4_relu_f32(const float a[1][16], float out[1][16]) {
     for (ssize_t i0 = 0; i0 < 1; ++i0) {
         for (ssize_t i1 = 0; i1 < 16; ++i1) {
@@ -107,6 +131,12 @@ void node4_relu_f32(const float a[1][16], float out[1][16]) {
     }
 }
 
+/*
+* op: linear (kind: linear)
+* inputs: [shape=(1, 16), size=16, shape=(1, 16), size=16, shape=(1,), size=1]
+* output: shape=(1, 1), size=1
+* params: {'has_bias': True}
+*/
 void node5_linear_f32(const float input[1][16], const float weight[1][16], const float bias[1], float out[1][1]) {
     for (ssize_t i0 = 0; i0 < 1; ++i0) {
         for (ssize_t j = 0; j < 1; ++j) {

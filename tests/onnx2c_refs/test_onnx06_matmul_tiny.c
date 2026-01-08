@@ -12,6 +12,12 @@ static const float weight_MatMul_my_weight[2][2] = {
     }
 };
 
+/*
+* op: linear (kind: linear)
+* inputs: [shape=(1, 2), size=2, shape=(2, 2), size=4]
+* output: shape=(1, 2), size=2
+* params: {'has_bias': False}
+*/
 void node1_linear_f32(const float input[1][2], const float weight[2][2], float out[1][2]) {
     for (ssize_t i0 = 0; i0 < 1; ++i0) {
         for (ssize_t j = 0; j < 2; ++j) {

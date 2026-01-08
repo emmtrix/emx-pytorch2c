@@ -23,6 +23,12 @@ static const float weight_Conv_out_bias[1] = {
     0x0.0p+0f
 };
 
+/*
+* op: conv2d (kind: conv2d)
+* inputs: [shape=(1, 1, 5, 5), size=25, shape=(1, 1, 3, 3), size=9, shape=(1,), size=1]
+* output: shape=(1, 1, 3, 3), size=9
+* params: {'stride': (1, 1), 'padding': (0, 0), 'dilation': (1, 1), 'groups': 1, 'transposed': False, 'output_padding': (0, 0), 'has_bias': True}
+*/
 void node1_conv2d_f32(const float input[1][1][5][5], const float weight[1][1][3][3], const float bias[1], float out[1][1][3][3]) {
     ssize_t in_per_group = 1 / 1;
     ssize_t out_per_group = 1 / 1;

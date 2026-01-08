@@ -4,12 +4,24 @@
 #include "ops_scalar_f32.h"
 #include <stdlib.h>
 
+/*
+* op: add (kind: binary)
+* inputs: [shape=(1,), size=1, shape=(1,), size=1]
+* output: shape=(1,), size=1
+* params: {}
+*/
 void node1_add_f32(const float a[1], const float b[1], float out[1]) {
     for (ssize_t i0 = 0; i0 < 1; ++i0) {
         out[i0] = ref_scalar_f32_add(a[0], b[0]);
     }
 }
 
+/*
+* op: add (kind: binary)
+* inputs: [shape=(1, 2, 2, 5), size=20, shape=(1, 2, 2, 5), size=20]
+* output: shape=(1, 2, 2, 5), size=20
+* params: {}
+*/
 void node2_add_f32(const float a[1][2][2][5], const float b[1][2][2][5], float out[1][2][2][5]) {
     for (ssize_t i0 = 0; i0 < 1; ++i0) {
         for (ssize_t i1 = 0; i1 < 2; ++i1) {
@@ -22,6 +34,12 @@ void node2_add_f32(const float a[1][2][2][5], const float b[1][2][2][5], float o
     }
 }
 
+/*
+* op: add (kind: binary)
+* inputs: [shape=(1,), size=1, shape=(1, 2, 2, 5), size=20]
+* output: shape=(1, 2, 2, 5), size=20
+* params: {}
+*/
 void node3_add_f32(const float a[1], const float b[1][2][2][5], float out[1][2][2][5]) {
     for (ssize_t i0 = 0; i0 < 1; ++i0) {
         for (ssize_t i1 = 0; i1 < 2; ++i1) {

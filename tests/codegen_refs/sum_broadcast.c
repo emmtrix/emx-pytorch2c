@@ -3,6 +3,12 @@
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
+/*
+* op: add (kind: binary)
+* inputs: [shape=(2, 3, 4), size=24, shape=(1, 4), size=4]
+* output: shape=(2, 3, 4), size=24
+* params: {}
+*/
 void node1_add_f32(const float a[2][3][4], const float b[1][4], float out[2][3][4]) {
     for (ssize_t i0 = 0; i0 < 2; ++i0) {
         for (ssize_t i1 = 0; i1 < 3; ++i1) {
@@ -13,6 +19,12 @@ void node1_add_f32(const float a[2][3][4], const float b[1][4], float out[2][3][
     }
 }
 
+/*
+* op: sum (kind: reduction)
+* inputs: [shape=(2, 3, 4), size=24]
+* output: shape=(2, 4), size=8
+* params: {'reduce_all': False}
+*/
 void node2_sum_f32(const float a[2][3][4], float out[2][4]) {
     for (ssize_t i0 = 0; i0 < 2; ++i0) {
         for (ssize_t i1 = 0; i1 < 4; ++i1) {

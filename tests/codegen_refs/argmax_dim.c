@@ -3,6 +3,12 @@
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
+/*
+* op: argmax (kind: arg_reduction)
+* inputs: [shape=(2, 3), size=6]
+* output: shape=(2,), size=2
+* params: {'reduce_all': False}
+*/
 void node1_argmax_f32(const float a[2][3], int64_t out[2]) {
     for (ssize_t i0 = 0; i0 < 2; ++i0) {
         float best_value = a[i0][0];

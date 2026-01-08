@@ -3,6 +3,12 @@
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
+/*
+* op: mean (kind: reduction)
+* inputs: [shape=(2, 3), size=6]
+* output: shape=(), size=1
+* params: {'reduce_all': True}
+*/
 void node1_mean_f32(const float a[2][3], float out[1]) {
     float acc = 0.0f;
     for (ssize_t r0 = 0; r0 < 2; ++r0) {

@@ -11,7 +11,7 @@ from codegen_backend.c_types import _dtype_to_c_type, _input_c_type
 from codegen_backend.emitters.base import _format_array_suffix, _format_dim_args
 from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.errors import CodegenBackendError
-from codegen_backend.graph import _GenericGraph
+from codegen_backend.graph import _GenericGraph, _OpNode
 from codegen_backend.kinds import OpKind, OpKindHandler
 
 
@@ -33,6 +33,27 @@ def _format_c_indentation(source: str, *, indent: str = "    ") -> str:
         indent_level += open_count - close_count
         indent_level = max(indent_level, 0)
     return "\n".join(formatted_lines)
+
+
+def _format_op_comment(op_node: _OpNode, graph: _GenericGraph) -> List[str]:
+    def _shape_summary(shape: Sequence[int] | None) -> str:
+        if shape is None:
+            return "scalar"
+        return f"shape={tuple(shape)}, size={prod(shape) if shape else 1}"
+
+    input_shapes = []
+    for input_node in _kernel_inputs(op_node):
+        input_shapes.append(_shape_summary(graph.shapes.get(input_node)))
+    output_shape = _shape_summary(op_node.output_shape)
+    params = op_node.params or {}
+    return [
+        "/*",
+        f" * op: {op_node.spec.name} (kind: {op_node.spec.kind.value})",
+        f" * inputs: [{', '.join(input_shapes)}]",
+        f" * output: {output_shape}",
+        f" * params: {params}",
+        " */",
+    ]
 
 
 class Emitter:
@@ -97,6 +118,7 @@ class Emitter:
                 )
             handler.postprocess(op_node, graph)
             kernel_lines = handler.emit(index, op_node, graph)
+            kernel_lines = _format_op_comment(op_node, graph) + kernel_lines
             kernels.append(_format_c_indentation("\n".join(kernel_lines)))
         signature_parts: List[str] = []
         dim_args = _format_dim_args(graph.variable_dim_order)

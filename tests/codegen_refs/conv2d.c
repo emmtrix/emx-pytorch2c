@@ -3,6 +3,12 @@
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
+/*
+* op: conv2d (kind: conv2d)
+* inputs: [shape=(1, 2, 5, 5), size=50, shape=(3, 2, 3, 3), size=54, shape=(3,), size=3]
+* output: shape=(1, 3, 3, 3), size=27
+* params: {'stride': (1, 1), 'padding': (0, 0), 'dilation': (1, 1), 'groups': 1, 'transposed': False, 'output_padding': (0, 0), 'has_bias': True}
+*/
 void node1_conv2d_f32(const float input[1][2][5][5], const float weight[3][2][3][3], const float bias[3], float out[1][3][3][3]) {
     ssize_t in_per_group = 2 / 1;
     ssize_t out_per_group = 3 / 1;

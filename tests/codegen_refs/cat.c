@@ -3,6 +3,12 @@
 #include <stdbool.h>
 #include "ops_scalar_f32.h"
 
+/*
+* op: cat (kind: concat)
+* inputs: [shape=(2, 2), size=4, shape=(2, 1), size=2]
+* output: shape=(2, 3), size=6
+* params: {'dim': 1}
+*/
 void node1_cat_f32(const float a0[2][2], const float a1[2][1], float out[2][3]) {
     for (ssize_t i0 = 0; i0 < 2; ++i0) {
         for (ssize_t i1 = 0; i1 < 2; ++i1) {
