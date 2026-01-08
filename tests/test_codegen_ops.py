@@ -657,108 +657,18 @@ CODEGEN_SPECIAL_TEST_OPS = [
     torch.ops.aten.embedding_dense_backward.default,
 ]
 CODEGEN_OP_TEST_CONFIG = {
-    torch.ops.aten.embedding.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.embedding_dense_backward.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.copysign.Tensor: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.copysign.Scalar: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.bitwise_and.Scalar: {
-        "allowed_dtypes": (torch.int8, torch.int32, torch.bool),
-    },
-    torch.ops.aten.bitwise_left_shift.Tensor: {
-        "allowed_dtypes": (torch.int8, torch.int32),
-    },
-    torch.ops.aten.bitwise_left_shift_.Tensor: {
-        "allowed_dtypes": (torch.int8, torch.int32),
-    },
-    torch.ops.aten.bitwise_right_shift.Tensor: {
-        "allowed_dtypes": (torch.int8, torch.int32),
-    },
-    torch.ops.aten.bitwise_right_shift_.Tensor: {
-        "allowed_dtypes": (torch.int8, torch.int32),
-    },
-    torch.ops.aten.logical_or.default: {
-        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
-    },
-    torch.ops.aten.logical_xor.default: {
-        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
-    },
-    torch.ops.aten.clamp.default: {
-        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
-    },
-    torch.ops.aten.clamp.Tensor: {
-        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
-    },
-    torch.ops.aten.clamp_.default: {
-        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
-    },
-    torch.ops.aten.clamp_.Tensor: {
-        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
-    },
     torch.ops.aten.where.self: {},
     torch.ops.aten.where.Scalar: {},
     torch.ops.aten.full_like.default: {},
     torch.ops.aten.arange.start_step: {
-        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
         "allow_no_tensor_inputs": True,
     },
-    torch.ops.aten.argmax.default: {
-        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
-    },
-    torch.ops.aten.argmin.default: {
-        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
-    },
-    torch.ops.aten.softmax.int: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.log_softmax.int: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.log_sigmoid.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten._cdist_forward.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
     torch.ops.aten.avg_pool2d_backward.default: {
-        "allowed_dtypes": (torch.float32,),
         "requires_contiguous": True,
     },
-    torch.ops.aten.gelu.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.elu.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.leaky_relu.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.softplus.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
     torch.ops.aten.digamma.default: {
-        "allowed_dtypes": (torch.float32,),
         "rtol": 3e-5,
         "atol": 0.0,
-    },
-    torch.ops.aten.mish_.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.hardsigmoid.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.var.dim: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.norm.ScalarOpt_dim: {
-        "allowed_dtypes": (torch.float32,),
     },
     torch.ops.aten.view.default: {
         "requires_contiguous": True,
@@ -769,58 +679,17 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.cat.default: {
         "expand_input_list": True,
     },
-    torch.ops.aten.relu6.default: {
-        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
-    },
-    torch.ops.aten.selu.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.conv2d.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.convolution.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.avg_pool1d.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.avg_pool2d.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.max_pool1d.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
-    torch.ops.aten.max_pool2d.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
     torch.ops.aten._native_batch_norm_legit.default: {
-        "allowed_dtypes": (torch.float32,),
         "allow_noncontiguous": False,
         "requires_contiguous": True,
     },
-    torch.ops.aten.conv1d.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
     torch.ops.aten.resize_.default: {},
-    torch.ops.aten.cumsum.default: {
-        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
-    },
-    torch.ops.aten.addmm.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
     torch.ops.aten.addbmm.default: {
-        "allowed_dtypes": (torch.float32,),
         "rtol": 2e-4,
         "atol": 2e-5,
     },
-    torch.ops.aten.addmv.default: {
-        "allowed_dtypes": (torch.float32,),
-    },
     torch.ops.aten.addr.default: {
         "equal_nan": True,
-    },
-    torch.ops.aten.linear.default: {
-        "allowed_dtypes": (torch.float32,),
     },
 }
 DEFAULT_CONSTRAINTS = {
