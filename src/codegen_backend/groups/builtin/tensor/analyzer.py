@@ -14,6 +14,7 @@ from codegen_backend.groups.analysis import GroupAnalysisResult, RegistryGroupAn
 from codegen_backend.groups.builtin.reductions.args import ReductionsArgParser
 from codegen_backend.groups.builtin.tensor.parsing import (
     parse_split_with_sizes_args,
+    validate_split_with_sizes,
 )
 from codegen_backend.graph import _OpNode
 from codegen_backend.indexing import _contiguous_strides
@@ -75,28 +76,7 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
             torch.ops.aten.split_with_sizes.default,
         }:
             input_arg, split_sizes, dim = parse_split_with_sizes_args(node)
-            if (
-                not isinstance(input_arg, torch.fx.Node)
-                or input_arg not in shapes
-            ):
-                raise CodegenBackendError(
-                    "codegen split_with_sizes expects a tensor input"
-                )
-            input_shape = shapes[input_arg]
-            if dim < 0:
-                dim += len(input_shape)
-            if dim < 0 or dim >= len(input_shape):
-                raise CodegenBackendError(
-                    "codegen split_with_sizes dim is out of range"
-                )
-            if any(size < 0 for size in split_sizes):
-                raise CodegenBackendError(
-                    "codegen split_with_sizes expects non-negative split sizes"
-                )
-            if sum(split_sizes) != input_shape[dim]:
-                raise CodegenBackendError(
-                    "codegen split_with_sizes expects split sizes to sum to the input size"
-                )
+            validate_split_with_sizes(input_arg, split_sizes, dim, shapes)
             return GroupAnalysisResult(op_node=None)
         if node.op == "call_function" and node.target is operator.getitem:
             op_node = self._handle_getitem_node(
@@ -158,28 +138,9 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
             torch.ops.aten.split_with_sizes.default,
         }:
             input_arg, split_sizes, dim = parse_split_with_sizes_args(source)
-            if (
-                not isinstance(input_arg, torch.fx.Node)
-                or input_arg not in shapes
-            ):
-                raise CodegenBackendError(
-                    "codegen split_with_sizes expects a tensor input"
-                )
-            input_shape = shapes[input_arg]
-            if dim < 0:
-                dim += len(input_shape)
-            if dim < 0 or dim >= len(input_shape):
-                raise CodegenBackendError(
-                    "codegen split_with_sizes dim is out of range"
-                )
-            if any(size < 0 for size in split_sizes):
-                raise CodegenBackendError(
-                    "codegen split_with_sizes expects non-negative split sizes"
-                )
-            if sum(split_sizes) != input_shape[dim]:
-                raise CodegenBackendError(
-                    "codegen split_with_sizes expects split sizes to sum to the input size"
-                )
+            _, input_shape, dim = validate_split_with_sizes(
+                input_arg, split_sizes, dim, shapes
+            )
             if isinstance(index, float) and index.is_integer():
                 index_value = int(index)
             else:
