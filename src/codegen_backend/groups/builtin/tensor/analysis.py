@@ -7,6 +7,7 @@ from typing import Dict, List, Sequence, Tuple
 import torch
 import torch.fx
 
+from codegen_backend import shape_utils
 from codegen_backend.analysis_helpers import (
     channels_last_3d_strides,
     channels_last_strides,
@@ -363,33 +364,60 @@ class TensorOpBuilder:
         if not isinstance(p, (int, float)):
             raise CodegenBackendError("codegen cdist expects p to be a number")
         p_value = float(p)
-        if math.isinf(p_value) or math.isnan(p_value):
-            raise CodegenBackendError("codegen cdist expects p to be finite")
+        if math.isnan(p_value):
+            raise CodegenBackendError("codegen cdist expects p to be a number")
+        if p_value < 0:
+            raise CodegenBackendError(
+                "codegen cdist expects p to be a non-negative number"
+            )
         if isinstance(compute_mode, torch.fx.Node):
             raise CodegenBackendError(
                 "codegen cdist expects compute_mode to be a string"
             )
-        if compute_mode is not None and compute_mode not in (
-            "use_mm_for_euclid_dist",
-        ):
-            raise CodegenBackendError(
-                "codegen cdist supports compute_mode='use_mm_for_euclid_dist' or None"
-            )
+        compute_mode_value = None
+        if compute_mode is not None:
+            if isinstance(compute_mode, str):
+                compute_mode_value = compute_mode
+            else:
+                try:
+                    compute_mode_index = int(operator.index(compute_mode))
+                except TypeError as exc:
+                    raise CodegenBackendError(
+                        "codegen cdist expects compute_mode to be a string"
+                    ) from exc
+                compute_mode_value = {
+                    0: "use_mm_for_euclid_dist_if_necessary",
+                    1: "use_mm_for_euclid_dist",
+                    2: "donot_use_mm_for_euclid_dist",
+                }.get(compute_mode_index)
+            if compute_mode_value not in (
+                "use_mm_for_euclid_dist_if_necessary",
+                "use_mm_for_euclid_dist",
+                "donot_use_mm_for_euclid_dist",
+            ):
+                raise CodegenBackendError(
+                    "codegen cdist supports compute_mode='use_mm_for_euclid_dist', "
+                    "'use_mm_for_euclid_dist_if_necessary', "
+                    "'donot_use_mm_for_euclid_dist', or None"
+                )
         x1_shape = self._shapes[x1]
         x2_shape = self._shapes[x2]
-        if len(x1_shape) != 2 or len(x2_shape) != 2:
-            raise CodegenBackendError("codegen cdist expects 2D inputs")
-        if x1_shape[1] != x2_shape[1]:
+        if len(x1_shape) < 2 or len(x2_shape) < 2:
+            raise CodegenBackendError("codegen cdist expects inputs with rank >= 2")
+        if x1_shape[-1] != x2_shape[-1]:
             raise CodegenBackendError(
-                "codegen cdist expects inputs to match in dimension 1"
+                "codegen cdist expects inputs to match in the last dimension"
             )
+        _ = shape_utils.broadcast_output_shape(
+            op_spec.name, x1_shape[:-2], x2_shape[:-2]
+        )
         op_node = _OpNode(
             node=node,
             spec=op_spec,
             inputs=[x1, x2],
             output_shape=(),
             inplace_input=None,
-            params={"p": p_value},
+            params={"p": p_value, "compute_mode": compute_mode_value},
         )
         return self._finalize_node(
             node, op_node, dtype_info, [x1_shape, x2_shape]
