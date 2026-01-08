@@ -67,7 +67,7 @@ class FlipEmitter(KindEmitterBase):
                 dim_order=req.dim_order,
             )
         ]
-        loop_lines, indent = emit_loops(output_shape, req.output_dim_names)
+        loop_lines = emit_loops(output_shape, req.output_dim_names)
         lines.extend(loop_lines)
         output_access = emit_output_access(
             output_shape, output_strides, c_type=req.dtype.c_type
@@ -79,6 +79,6 @@ class FlipEmitter(KindEmitterBase):
             req.params.get("dims", ()),
             c_type=_input_c_type(input_dtype, req.dtype),
         )
-        lines.append(f"{indent}{output_access} = {input_access};")
-        lines.extend(emit_footer(output_shape, indent))
+        lines.append(f"{output_access} = {input_access};")
+        lines.extend(emit_footer(output_shape))
         return lines

@@ -52,7 +52,7 @@ def _write_embedding_bag_kernel(
         f"const {offsets_c_type} offsets{offsets_suffix}, "
         f"{dtype.c_type} out{out_suffix}) {{"
     )
-    loop_lines, indent = emit_loops(output_shape)
+    loop_lines = emit_loops(output_shape)
     output_indices = [f"i{dim}" for dim in range(len(output_shape))]
     output_access = _emit_strided_access(
         "out",
@@ -95,58 +95,51 @@ def _write_embedding_bag_kernel(
         c_type=dtype.c_type,
     )
     zero_literal = _format_scalar_literal(0.0, dtype)
-    body_lines = [
-        f"{indent}ssize_t start = (ssize_t)({offsets_access});",
-    ]
+    body_lines = [f"ssize_t start = (ssize_t)({offsets_access});"]
     if include_last_offset:
-        body_lines.append(
-            f"{indent}ssize_t end = (ssize_t)({offsets_next_access});"
-        )
+        body_lines.append(f"ssize_t end = (ssize_t)({offsets_next_access});")
     else:
         body_lines.append(
-            f"{indent}ssize_t end = (i0 + 1 < {offsets_shape[0]}) "
+            f"ssize_t end = (i0 + 1 < {offsets_shape[0]}) "
             f"? (ssize_t)({offsets_next_access}) "
             f": {indices_shape[0]};"
         )
     body_lines.extend(
         [
-            f"{indent}{dtype.c_type} acc = {zero_literal};",
-            f"{indent}ssize_t count = 0;",
-            f"{indent}for (ssize_t j = start; j < end; ++j) {{",
+            f"{dtype.c_type} acc = {zero_literal};",
+            f"ssize_t count = 0;",
+            f"for (ssize_t j = start; j < end; ++j) {{",
         ]
     )
-    inner_indent = f"{indent}    "
-    body_lines.append(
-        f"{inner_indent}ssize_t idx = (ssize_t)({indices_access});"
-    )
+    body_lines.append(f"ssize_t idx = (ssize_t)({indices_access});")
     if padding_idx != -1:
         body_lines.extend(
             [
-                f"{inner_indent}if (idx == {padding_idx}) {{",
-                f"{inner_indent}    continue;",
-                f"{inner_indent}}}",
+                f"if (idx == {padding_idx}) {{",
+                "continue;",
+                "}",
             ]
         )
     body_lines.extend(
         [
-            f"{inner_indent}acc += {weight_access};",
-            f"{inner_indent}count += 1;",
-            f"{indent}}}",
+            f"acc += {weight_access};",
+            "count += 1;",
+            "}",
         ]
     )
     if mode == 1:
         body_lines.extend(
             [
-                f"{indent}if (count == 0) {{",
-                f"{indent}    {output_access} = {zero_literal};",
-                f"{indent}}} else {{",
-                f"{indent}    {output_access} = acc / ({dtype.c_type})count;",
-                f"{indent}}}",
+                "if (count == 0) {",
+                f"{output_access} = {zero_literal};",
+                "} else {",
+                f"{output_access} = acc / ({dtype.c_type})count;",
+                "}",
             ]
         )
     else:
-        body_lines.append(f"{indent}{output_access} = acc;")
-    footer_lines = emit_footer(output_shape, indent)
+        body_lines.append(f"{output_access} = acc;")
+    footer_lines = emit_footer(output_shape)
     rendered = embedding_template.render(
         signature=signature,
         loop_lines=loop_lines,

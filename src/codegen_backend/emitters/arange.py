@@ -25,7 +25,7 @@ class ArangeEmitter(KindEmitterBase):
             f"{req.dtype.c_type} out{out_suffix}) {{"
         )
         lines = [signature]
-        loop_lines, indent = emit_loops(req.output_shape)
+        loop_lines = emit_loops(req.output_shape)
         lines.extend(loop_lines)
         output_access = emit_output_access(
             req.output_shape, req.output_strides, c_type=req.dtype.c_type
@@ -33,8 +33,6 @@ class ArangeEmitter(KindEmitterBase):
         start = _format_scalar_literal(req.params["start"], req.dtype)
         step = _format_scalar_literal(req.params["step"], req.dtype)
         index_expr = "i0" if req.output_shape else "0"
-        lines.append(
-            f"{indent}{output_access} = {start} + ({step} * {index_expr});"
-        )
-        lines.extend(emit_footer(req.output_shape, indent))
+        lines.append(f"{output_access} = {start} + ({step} * {index_expr});")
+        lines.extend(emit_footer(req.output_shape))
         return lines

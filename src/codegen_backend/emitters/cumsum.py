@@ -43,10 +43,10 @@ def _write_cumsum_kernel(
     )
     lines = [signature]
     if not input_shape:
-        lines.append(f"    out[0] = ({output_c_type})input[0];")
+        lines.append(f"out[0] = ({output_c_type})input[0];")
         lines.append("}")
         return lines
-    loop_lines, indent = emit_loops(input_shape)
+    loop_lines = emit_loops(input_shape)
     lines.extend(loop_lines)
     output_access = _emit_strided_access(
         "out",
@@ -61,11 +61,10 @@ def _write_cumsum_kernel(
         if output_dtype in _INTEGER_CODEGEN_DTYPES
         else _format_scalar_literal(0.0, output_dtype_info)
     )
-    lines.append(f"{indent}{output_dtype_info.c_type} acc = {acc_init};")
+    lines.append(f"{output_dtype_info.c_type} acc = {acc_init};")
     lines.append(
-        f"{indent}for (ssize_t r{cumsum_dim} = 0; r{cumsum_dim} <= i{cumsum_dim}; ++r{cumsum_dim}) {{"
+        f"for (ssize_t r{cumsum_dim} = 0; r{cumsum_dim} <= i{cumsum_dim}; ++r{cumsum_dim}) {{"
     )
-    inner_indent = f"{indent}    "
     input_indices = [
         f"r{cumsum_dim}" if dim == cumsum_dim else f"i{dim}"
         for dim in range(len(input_shape))
@@ -78,10 +77,10 @@ def _write_cumsum_kernel(
         sizes=input_shape,
         c_type=input_c_type,
     )
-    lines.append(f"{inner_indent}acc += ({output_c_type}){input_access};")
-    lines.append(f"{indent}}}")
-    lines.append(f"{indent}{output_access} = acc;")
-    lines.extend(emit_footer(input_shape, indent))
+    lines.append(f"acc += ({output_c_type}){input_access};")
+    lines.append("}")
+    lines.append(f"{output_access} = acc;")
+    lines.extend(emit_footer(input_shape))
     return lines
 
 

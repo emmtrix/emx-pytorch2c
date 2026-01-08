@@ -47,7 +47,7 @@ def _write_concat_kernel(
             raise CodegenBackendError(
                 "codegen cat expects inputs with the same rank"
             )
-        loop_lines, indent = emit_loops(shape)
+        loop_lines = emit_loops(shape)
         lines.extend(loop_lines)
         indices = [f"i{dim}" for dim in range(len(shape))]
         input_access = _emit_strided_access(
@@ -70,8 +70,8 @@ def _write_concat_kernel(
             sizes=output_shape,
             c_type=dtype.c_type,
         )
-        lines.append(f"{indent}{output_access} = {input_access};")
-        close_lines, indent = _close_loops(len(shape), indent)
+        lines.append(f"{output_access} = {input_access};")
+        close_lines = _close_loops(len(shape))
         lines.extend(close_lines)
         offset += shape[concat_dim]
     lines.append("}")

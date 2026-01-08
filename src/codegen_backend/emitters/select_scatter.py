@@ -49,7 +49,7 @@ def _write_select_scatter_kernel(
         f"const {src_c_type} src{src_suffix}, "
         f"{dtype.c_type} out{out_suffix}) {{"
     )
-    loop_lines, indent = emit_loops(output_shape)
+    loop_lines = emit_loops(output_shape)
     output_access = emit_output_access(
         output_shape, output_strides, c_type=dtype.c_type
     )
@@ -75,11 +75,10 @@ def _write_select_scatter_kernel(
             sizes=src_shape,
             c_type=src_c_type,
         )
-    footer_lines = emit_footer(output_shape, indent)
+    footer_lines = emit_footer(output_shape)
     rendered = template.render(
         signature=signature,
         loop_lines=loop_lines,
-        indent=indent,
         output_access=output_access,
         src_access=src_access,
         input_access=input_access,
