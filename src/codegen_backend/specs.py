@@ -43,6 +43,7 @@ class OpKind(str, Enum):
     EMPTY_STRIDED = "empty_strided"
     RESIZE = "resize"
     COL2IM = "col2im"
+    MASKED_SCATTER = "masked_scatter"
 
 
 @dataclass(frozen=True)

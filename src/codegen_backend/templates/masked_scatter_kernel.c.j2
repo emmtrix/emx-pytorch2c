@@ -1,0 +1,13 @@
+{{ signature }}
+{% for line in preamble_lines %}
+{{ line }}
+{% endfor %}
+{% for line in loop_lines %}
+{{ line }}
+{% endfor %}
+{% for line in body_lines %}
+{{ line }}
+{% endfor %}
+{% for line in footer_lines %}
+{{ line }}
+{% endfor %}

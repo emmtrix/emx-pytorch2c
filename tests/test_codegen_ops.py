@@ -228,6 +228,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.frac.default,
     torch.ops.aten.full_like.default,
     torch.ops.aten.gather.default,
+    torch.ops.aten.masked_scatter.default,
     torch.ops.aten.index_select.default,
     torch.ops.aten.heaviside.default,
     torch.ops.aten.hypot.default,
@@ -421,6 +422,7 @@ INPLACE_ATEN_OPS = [
     torch.ops.aten.log1p_.default,
     torch.ops.aten.log2_.default,
     torch.ops.aten.logit_.default,
+    torch.ops.aten.masked_scatter_.default,
     torch.ops.aten.mish_.default,
     torch.ops.aten.logical_and_.default,
     torch.ops.aten.logical_not_.default,
@@ -694,13 +696,13 @@ CODEGEN_OP_TEST_CONFIG = {
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
     },
     torch.ops.aten.clamp.Tensor: {
-        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
+        "allowed_dtypes": (torch.float32,),
     },
     torch.ops.aten.clamp_.default: {
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
     },
     torch.ops.aten.clamp_.Tensor: {
-        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
+        "allowed_dtypes": (torch.float32,),
     },
     torch.ops.aten.where.self: {},
     torch.ops.aten.where.Scalar: {},

@@ -113,7 +113,7 @@
 | `logical_xor` | ✅ |
 | `lt.Scalar` | ✅ |
 | `lt.Tensor` | ✅ |
-| `masked_scatter` | — |
+| `masked_scatter` | ✅ |
 | `max.dim` | ✅ |
 | `max_pool2d_with_indices` | — |
 | `max_pool2d_with_indices_backward` | — |
@@ -197,5 +197,5 @@
 
 ## Summary
 - total core aten ops: 192
-- supported by codegen: 144 / 192 (75.0%)
-- unsupported by codegen: 48
+- supported by codegen: 145 / 192 (75.5%)
+- unsupported by codegen: 47

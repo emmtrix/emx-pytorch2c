@@ -60,6 +60,17 @@ def build_supported_ops() -> dict[str, _OpSpec]:
         torch.ops.aten.gather.default,
         torch.ops.aten.gather,
     ).build()
+    registry.register_op("masked_scatter", kind=OpKind.MASKED_SCATTER).targets(
+        torch.masked_scatter,
+        torch.ops.aten.masked_scatter.default,
+        torch.ops.aten.masked_scatter,
+        torch.ops.aten.masked_scatter_.default,
+        torch.ops.aten.masked_scatter_,
+    ).inplace(
+        torch.ops.aten.masked_scatter_.default,
+        torch.ops.aten.masked_scatter_,
+        arg_index=0,
+    ).build()
     registry.register_op("index_select", kind=OpKind.INDEX_SELECT).targets(
         torch.index_select,
         torch.ops.aten.index_select.default,
