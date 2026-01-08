@@ -731,18 +731,10 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.where.self: {},
     torch.ops.aten.where.Scalar: {},
     torch.ops.aten.full_like.default: {},
-    torch.ops.aten.arange.start_step: {
-        "allow_no_tensor_inputs": True,
-    },
-    torch.ops.aten.scalar_tensor.default: {
-        "allow_no_tensor_inputs": True,
-    },
-    torch.ops.aten.rand.default: {
-        "allow_no_tensor_inputs": True,
-    },
-    torch.ops.aten.randn.default: {
-        "allow_no_tensor_inputs": True,
-    },
+    torch.ops.aten.arange.start_step: {},
+    torch.ops.aten.scalar_tensor.default: {},
+    torch.ops.aten.rand.default: {},
+    torch.ops.aten.randn.default: {},
     torch.ops.aten.avg_pool2d_backward.default: {
         "requires_contiguous": True,
     },
@@ -786,7 +778,7 @@ DEFAULT_CONSTRAINTS = {
     "allow_non_tensor_args": True,
     "allow_kwargs": True,
     "expand_input_list": False,
-    "allow_no_tensor_inputs": False,
+    "allow_no_tensor_inputs": True,
     "max_ndim": None,
     "requires_same_shape": False,
     "requires_contiguous": False,
