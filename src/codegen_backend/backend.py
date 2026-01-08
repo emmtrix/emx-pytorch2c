@@ -22,6 +22,7 @@ class CodegenBackend:
         group_registry: object | None = None,
         analysis_service: GraphAnalysisService | None = None,
         templates_env: object | None = None,
+        temp_allocation_threshold: int = 1024,
     ) -> None:
         self.group_registry = (
             group_registry if group_registry is not None else get_group_registry()
@@ -53,6 +54,7 @@ class CodegenBackend:
             templates_env=lambda: self.templates_env,
             kind_handlers=lambda: self.kind_handlers,
             kind_handler_registrations=lambda: self.kind_handler_registrations,
+            temp_allocation_threshold=temp_allocation_threshold,
         )
         self._compiler = Compiler(self._graph_builder, self._emitter)
         self._context_provider = self.group_registry.build_context_provider(self)

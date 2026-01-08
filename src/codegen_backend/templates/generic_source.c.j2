@@ -10,7 +10,13 @@
 {% for decl in temp_decls %}
     {{ decl }}
 {% endfor %}
+{% for alloc in temp_allocs %}
+    {{ alloc }}
+{% endfor %}
 {% for call in call_lines %}
     {{ call }}
+{% endfor %}
+{% for release in temp_frees %}
+    {{ release }}
 {% endfor %}
 }

@@ -5,7 +5,7 @@ from typing import Iterable, List
 
 import torch
 
-from codegen_backend import codegen_generic_backend
+from codegen_backend import CodegenBackend
 from codegen_backend.export import export_generic_c
 
 torch.fx.wrap(len)
@@ -266,13 +266,15 @@ def _run_self_test(
     torch_module: torch.nn.Module,
     example_inputs: Iterable[torch.Tensor],
     runs: int,
+    temp_allocation_threshold: int,
 ) -> None:
     if runs < 0:
         raise ValueError("self-test runs must be >= 0")
     if runs == 0:
         return
     print(f"[onnx2c] running torch.compile self-test ({runs} random inputs)...")
-    compiled = torch.compile(torch_module, backend=codegen_generic_backend)
+    backend = CodegenBackend(temp_allocation_threshold=temp_allocation_threshold)
+    compiled = torch.compile(torch_module, backend=backend.codegen_generic_backend)
     with torch.no_grad():
         for run_index in range(1, runs + 1):
             random_inputs = _random_inputs(example_inputs)
@@ -324,6 +326,15 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
             "Intended for golden test fixtures."
         ),
     )
+    parser.add_argument(
+        "--tmp-malloc-threshold",
+        type=int,
+        default=1024,
+        help=(
+            "Allocate temporary buffers larger than this byte size with malloc/free. "
+            "Set to 0 to keep all temporaries on the stack."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -350,7 +361,14 @@ def main(argv: Iterable[str] | None = None) -> int:
     _patch_onnx2pytorch_for_fx(onnx2pytorch_module)
     _disable_inplace_relu(torch_module)
     torch_module.eval()
-    _run_self_test(torch_module, example_inputs, args.self_test_runs)
+    if args.tmp_malloc_threshold < 0:
+        raise ValueError("tmp-malloc-threshold must be >= 0")
+    _run_self_test(
+        torch_module,
+        example_inputs,
+        args.self_test_runs,
+        args.tmp_malloc_threshold,
+    )
     graph_module = _trace_module(torch_module, example_inputs)
     export_generic_c(
         graph_module,
@@ -358,6 +376,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         str(out_path),
         function_name=args.function_name,
         truncate_weights_after=args.truncate_weights_after,
+        temp_allocation_threshold=args.tmp_malloc_threshold,
     )
     return 0
 

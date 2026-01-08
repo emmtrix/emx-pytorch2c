@@ -81,8 +81,18 @@ def f(a, b):
     return a + b
 
 example_inputs = (torch.randn(4, 4), torch.randn(4, 4))
-result = export_generic_c(f, example_inputs)
+result = export_generic_c(f, example_inputs, temp_allocation_threshold=2048)
 print(result.c_source)
+```
+
+You can also control temporary allocation for `torch.compile` by constructing a
+backend with the same threshold:
+
+```python
+from codegen_backend import CodegenBackend
+
+backend = CodegenBackend(temp_allocation_threshold=2048)
+compiled = torch.compile(f, backend=backend.codegen_generic_backend)
 ```
 
 ### 3) ONNX to C via CLI
@@ -101,6 +111,12 @@ Example:
 
 ```bash
 python -m cli.onnx2c model.onnx -o model.c --self-test-runs 0
+```
+
+Tune temporary buffer allocation (defaults to 1024 bytes; set 0 for stack-only):
+
+```bash
+python -m cli.onnx2c model.onnx -o model.c --tmp-malloc-threshold 2048
 ```
 
 ## Tests
