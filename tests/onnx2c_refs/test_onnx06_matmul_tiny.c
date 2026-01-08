@@ -27,6 +27,6 @@ void ref_codegen_main_f32(const float input_0[1][2], const float input_1[2][2], 
     node1_linear_f32(input_0, input_1, out);
 }
 
-void entry(const float* in0, float* out0) {
+void entry(const float in0[1][2], float out0[1][2]) {
     ref_codegen_main_f32(in0, weight_MatMul_my_weight, out0);
 }

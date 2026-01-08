@@ -14,6 +14,6 @@ void ref_codegen_main_f32(const float input_0[1][3], float out[1][3]) {
     node1_clone_f32(input_0, out);
 }
 
-void entry(const float* in0, float* out0) {
+void entry(const float in0[1][3], float out0[1][3]) {
     ref_codegen_main_f32(in0, out0);
 }

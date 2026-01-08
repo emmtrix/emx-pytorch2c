@@ -11,6 +11,7 @@ from codegen_backend.errors import CodegenBackendError
 from codegen_backend.backend import CodegenBackend
 from codegen_backend.c_types import _dtype_to_c_type, _input_c_type
 from codegen_backend.dtypes import _CodegenDType
+from codegen_backend.emitters.base import _format_array_suffix
 from codegen_backend.graph import _GenericGraph
 
 
@@ -257,6 +258,8 @@ def _emit_model_wrapper(
 ) -> str:
     input_args: List[str] = []
     call_args: List[str] = []
+    array_lines: List[str] = []
+    use_array_signature = function_name in {"entry", "model_run"}
     input_index = 0
     for placeholder in graph.tensor_placeholders:
         weight_name = weight_placeholders.get(placeholder)
@@ -266,21 +269,43 @@ def _emit_model_wrapper(
         c_type = _input_c_type(graph.dtypes[placeholder], graph.dtype)
         arg_name = f"in{input_index}"
         input_index += 1
-        input_args.append(f"const {c_type}* {arg_name}")
-        call_args.append(arg_name)
+        input_suffix = _format_array_suffix(graph.shapes[placeholder])
+        if use_array_signature:
+            input_args.append(f"const {c_type} {arg_name}{input_suffix}")
+            call_args.append(arg_name)
+        else:
+            input_args.append(f"const {c_type}* {arg_name}")
+            array_name = f"{arg_name}_array"
+            array_lines.append(
+                f"    const {c_type} (*{array_name}){input_suffix} = "
+                f"(const {c_type} (*){input_suffix}){arg_name};"
+            )
+            call_args.append(f"*{array_name}")
     output_args: List[str] = []
     for idx, output_node in enumerate(graph.output_nodes):
         output_c_type = _dtype_to_c_type(graph.dtypes[output_node], graph.dtype)
         output_name = f"out{idx}"
-        output_args.append(f"{output_c_type}* {output_name}")
-        call_args.append(output_name)
+        output_suffix = _format_array_suffix(graph.shapes[output_node])
+        if use_array_signature:
+            output_args.append(f"{output_c_type} {output_name}{output_suffix}")
+            call_args.append(output_name)
+        else:
+            output_args.append(f"{output_c_type}* {output_name}")
+            array_name = f"{output_name}_array"
+            array_lines.append(
+                f"    {output_c_type} (*{array_name}){output_suffix} = "
+                f"({output_c_type} (*){output_suffix}){output_name};"
+            )
+            call_args.append(f"*{array_name}")
     signature_args = ", ".join([*input_args, *output_args])
     call = ", ".join(call_args)
-    return (
-        f"void {function_name}({signature_args}) {{\n"
-        f"    ref_codegen_main_{graph.dtype.suffix}({call});\n"
-        "}\n"
-    )
+    wrapper_lines = [
+        f"void {function_name}({signature_args}) {{",
+        *array_lines,
+        f"    ref_codegen_main_{graph.dtype.suffix}({call});",
+        "}",
+    ]
+    return "\n".join(wrapper_lines) + "\n"
 
 
 def export_generic_c(

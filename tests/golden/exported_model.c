@@ -37,6 +37,6 @@ void ref_codegen_main_f32(const float input_0[2][4], const float input_1[3], con
     node1_addmm_f32(input_1, input_0, input_2, out);
 }
 
-void model_run(const float* in0, float* out0) {
+void model_run(const float in0[2][4], float out0[2][3]) {
     ref_codegen_main_f32(in0, weight_bias, weight_weight, out0);
 }

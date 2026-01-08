@@ -65,6 +65,6 @@ void ref_codegen_main_f32(const float input_0[1][1][5][5], const float input_1[1
     node1_conv2d_f32(input_0, input_1, input_2, out);
 }
 
-void entry(const float* in0, float* out0) {
+void entry(const float in0[1][1][5][5], float out0[1][1][3][3]) {
     ref_codegen_main_f32(in0, weight_Conv_out_weight, weight_Conv_out_bias, out0);
 }

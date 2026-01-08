@@ -130,6 +130,6 @@ void ref_codegen_main_f32(const float input_0[1][1], const float input_1[16][1],
     node5_linear_f32(tmp_3, input_5, input_6, out);
 }
 
-void entry(const float* in0, float* out0) {
+void entry(const float in0[1][1], float out0[1][1]) {
     ref_codegen_main_f32(in0, weight_MatMul_biased_tensor_name1_weight, weight_MatMul_biased_tensor_name1_bias, weight_MatMul_biased_tensor_name2_weight, weight_MatMul_biased_tensor_name2_bias, weight_MatMul_dense_4_weight, weight_MatMul_dense_4_bias, out0);
 }

@@ -184,6 +184,6 @@ void ref_codegen_main_f32(const float input_0[1][1][14][14], const float input_1
     free(tmp_1);
 }
 
-void entry(const float* in0, float* out0) {
+void entry(const float in0[1][1][14][14], float out0[1][10]) {
     ref_codegen_main_f32(in0, weight_Conv_8_weight, weight_Conv_10_weight, weight_tensor_constant0, weight_tensor_constant1, weight_Gemm_network_output_weight, weight_Gemm_network_output_bias, out0);
 }
