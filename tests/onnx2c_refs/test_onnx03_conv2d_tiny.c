@@ -25,6 +25,10 @@ static const float weight_Conv_out_bias[1] = {
 void node1_conv2d_f32(const float input[1][1][5][5], const float weight[1][1][3][3], const float bias[1], float out[1][1][3][3]) {
     int64_t in_per_group = 1 / 1;
     int64_t out_per_group = 1 / 1;
+    int64_t out_pad_h = 0;
+    int64_t out_pad_w = 0;
+    (void)out_pad_h;
+    (void)out_pad_w;
     for (int64_t n = 0; n < 1; ++n) {
         for (int64_t oc = 0; oc < 1; ++oc) {
             int64_t group = oc / out_per_group;
