@@ -1171,9 +1171,9 @@ This list shows all ATen operators, whether the codegen backend supports them, a
 | `max_pool2d` | ✅ | 1440 |
 | `max_pool2d_backward` | — | — |
 | `max_pool2d_with_indices` | — | — |
-| `max_pool2d_with_indices_backward` | — | 1440 |
+| `max_pool2d_with_indices_backward` | ✅ | 1440 |
 | `max_pool3d` | — | 576 |
-| `max_pool3d_with_indices` | — | — |
+| `max_pool3d_with_indices` | ✅ | — |
 | `max_pool3d_with_indices_backward` | — | — |
 | `max_unpool2d` | — | 288 |
 | `max_unpool3d` | — | 96 |
@@ -1246,10 +1246,10 @@ This list shows all ATen operators, whether the codegen backend supports them, a
 | `native_channel_shuffle` | — | — |
 | `native_dropout` | ✅ | — |
 | `native_dropout_backward` | — | 9 |
-| `native_group_norm` | — | — |
-| `native_group_norm_backward` | — | — |
-| `native_layer_norm` | — | 20 |
-| `native_layer_norm_backward` | — | — |
+| `native_group_norm` | ✅ | — |
+| `native_group_norm_backward` | ✅ | — |
+| `native_layer_norm` | ✅ | 20 |
+| `native_layer_norm_backward` | ✅ | — |
 | `native_norm` | — | — |
 | `ne` | ✅ | 9 |
 | `ne_` | — | — |
@@ -1347,11 +1347,11 @@ This list shows all ATen operators, whether the codegen backend supports them, a
 | `rad2deg` | ✅ | 1 |
 | `rad2deg_` | ✅ | — |
 | `radians` | — | — |
-| `rand` | — | — |
+| `rand` | ✅ | — |
 | `rand_like` | — | 7 |
 | `randint` | — | 14 |
 | `randint_like` | — | 14 |
-| `randn` | — | 2 |
+| `randn` | ✅ | 2 |
 | `randn_like` | — | 7 |
 | `random` | — | — |
 | `random_` | — | — |
@@ -1721,5 +1721,5 @@ This list shows all ATen operators, whether the codegen backend supports them, a
 
 ## Summary
 - total aten ops: 1714
-- supported by codegen: 285 / 1714 (16.6 %)
-- unsupported by codegen: 1429
+- supported by codegen: 293 / 1714 (17.1 %)
+- unsupported by codegen: 1421
