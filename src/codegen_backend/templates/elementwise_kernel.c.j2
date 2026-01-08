@@ -12,6 +12,16 @@
 {% else %}
 {{ body_indent }}{{ output_access }} = {{ scalar_fn }}({{ a_access }}, {{ b_access }});
 {% endif %}
+{% elif op_kind == "clamp_tensor" %}
+{% if not clamp_has_min and not clamp_has_max %}
+{{ body_indent }}{{ output_access }} = {{ input_access }};
+{% elif not clamp_has_min %}
+{{ body_indent }}{{ output_access }} = ({{ input_access }} > {{ clamp_max_access }}) ? {{ clamp_max_access }} : {{ input_access }};
+{% elif not clamp_has_max %}
+{{ body_indent }}{{ output_access }} = ({{ input_access }} < {{ clamp_min_access }}) ? {{ clamp_min_access }} : {{ input_access }};
+{% else %}
+{{ body_indent }}{{ output_access }} = ({{ input_access }} < {{ clamp_min_access }}) ? {{ clamp_min_access }} : (({{ input_access }} > {{ clamp_max_access }}) ? {{ clamp_max_access }} : {{ input_access }});
+{% endif %}
 {% elif op_kind == "where" %}
 {{ body_indent }}{{ output_access }} = ({{ cond_access }} != 0) ? {{ a_access }} : {{ b_access }};
 {% elif op_kind == "fill" %}

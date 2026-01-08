@@ -226,6 +226,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.cat.default,
     torch.ops.aten.ceil.default,
     torch.ops.aten.clamp.default,
+    torch.ops.aten.clamp.Tensor,
     torch.ops.aten.clamp_max.Tensor,
     torch.ops.aten.clamp_min.Tensor,
     torch.ops.aten.clone.default,
@@ -427,6 +428,7 @@ INPLACE_ATEN_OPS = [
     torch.ops.aten.bitwise_xor_.Tensor,
     torch.ops.aten.ceil_.default,
     torch.ops.aten.clamp_.default,
+    torch.ops.aten.clamp_.Tensor,
     torch.ops.aten.clamp_max_.Tensor,
     torch.ops.aten.clamp_min_.Tensor,
     torch.ops.aten.conj_physical_.default,
@@ -557,6 +559,11 @@ def _clone_tensor_scalar_opinfo(aten_name, variant_test_name=""):
 CODEGEN_OPINFO_OVERRIDES = {
     torch.ops.aten.div.Tensor: _lookup_opinfo("div", "no_rounding_mode"),
     torch.ops.aten.div.Scalar: _clone_scalar_opinfo("div", "no_rounding_mode"),
+    torch.ops.aten.clamp.Tensor: _clone_opinfo(
+        _lookup_opinfo("clamp", ""),
+        name="clamp_tensor",
+        aten_name="clamp",
+    ),
     torch.ops.aten.hardsigmoid.default: _lookup_opinfo(
         "nn.functional.hardsigmoid", ""
     ),
@@ -718,7 +725,13 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.clamp.default: {
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
     },
+    torch.ops.aten.clamp.Tensor: {
+        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
+    },
     torch.ops.aten.clamp_.default: {
+        "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
+    },
+    torch.ops.aten.clamp_.Tensor: {
         "allowed_dtypes": (torch.float32, torch.int8, torch.int32),
     },
     torch.ops.aten.where.self: {},

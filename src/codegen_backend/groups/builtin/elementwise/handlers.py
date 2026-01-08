@@ -75,7 +75,11 @@ class ElementwiseHandler(OpKindHandler):
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
         signature_kind = "unary"
-        if self._elementwise_kind == "binary":
+        elementwise_kind = self._elementwise_kind
+        if op_node.spec.name == "clamp_tensor":
+            elementwise_kind = "clamp_tensor"
+            signature_kind = "clamp_tensor"
+        elif self._elementwise_kind == "binary":
             signature_kind = (
                 "binary_scalar"
                 if "scalar" in op_node.params
@@ -84,7 +88,7 @@ class ElementwiseHandler(OpKindHandler):
         elif self._elementwise_kind == "where":
             signature_kind = "where"
         params = {
-            "elementwise_kind": self._elementwise_kind,
+            "elementwise_kind": elementwise_kind,
             "signature_kind": signature_kind,
         }
         return self._emit_standard(
@@ -166,7 +170,71 @@ class _BackendElementwiseHandler(ElementwiseHandler):
         input_shapes: List[tuple[int, ...]] = []
         out_arg: torch.fx.Node | None = None
 
-        if op_spec.kind == OpKind.BINARY and len(node.args) == 2:
+        if op_spec.name == "clamp_tensor":
+            if not node.args:
+                raise CodegenBackendError(
+                    "codegen clamp_tensor expects one input"
+                )
+            if len(node.args) > 3:
+                raise CodegenBackendError(
+                    "codegen clamp_tensor expects one input"
+                )
+            input_node = node.args[0]
+            if not isinstance(input_node, torch.fx.Node):
+                raise self._ctx.analysis_service.error_expected_tensor(
+                    op_spec.name
+                )
+            if input_node not in shapes:
+                raise self._ctx.analysis_service.error_expected_tensor(
+                    op_spec.name
+                )
+            input_nodes.append(input_node)
+            input_shapes.append(shapes[input_node])
+            min_arg = node.args[1] if len(node.args) > 1 else None
+            max_arg = node.args[2] if len(node.args) > 2 else None
+            if "min" in node.kwargs:
+                if len(node.args) > 1:
+                    raise CodegenBackendError(
+                        "codegen clamp_tensor expects min as a keyword"
+                    )
+                min_arg = node.kwargs["min"]
+            if "max" in node.kwargs:
+                if len(node.args) > 2:
+                    raise CodegenBackendError(
+                        "codegen clamp_tensor expects max as a keyword"
+                    )
+                max_arg = node.kwargs["max"]
+            extra = set(node.kwargs) - {"min", "max"}
+            if extra:
+                raise CodegenBackendError(
+                    "codegen clamp_tensor got unexpected kwargs: "
+                    f"{sorted(extra)}"
+                )
+            if min_arg is not None:
+                if not isinstance(min_arg, torch.fx.Node):
+                    raise self._ctx.analysis_service.error_expected_tensor(
+                        op_spec.name
+                    )
+                if min_arg not in shapes:
+                    raise self._ctx.analysis_service.error_expected_tensor(
+                        op_spec.name
+                    )
+                input_nodes.append(min_arg)
+                input_shapes.append(shapes[min_arg])
+            if max_arg is not None:
+                if not isinstance(max_arg, torch.fx.Node):
+                    raise self._ctx.analysis_service.error_expected_tensor(
+                        op_spec.name
+                    )
+                if max_arg not in shapes:
+                    raise self._ctx.analysis_service.error_expected_tensor(
+                        op_spec.name
+                    )
+                input_nodes.append(max_arg)
+                input_shapes.append(shapes[max_arg])
+            param_values["has_min"] = min_arg is not None
+            param_values["has_max"] = max_arg is not None
+        elif op_spec.kind == OpKind.BINARY and len(node.args) == 2:
             lhs, rhs = node.args
             if isinstance(lhs, torch.fx.Node) ^ isinstance(rhs, torch.fx.Node):
                 if node.kwargs:
@@ -381,7 +449,7 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                 raise CodegenBackendError(
                     f"codegen {op_spec.name} supports only torch.float32 tensors"
                 )
-        if op_spec.name == "clamp" and dtype_info.torch_dtype is torch.bool:
+        if op_spec.name in {"clamp", "clamp_tensor"} and dtype_info.torch_dtype is torch.bool:
             raise CodegenBackendError("codegen clamp supports only numeric tensors")
         if (
             op_spec.name == "clamp"

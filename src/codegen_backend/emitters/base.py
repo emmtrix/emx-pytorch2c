@@ -61,6 +61,31 @@ def emit_signature(
             f"const {a_c_type} a{a_suffix}, "
             f"{dtype.c_type} out{out_suffix}) {{"
         )
+    if signature_kind == "clamp_tensor":
+        params = params or {}
+        signature_parts = []
+        a_shape = input_shapes[0]
+        a_suffix = _format_array_suffix(a_shape)
+        a_c_type = _input_c_type(input_dtypes[0], dtype)
+        signature_parts.append(f"const {a_c_type} a{a_suffix}")
+        input_index = 1
+        if params.get("has_min"):
+            min_shape = input_shapes[input_index]
+            min_suffix = _format_array_suffix(min_shape)
+            min_c_type = _input_c_type(input_dtypes[input_index], dtype)
+            signature_parts.append(f"const {min_c_type} min{min_suffix}")
+            input_index += 1
+        if params.get("has_max"):
+            max_shape = input_shapes[input_index]
+            max_suffix = _format_array_suffix(max_shape)
+            max_c_type = _input_c_type(input_dtypes[input_index], dtype)
+            signature_parts.append(f"const {max_c_type} max{max_suffix}")
+            input_index += 1
+        signature_parts.append(f"{dtype.c_type} out{out_suffix}")
+        return (
+            f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
+            f"{', '.join(signature_parts)}) {{"
+        )
     if signature_kind == "where":
         params = params or {}
         input_index = 0

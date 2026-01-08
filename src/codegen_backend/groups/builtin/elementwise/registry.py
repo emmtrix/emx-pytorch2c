@@ -408,6 +408,12 @@ def build_supported_ops() -> dict[str, _OpSpec]:
         torch.ops.aten.clamp_max_.Tensor,
         torch.ops.aten.clamp_max_,
     ).build()
+    registry.register_binary("clamp_tensor").targets(
+        torch.ops.aten.clamp.Tensor,
+        torch.ops.aten.clamp_.Tensor,
+    ).inplace(
+        torch.ops.aten.clamp_.Tensor,
+    ).build()
     registry.register_unary("clamp").targets(
         torch.clamp,
         torch.ops.aten.clamp.default,

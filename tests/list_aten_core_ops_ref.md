@@ -54,7 +54,7 @@
 | `cat` | ✅ |
 | `ceil` | ✅ |
 | `clamp` | ✅ |
-| `clamp.Tensor` | — |
+| `clamp.Tensor` | ✅ |
 | `clone` | ✅ |
 | `col2im` | ✅ |
 | `constant_pad_nd` | ✅ |
@@ -197,5 +197,5 @@
 
 ## Summary
 - total core aten ops: 192
-- supported by codegen: 140 / 192 (72.9%)
-- unsupported by codegen: 52
+- supported by codegen: 141 / 192 (73.4%)
+- unsupported by codegen: 51

@@ -63,10 +63,13 @@ class ElementwiseEmitter(KindEmitterBase):
             req.output_shape, req.output_strides, c_type=req.dtype.c_type
         )
         scalar_fn = f"{req.dtype.scalar_prefix}{op_spec.name}"
+        op_kind = op_spec.kind.value
+        if elementwise_kind == "clamp_tensor":
+            op_kind = "clamp_tensor"
         context: Dict[str, object] = {
             "signature": signature,
             "output_dims": output_dims,
-            "op_kind": op_spec.kind.value,
+            "op_kind": op_kind,
             "op_name": op_spec.name,
             "scalar_fn": scalar_fn,
             "output_access": output_access,
@@ -115,6 +118,48 @@ class ElementwiseEmitter(KindEmitterBase):
                     broadcast_contiguous=True,
                     c_type=_input_c_type(req.input_dtypes[1], req.dtype),
                 )
+        elif elementwise_kind == "clamp_tensor":
+            a_shape = req.input_shapes[0]
+            a_strides = req.input_strides[0]
+            context["input_access"] = emit_input_access(
+                "a",
+                a_shape,
+                a_strides,
+                req.output_shape,
+                broadcast_contiguous=True,
+                c_type=_input_c_type(req.input_dtypes[0], req.dtype),
+            )
+            input_index = 1
+            if params.get("has_min"):
+                min_shape = req.input_shapes[input_index]
+                min_strides = req.input_strides[input_index]
+                context["clamp_min_access"] = emit_input_access(
+                    "min",
+                    min_shape,
+                    min_strides,
+                    req.output_shape,
+                    broadcast_contiguous=True,
+                    c_type=_input_c_type(
+                        req.input_dtypes[input_index], req.dtype
+                    ),
+                )
+                input_index += 1
+            if params.get("has_max"):
+                max_shape = req.input_shapes[input_index]
+                max_strides = req.input_strides[input_index]
+                context["clamp_max_access"] = emit_input_access(
+                    "max",
+                    max_shape,
+                    max_strides,
+                    req.output_shape,
+                    broadcast_contiguous=True,
+                    c_type=_input_c_type(
+                        req.input_dtypes[input_index], req.dtype
+                    ),
+                )
+                input_index += 1
+            context["clamp_has_min"] = params.get("has_min", False)
+            context["clamp_has_max"] = params.get("has_max", False)
         elif elementwise_kind == "where":
             input_index = 0
             cond_shape = req.input_shapes[input_index]
