@@ -443,6 +443,8 @@ class BatchNormHandler(OpKindHandler):
             graph,
             params={
                 "eps": float(op_node.p("eps", 1e-5)),
+                "momentum": float(op_node.p("momentum", 0.1)),
+                "training": bool(op_node.p("training", False)),
                 "has_weight": bool(op_node.p("has_weight", False)),
                 "has_bias": bool(op_node.p("has_bias", False)),
             },

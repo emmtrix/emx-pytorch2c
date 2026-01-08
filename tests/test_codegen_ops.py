@@ -1,5 +1,4 @@
 import copy
-import numbers
 import operator
 from pathlib import Path
 import sys
@@ -75,19 +74,6 @@ def _normalize_pool1d_param(value):
         return normalize_int_or_tuple("value", value, 1)[0]
     except ValueError:
         return None
-
-
-def _native_batch_norm_legit_sample_filter(sample):
-    if len(sample.args) < 5:
-        return False
-    training = sample.args[4]
-    if training not in (False, 0):
-        return False
-    if len(sample.args) < 7:
-        return False
-    momentum = sample.args[5]
-    eps = sample.args[6]
-    return isinstance(momentum, numbers.Number) and isinstance(eps, numbers.Number)
 
 
 def _as_strided_sequence(value):
@@ -815,7 +801,6 @@ CODEGEN_OP_TEST_CONFIG = {
         "allowed_dtypes": (torch.float32,),
         "allow_noncontiguous": False,
         "requires_contiguous": True,
-        "sample_filter": _native_batch_norm_legit_sample_filter,
     },
     torch.ops.aten.conv1d.default: {
         "allowed_dtypes": (torch.float32,),

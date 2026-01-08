@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import numbers
 import operator
 from typing import Dict, List, Sequence, Tuple
 
@@ -150,14 +151,6 @@ class TensorOpBuilder:
                 momentum,
                 eps,
             ) = node.args[:8]
-            if isinstance(training, torch.fx.Node):
-                raise CodegenBackendError(
-                    f"codegen {op_spec.name} expects constant training flag"
-                )
-            if training not in (False, 0):
-                raise CodegenBackendError(
-                    f"codegen {op_spec.name} supports only training=False"
-                )
         else:
             (
                 input_arg,
@@ -168,6 +161,7 @@ class TensorOpBuilder:
                 momentum,
                 eps,
             ) = node.args[:7]
+            training = False
         if not isinstance(input_arg, torch.fx.Node) or input_arg not in self._shapes:
             raise error_expected_tensor(op_spec.name)
         if (
@@ -246,11 +240,36 @@ class TensorOpBuilder:
                     f"codegen {op_spec.name} supports only torch.float32"
                 )
         try:
-            _ = float(
+            training_value = self._analysis_service.resolve_scalar_arg(
+                op_spec.name, training, self._scalar_values
+            )
+        except (TypeError, ValueError) as exc:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects training to be a boolean"
+            ) from exc
+        if isinstance(training_value, numbers.Real) and not isinstance(
+            training_value, bool
+        ):
+            if float(training_value) not in (0.0, 1.0):
+                raise CodegenBackendError(
+                    f"codegen {op_spec.name} expects training to be a boolean"
+                )
+            training_value = bool(training_value)
+        if not isinstance(training_value, bool):
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects training to be a boolean"
+            )
+        try:
+            momentum_value = float(
                 self._analysis_service.resolve_scalar_arg(
                     op_spec.name, momentum, self._scalar_values
                 )
             )
+        except (TypeError, ValueError) as exc:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects momentum to be a float"
+            ) from exc
+        try:
             eps_value = float(
                 self._analysis_service.resolve_scalar_arg(
                     op_spec.name, eps, self._scalar_values
@@ -273,6 +292,8 @@ class TensorOpBuilder:
             inplace_input=None,
             params={
                 "eps": eps_value,
+                "momentum": momentum_value,
+                "training": training_value,
                 "has_weight": weight_node is not None,
                 "has_bias": bias_node is not None,
             },
