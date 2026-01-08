@@ -77,7 +77,7 @@ def _write_diagonal_kernel(
         f"{dtype.c_type} out{output_suffix}) {{"
     )
     lines = [signature]
-    loop_lines, indent = emit_loops(output_shape)
+    loop_lines = emit_loops(output_shape)
     lines.extend(loop_lines)
     output_access = emit_output_access(
         output_shape, output_strides, c_type=dtype.c_type
@@ -92,8 +92,8 @@ def _write_diagonal_kernel(
         offset=offset,
         c_type=input_c_type,
     )
-    lines.append(f"{indent}{output_access} = {input_access};")
-    lines.extend(emit_footer(output_shape, indent))
+    lines.append(f"{output_access} = {input_access};")
+    lines.extend(emit_footer(output_shape))
     return lines
 
 

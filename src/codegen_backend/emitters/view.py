@@ -41,9 +41,9 @@ class ViewEmitter(KindEmitterBase):
         lines = [signature]
         input_c_type = _input_c_type(input_dtype, req.dtype)
         lines.append(
-            f"    const {input_c_type}* a_ptr = (const {input_c_type}*){input_names[0]};"
+            f"const {input_c_type}* a_ptr = (const {input_c_type}*){input_names[0]};"
         )
-        loop_lines, indent = emit_loops(output_shape)
+        loop_lines = emit_loops(output_shape)
         lines.extend(loop_lines)
         view_strides = req.params.get("view_strides", ())
         view_stride_input_index = req.params.get("view_strides_input_index")
@@ -54,7 +54,7 @@ class ViewEmitter(KindEmitterBase):
                 req.input_dtypes[int(view_stride_input_index)], req.dtype
             )
             lines.append(
-                f"{indent}const {stride_c_type}* view_strides_ptr = "
+                f"const {stride_c_type}* view_strides_ptr = "
                 f"(const {stride_c_type}*){stride_name};"
             )
             offset_terms = [
@@ -72,10 +72,10 @@ class ViewEmitter(KindEmitterBase):
             offset_expr = "0"
         if storage_offset:
             offset_expr = f"(ssize_t){storage_offset} + {offset_expr}"
-        lines.append(f"{indent}ssize_t offset = {offset_expr};")
+        lines.append(f"ssize_t offset = {offset_expr};")
         output_access = emit_output_access(
             output_shape, output_strides, c_type=req.dtype.c_type
         )
-        lines.append(f"{indent}{output_access} = a_ptr[offset];")
-        lines.extend(emit_footer(output_shape, indent))
+        lines.append(f"{output_access} = a_ptr[offset];")
+        lines.extend(emit_footer(output_shape))
         return lines

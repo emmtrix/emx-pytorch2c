@@ -183,26 +183,23 @@ def emit_signature(
 def emit_loops(
     output_shape: Sequence[int],
     dim_names: Dict[int, str] | None = None,
-) -> Tuple[List[str], str]:
+) -> List[str]:
     lines: List[str] = []
-    indent = "    "
     dim_names = dim_names or {}
     if output_shape:
         for dim, size in enumerate(output_shape):
             size = dim_names.get(dim, size)
             lines.append(
-                f"{indent}for (ssize_t i{dim} = 0; i{dim} < {size}; ++i{dim}) {{"
+                f"for (ssize_t i{dim} = 0; i{dim} < {size}; ++i{dim}) {{"
             )
-            indent += "    "
-    return lines, indent
+    return lines
 
 
-def _close_loops(loop_count: int, indent: str) -> Tuple[List[str], str]:
+def _close_loops(loop_count: int) -> List[str]:
     lines: List[str] = []
     for _ in range(loop_count):
-        indent = indent[:-4]
-        lines.append(f"{indent}}}")
-    return lines, indent
+        lines.append("}")
+    return lines
 
 
 def emit_output_access(
@@ -240,8 +237,8 @@ def emit_input_access(
     )
 
 
-def emit_footer(output_shape: Sequence[int], indent: str) -> List[str]:
-    lines, _ = _close_loops(len(output_shape), indent)
+def emit_footer(output_shape: Sequence[int]) -> List[str]:
+    lines = _close_loops(len(output_shape))
     lines.append("}")
     return lines
 

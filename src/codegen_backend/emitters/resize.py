@@ -35,9 +35,9 @@ class ResizeEmitter(KindEmitterBase):
         )
         lines = [signature]
         lines.append(
-            f"    const {input_c_type}* a_ptr = (const {input_c_type}*)a;"
+            f"const {input_c_type}* a_ptr = (const {input_c_type}*)a;"
         )
-        loop_lines, indent = emit_loops(output_shape)
+        loop_lines = emit_loops(output_shape)
         lines.extend(loop_lines)
         output_contig_strides = _contiguous_strides(output_shape)
         if output_contig_strides:
@@ -48,18 +48,16 @@ class ResizeEmitter(KindEmitterBase):
             linear_expr = " + ".join(linear_terms)
         else:
             linear_expr = "0"
-        lines.append(f"{indent}ssize_t linear = {linear_expr};")
+        lines.append(f"ssize_t linear = {linear_expr};")
         if input_shape:
-            lines.append(f"{indent}ssize_t remaining = linear;")
+            lines.append("ssize_t remaining = linear;")
             index_vars = []
             for dim in range(len(input_shape) - 1, -1, -1):
                 size = input_shape[dim]
                 index_name = f"idx{dim}"
-                lines.append(
-                    f"{indent}ssize_t {index_name} = remaining % {size};"
-                )
+                lines.append(f"ssize_t {index_name} = remaining % {size};")
                 if dim != 0:
-                    lines.append(f"{indent}remaining /= {size};")
+                    lines.append(f"remaining /= {size};")
                 index_vars.append(index_name)
             index_vars.reverse()
             offset_terms = [
@@ -69,10 +67,10 @@ class ResizeEmitter(KindEmitterBase):
             offset_expr = " + ".join(offset_terms) if offset_terms else "0"
         else:
             offset_expr = "0"
-        lines.append(f"{indent}ssize_t offset = {offset_expr};")
+        lines.append(f"ssize_t offset = {offset_expr};")
         output_access = emit_output_access(
             output_shape, output_strides, c_type=req.dtype.c_type
         )
-        lines.append(f"{indent}{output_access} = a_ptr[offset];")
-        lines.extend(emit_footer(output_shape, indent))
+        lines.append(f"{output_access} = a_ptr[offset];")
+        lines.extend(emit_footer(output_shape))
         return lines

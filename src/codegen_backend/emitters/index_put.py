@@ -54,7 +54,7 @@ def _write_index_put_kernel(
         f"{', '.join(signature_parts)}) {{"
     )
 
-    copy_loop_lines, copy_indent = emit_loops(output_shape)
+    copy_loop_lines = emit_loops(output_shape)
     output_indices = [f"i{dim}" for dim in range(len(output_shape))]
     output_access = _emit_strided_access(
         "out",
@@ -72,8 +72,8 @@ def _write_index_put_kernel(
         sizes=input_shape,
         c_type=dtype.c_type,
     )
-    copy_body_lines = [f"{copy_indent}{output_access} = {input_access};"]
-    copy_footer_lines = emit_footer(output_shape, copy_indent)
+    copy_body_lines = [f"{output_access} = {input_access};"]
+    copy_footer_lines = emit_footer(output_shape)
 
     index_shape_rank = len(index_shapes[0]) if index_shapes else 0
     input_rank = len(input_shape)
@@ -83,7 +83,7 @@ def _write_index_put_kernel(
 
     if is_mask:
         update_shape = tuple(index_shapes[0]) + tuple(values_shape)
-        update_loop_lines, update_indent = emit_loops(update_shape)
+        update_loop_lines = emit_loops(update_shape)
         loop_indices = [f"i{dim}" for dim in range(len(update_shape))]
         mask_access = _emit_strided_access(
             "index0",
@@ -117,13 +117,13 @@ def _write_index_put_kernel(
             c_type=dtype.c_type,
         )
         update_body_lines = [
-            f"{update_indent}if ({mask_access}) {{",
-            f"{update_indent}    {output_access} {update_op} {values_access};",
-            f"{update_indent}}}",
+            f"if ({mask_access}) {{",
+            f"{output_access} {update_op} {values_access};",
+            "}",
         ]
-        update_footer_lines = emit_footer(update_shape, update_indent)
+        update_footer_lines = emit_footer(update_shape)
     else:
-        update_loop_lines, update_indent = emit_loops(values_shape)
+        update_loop_lines = emit_loops(values_shape)
         loop_indices = [f"i{dim}" for dim in range(len(values_shape))]
         index_accesses = []
         for idx, (shape, strides, index_dtype) in enumerate(
@@ -143,10 +143,10 @@ def _write_index_put_kernel(
         update_body_lines = []
         for dim, access in enumerate(index_accesses):
             update_body_lines.append(
-                f"{update_indent}ssize_t idx{dim} = (ssize_t)({access});"
+                f"ssize_t idx{dim} = (ssize_t)({access});"
             )
             update_body_lines.append(
-                f"{update_indent}if (idx{dim} < 0) {{ idx{dim} += {input_shape[dim]}; }}"
+                f"if (idx{dim} < 0) {{ idx{dim} += {input_shape[dim]}; }}"
             )
         output_indices = []
         for dim in range(input_rank):
@@ -170,10 +170,8 @@ def _write_index_put_kernel(
             sizes=values_shape,
             c_type=dtype.c_type,
         )
-        update_body_lines.append(
-            f"{update_indent}{output_access} {update_op} {values_access};"
-        )
-        update_footer_lines = emit_footer(values_shape, update_indent)
+        update_body_lines.append(f"{output_access} {update_op} {values_access};")
+        update_footer_lines = emit_footer(values_shape)
 
     rendered = index_put_template.render(
         signature=signature,

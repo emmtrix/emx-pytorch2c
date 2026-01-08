@@ -47,7 +47,7 @@ def _write_embedding_dense_backward_kernel(
         f"const {index_c_type} indices{indices_suffix}, "
         f"{dtype.c_type} out{out_suffix}) {{"
     )
-    init_loop_lines, init_indent = emit_loops(output_shape)
+    init_loop_lines = emit_loops(output_shape)
     init_output_indices = [f"i{dim}" for dim in range(len(output_shape))]
     init_output_access = _emit_strided_access(
         "out",
@@ -58,10 +58,10 @@ def _write_embedding_dense_backward_kernel(
         c_type=dtype.c_type,
     )
     zero_literal = _format_scalar_literal(0.0, dtype)
-    init_body_lines = [f"{init_indent}{init_output_access} = {zero_literal};"]
-    init_footer_lines, _ = _close_loops(len(output_shape), init_indent)
+    init_body_lines = [f"{init_output_access} = {zero_literal};"]
+    init_footer_lines = _close_loops(len(output_shape))
 
-    grad_loop_lines, grad_indent = emit_loops(grad_output_shape)
+    grad_loop_lines = emit_loops(grad_output_shape)
     grad_output_indices = [f"i{dim}" for dim in range(len(grad_output_shape))]
     grad_output_access = _emit_strided_access(
         "grad_output",
@@ -89,19 +89,17 @@ def _write_embedding_dense_backward_kernel(
         sizes=output_shape,
         c_type=dtype.c_type,
     )
-    grad_body_lines = [f"{grad_indent}ssize_t idx = (ssize_t)({index_access});"]
+    grad_body_lines = [f"ssize_t idx = (ssize_t)({index_access});"]
     if padding_idx != -1:
         grad_body_lines.extend(
             [
-                f"{grad_indent}if (idx == {padding_idx}) {{",
-                f"{grad_indent}    continue;",
-                f"{grad_indent}}}",
+                f"if (idx == {padding_idx}) {{",
+                "continue;",
+                "}",
             ]
         )
-    grad_body_lines.append(
-        f"{grad_indent}{output_access} += {grad_output_access};"
-    )
-    grad_footer_lines = emit_footer(grad_output_shape, grad_indent)
+    grad_body_lines.append(f"{output_access} += {grad_output_access};")
+    grad_footer_lines = emit_footer(grad_output_shape)
     rendered = embedding_template.render(
         signature=signature,
         init_loop_lines=init_loop_lines,

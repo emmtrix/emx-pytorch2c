@@ -1,14 +1,11 @@
 {{ signature }}
-{%- set indent = "    " -%}
 {%- for dim in range(output_shape | length) %}
-{{ indent }}for (ssize_t i{{ dim }} = 0; i{{ dim }} < {{ output_shape[dim] }}; ++i{{ dim }}) {
-{%- set indent = indent + "    " -%}
+for (ssize_t i{{ dim }} = 0; i{{ dim }} < {{ output_shape[dim] }}; ++i{{ dim }}) {
 {%- endfor %}
-{{ indent }}/* gather dim: {{ gather_dim }} */
-{{ indent }}ssize_t idx = (ssize_t)({{ index_access }});
-{{ indent }}{{ output_access }} = {{ input_access }};
+/* gather dim: {{ gather_dim }} */
+ssize_t idx = (ssize_t)({{ index_access }});
+{{ output_access }} = {{ input_access }};
 {%- for _ in range(output_shape | length) %}
-{%- set indent = indent[:-4] -%}
-{{ indent }}}
+}
 {%- endfor %}
 }
