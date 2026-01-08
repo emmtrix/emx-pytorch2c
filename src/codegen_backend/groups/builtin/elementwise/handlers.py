@@ -25,13 +25,6 @@ from codegen_backend.kinds import (
     OpNodeBuildResult,
 )
 from codegen_backend.specs import OpKind, _OpSpec
-from codegen_backend.groups.builtin.elementwise.analysis import (
-    handle_fill_node,
-    handle_to_copy_node,
-    parse_bitwise_scalar,
-    parse_parametric_unary_args,
-    parse_where_inputs,
-)
 
 if TYPE_CHECKING:
     from codegen_backend.emitters.base import KindEmitter
@@ -142,17 +135,18 @@ class _BackendElementwiseHandler(ElementwiseHandler):
         scalar_values: Dict[torch.fx.Node, object],
         inplace_input: int | None,
     ) -> OpNodeBuildResult | None:
+        parser = self._ctx.arg_parser
         if op_spec.name == "_to_copy":
             if dtype_info is None:
                 return None
-            op_node = handle_to_copy_node(
+            op_node = parser.handle_to_copy_node(
                 node, op_spec, dtype_info, shapes, strides, dtypes
             )
             return OpNodeBuildResult(op_node)
         if op_spec.kind == OpKind.FILL:
             if dtype_info is None:
                 return None
-            op_node = handle_fill_node(
+            op_node = parser.handle_fill_node(
                 node,
                 op_spec,
                 dtype_info,
@@ -188,7 +182,7 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                 input_nodes = [input_arg]
                 input_shapes = [shapes[input_arg]]
                 if op_spec.name in _BITWISE_OPS:
-                    param_values["scalar"] = parse_bitwise_scalar(
+                    param_values["scalar"] = parser.parse_bitwise_scalar(
                         op_spec.name, scalar_arg, dtype_info.torch_dtype
                     )
                 else:
@@ -208,7 +202,7 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                     input_nodes = [input_arg]
                     input_shapes = [shapes[input_arg]]
                     if op_spec.name in _BITWISE_OPS:
-                        param_values["scalar"] = parse_bitwise_scalar(
+                        param_values["scalar"] = parser.parse_bitwise_scalar(
                             op_spec.name, scalar_arg, dtype_info.torch_dtype
                         )
                     else:
@@ -221,7 +215,7 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                 op_spec.kind == OpKind.UNARY
                 and op_spec.name in _PARAMETRIC_UNARY_OPS
             ):
-                input_node, param_values = parse_parametric_unary_args(
+                input_node, param_values = parser.parse_parametric_unary_args(
                     op_spec.name, node
                 )
                 args_to_check = (input_node,)
@@ -329,7 +323,7 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                     input_nodes,
                     input_shapes,
                     where_params,
-                ) = parse_where_inputs(op_spec, node, shapes, scalar_values)
+                ) = parser.parse_where_inputs(op_spec, node, shapes, scalar_values)
                 param_values.update(where_params)
             else:
                 for arg in args_to_check:
