@@ -1,10 +1,14 @@
 {{ signature }}
-{% for line in loop_lines %}
-{{ line }}
+{% set rank = output_shape|length %}
+{% if rank %}
+{% for dim in range(rank) %}
+{{ "    " * (dim + 1) }}for (ssize_t i{{ dim }} = 0; i{{ dim }} < {{ output_shape[dim] }}; ++i{{ dim }}) {
 {% endfor %}
-{% for line in body_lines %}
-{{ line }}
+{{ "    " * (rank + 1) }}{{ output_access }} = {{ input_access }};
+{% for dim in range(rank - 1, -1, -1) %}
+{{ "    " * (dim + 1) }}}
 {% endfor %}
-{% for line in footer_lines %}
-{{ line }}
-{% endfor %}
+{% else %}
+    {{ output_access }} = {{ input_access }};
+{% endif %}
+}

@@ -8,8 +8,6 @@ from codegen_backend.emitters.base import (
     KindEmitterBase,
     _format_array_suffix,
     _is_contiguous,
-    emit_footer,
-    emit_loops,
     emit_output_access,
 )
 from codegen_backend.errors import CodegenBackendError
@@ -38,7 +36,6 @@ def _write_repeat_kernel(
         f"const {input_c_type} input{input_suffix}, "
         f"{dtype.c_type} out{output_suffix}) {{"
     )
-    loop_lines, indent = emit_loops(output_shape)
     output_access = emit_output_access(
         output_shape, output_strides, c_type=dtype.c_type
     )
@@ -61,13 +58,11 @@ def _write_repeat_kernel(
             sizes=input_shape,
             c_type=input_c_type,
         )
-    body_lines = [f"{indent}{output_access} = {input_access};"]
-    footer_lines = emit_footer(output_shape, indent)
     rendered = repeat_template.render(
         signature=signature,
-        loop_lines=loop_lines,
-        body_lines=body_lines,
-        footer_lines=footer_lines,
+        output_shape=output_shape,
+        output_access=output_access,
+        input_access=input_access,
     )
     return rendered.splitlines()
 
