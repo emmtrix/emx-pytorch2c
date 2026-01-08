@@ -171,6 +171,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.amax.default,
     torch.ops.aten.amin.default,
     torch.ops.aten.max.dim,
+    torch.ops.aten.min.dim,
     torch.ops.aten.asin.default,
     torch.ops.aten.asinh.default,
     torch.ops.aten.atan.default,
@@ -372,6 +373,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten._adaptive_avg_pool3d.default,
     torch.ops.aten._native_batch_norm_legit.default,
     torch.ops.aten._native_batch_norm_legit_no_training.default,
+    torch.ops.aten.native_dropout.default,
     torch.ops.aten._cdist_forward.default,
     torch.ops.aten._pdist_forward.default,
 ]
@@ -572,6 +574,7 @@ CODEGEN_OPINFO_OVERRIDES = {
     torch.ops.aten.var.dim: _lookup_opinfo("var", ""),
     torch.ops.aten.norm.ScalarOpt_dim: _lookup_opinfo("norm", ""),
     torch.ops.aten.max.dim: _lookup_opinfo("max", "reduction_with_dim"),
+    torch.ops.aten.min.dim: _lookup_opinfo("min", "reduction_with_dim"),
     torch.ops.aten.softmax.int: _lookup_opinfo("softmax", ""),
     torch.ops.aten.log_softmax.int: _lookup_opinfo("log_softmax", ""),
     torch.ops.aten.embedding.default: _lookup_opinfo(
@@ -672,6 +675,7 @@ CODEGEN_SPECIAL_TEST_OPS = [
     torch.ops.aten._pdist_forward.default,
     torch.ops.aten._embedding_bag.default,
     torch.ops.aten.embedding_dense_backward.default,
+    torch.ops.aten.native_dropout.default,
 ]
 CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.clamp.default: {
@@ -998,6 +1002,21 @@ class TestCodegenSpecialOps(TestCase):
         )
         result = compiled(input_tensor)
         torch.testing.assert_close(result, expected)
+
+    def test_codegen_native_dropout(self):
+        input_tensor = torch.randn(2, 3)
+        def run(inp: torch.Tensor):
+            out, mask = torch.ops.aten.native_dropout.default(inp, 0.5, False)
+            return out, mask
+
+        compiled = torch.compile(
+            run,
+            backend=codegen_generic_backend,
+        )
+        expected = run(input_tensor)
+        result = compiled(input_tensor)
+        torch.testing.assert_close(result[0], expected[0])
+        torch.testing.assert_close(result[1], expected[1])
 
     def test_codegen_adaptive_avg_pool2d_backward(self):
         grad_output = torch.randn(1, 2, 2, 2)

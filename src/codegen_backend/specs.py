@@ -46,6 +46,7 @@ class OpKind(str, Enum):
     COL2IM = "col2im"
     MASKED_SCATTER = "masked_scatter"
     NONZERO = "nonzero"
+    DROPOUT = "dropout"
 
 
 @dataclass(frozen=True)

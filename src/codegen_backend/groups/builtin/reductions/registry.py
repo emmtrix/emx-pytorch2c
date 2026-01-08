@@ -81,6 +81,9 @@ def build_supported_ops() -> dict[str, _OpSpec]:
         torch.ops.aten.amin.default,
         torch.ops.aten.amin,
     ).build()
+    registry.register_op("min", kind=OpKind.REDUCTION).targets(
+        torch.ops.aten.min.dim,
+    ).build()
     registry.register_op("max", kind=OpKind.REDUCTION).targets(
         torch.ops.aten.max.dim,
     ).build()

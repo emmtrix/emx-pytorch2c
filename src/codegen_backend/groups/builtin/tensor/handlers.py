@@ -21,6 +21,7 @@ from codegen_backend.emitters.col2im import Col2imEmitter
 from codegen_backend.emitters.concat import ConcatEmitter
 from codegen_backend.emitters.cumsum import CumsumEmitter
 from codegen_backend.emitters.diagonal import DiagonalEmitter
+from codegen_backend.emitters.dropout import DropoutEmitter
 from codegen_backend.emitters.empty_strided import EmptyStridedEmitter
 from codegen_backend.emitters.flip import FlipEmitter
 from codegen_backend.emitters.gather import GatherEmitter
@@ -126,6 +127,20 @@ class ArangeHandler(OpKindHandler):
 
 
 class FlipHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(node_index, op_node, graph)
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        return input_shapes[0]
+
+
+class DropoutHandler(OpKindHandler):
     def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
@@ -1354,6 +1369,11 @@ def build_handlers(context: TensorContext) -> Dict[OpKind, OpKindHandler]:
             context,
             DiagonalEmitter(),
             builder=_build_with_dtype(context, "build_diagonal"),
+        ),
+        OpKind.DROPOUT: DropoutHandler(
+            context,
+            DropoutEmitter(),
+            builder=_build_with_dtype(context, "build_native_dropout"),
         ),
         OpKind.CUMSUM: CumsumHandler(
             context,

@@ -1179,7 +1179,7 @@
 | `mean` | ✅ |
 | `median` | — |
 | `meshgrid` | — |
-| `min` | — |
+| `min` | ✅ |
 | `minimum` | ✅ |
 | `miopen_batch_norm` | — |
 | `miopen_batch_norm_backward` | — |
@@ -1242,7 +1242,7 @@
 | `native_batch_norm` | — |
 | `native_batch_norm_backward` | — |
 | `native_channel_shuffle` | — |
-| `native_dropout` | — |
+| `native_dropout` | ✅ |
 | `native_dropout_backward` | — |
 | `native_group_norm` | — |
 | `native_group_norm_backward` | — |

@@ -24,6 +24,12 @@ _ARGMAX_SPEC = _OpSpec(
     symbol=None,
     supported_targets=set(),
 )
+_ARGMIN_SPEC = _OpSpec(
+    name="argmin",
+    kind=OpKind.ARG_REDUCTION,
+    symbol=None,
+    supported_targets=set(),
+)
 
 
 class TensorAnalyzer(RegistryGroupAnalyzer):
@@ -131,11 +137,17 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
             torch.ops.aten._embedding_bag,
             torch.ops.aten._embedding_bag.default,
             torch.ops.aten.max.dim,
+            torch.ops.aten.native_dropout,
+            torch.ops.aten.native_dropout.default,
         }:
             raise CodegenBackendError(
-                "codegen backend supports getitem only for _native_batch_norm_legit* ops, _embedding_bag, or max.dim"
+                "codegen backend supports getitem only for _native_batch_norm_legit* ops, _embedding_bag, native_dropout, or max.dim"
+            torch.ops.aten.min.dim,
+        }:
+            raise CodegenBackendError(
+                "codegen backend supports getitem only for _native_batch_norm_legit* ops, _embedding_bag, max.dim, or min.dim"
             )
-        if source.target is torch.ops.aten.max.dim:
+        if source.target in {torch.ops.aten.max.dim, torch.ops.aten.min.dim}:
             if index in (0, 0.0):
                 alias_map[node] = source
                 shapes[node] = shapes[source]
@@ -144,24 +156,34 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
                 return None
             if index not in (1, 1.0):
                 raise CodegenBackendError(
-                    "codegen backend supports max.dim getitem only for indices 0 or 1"
+                    "codegen backend supports max.dim/min.dim getitem only for indices 0 or 1"
                 )
             if dtype_info is None:
                 raise CodegenBackendError(
                     "codegen backend requires at least one tensor input or a factory op dtype"
                 )
             input_arg = source.args[0] if source.args else None
+            op_label = (
+                "max.dim"
+                if source.target is torch.ops.aten.max.dim
+                else "min.dim"
+            )
             if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
                 raise CodegenBackendError(
-                    "codegen max.dim expects a tensor input"
+                    f"codegen {op_label} expects a tensor input"
                 )
             if dtypes[input_arg] is not dtype_info.torch_dtype:
                 raise CodegenBackendError(
-                    "codegen max.dim expects inputs to share the graph dtype"
+                    f"codegen {op_label} expects inputs to share the graph dtype"
                 )
             parser = ReductionsArgParser()
+            op_name = (
+                "argmax"
+                if source.target is torch.ops.aten.max.dim
+                else "argmin"
+            )
             reduction_dims, keepdim, reduce_all = parser.parse_argminmax_args(
-                "argmax", source, shapes[input_arg]
+                op_name, source, shapes[input_arg]
             )
             reduction_count = 1
             if reduce_all:
@@ -172,11 +194,12 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
                     reduction_count *= shapes[input_arg][dim]
             if reduction_count == 0:
                 raise CodegenBackendError(
-                    "codegen max.dim expects a non-empty reduction dimension"
+                    f"codegen {op_label} expects a non-empty reduction dimension"
                 )
+            op_spec = _ARGMAX_SPEC if op_name == "argmax" else _ARGMIN_SPEC
             op_node = _OpNode(
                 node=node,
-                spec=_ARGMAX_SPEC,
+                spec=op_spec,
                 inputs=[input_arg],
                 output_shape=(),
                 inplace_input=None,
@@ -200,6 +223,19 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
             shapes[node] = shapes[source]
             strides[node] = strides[source]
             dtypes[node] = dtypes[source]
+            return None
+        if source.target in {
+            torch.ops.aten.native_dropout,
+            torch.ops.aten.native_dropout.default,
+        }:
+            if index not in (1, 1.0):
+                raise CodegenBackendError(
+                    "codegen backend supports native_dropout getitem only for indices 0 or 1"
+                )
+            shapes[node] = shapes[source]
+            strides[node] = _contiguous_strides(shapes[source])
+            dtypes[node] = torch.bool
+            empty_outputs.add(node)
             return None
         output_shape = (0,)
         if source.target in {
