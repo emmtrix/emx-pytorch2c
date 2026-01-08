@@ -98,6 +98,10 @@ class GraphBuilder:
                 else:
                     if isinstance(example, numbers.Number):
                         scalar_values[node] = example
+                    elif isinstance(example, torch.Size):
+                        scalar_values[node] = tuple(example)
+                    elif isinstance(example, (list, tuple)):
+                        scalar_values[node] = tuple(example)
                     else:
                         try:
                             scalar_values[node] = operator.index(example)

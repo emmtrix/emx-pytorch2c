@@ -136,9 +136,17 @@ class TensorOpBuilder:
         self, op_name: str, size: object
     ) -> Tuple[int, ...]:
         if isinstance(size, torch.fx.Node):
-            raise CodegenBackendError(
-                f"codegen {op_name} expects size to be a constant"
-            )
+            if size in self._scalar_values:
+                size = self._scalar_values[size]
+            else:
+                meta_value = size.meta.get("val")
+                if meta_value is None:
+                    meta_value = size.meta.get("example_value")
+                if meta_value is None:
+                    raise CodegenBackendError(
+                        f"codegen {op_name} expects size to be a constant"
+                    )
+                size = meta_value
         if isinstance(size, torch.Size):
             size = tuple(size)
         if isinstance(size, torch.Tensor):
