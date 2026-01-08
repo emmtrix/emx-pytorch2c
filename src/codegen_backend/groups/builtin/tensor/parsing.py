@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numbers
 import operator
-from typing import Sequence, Tuple
+from typing import Mapping, Sequence, Tuple
 
 import torch
 import torch.fx
@@ -388,6 +388,34 @@ def parse_split_with_sizes_args(
             "codegen split_with_sizes expects at least one split size"
         )
     return input_arg, split_sizes_value, dim_value
+
+
+def validate_split_with_sizes(
+    input_arg: object,
+    split_sizes: Tuple[int, ...],
+    dim: int,
+    shapes: Mapping[torch.fx.Node, Tuple[int, ...]],
+) -> Tuple[torch.fx.Node, Tuple[int, ...], int]:
+    if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
+        raise CodegenBackendError(
+            "codegen split_with_sizes expects a tensor input"
+        )
+    input_shape = shapes[input_arg]
+    if dim < 0:
+        dim += len(input_shape)
+    if dim < 0 or dim >= len(input_shape):
+        raise CodegenBackendError(
+            "codegen split_with_sizes dim is out of range"
+        )
+    if any(size < 0 for size in split_sizes):
+        raise CodegenBackendError(
+            "codegen split_with_sizes expects non-negative split sizes"
+        )
+    if sum(split_sizes) != input_shape[dim]:
+        raise CodegenBackendError(
+            "codegen split_with_sizes expects split sizes to sum to the input size"
+        )
+    return input_arg, input_shape, dim
 
 
 def parse_diagonal_args(
