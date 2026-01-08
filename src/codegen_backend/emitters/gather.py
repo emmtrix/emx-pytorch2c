@@ -11,8 +11,6 @@ from codegen_backend.emitters.base import (
     KindEmitterBase,
     _format_array_suffix,
     _is_contiguous,
-    emit_footer,
-    emit_loops,
 )
 from codegen_backend.indexing import _emit_strided_access
 from codegen_backend.kinds import KernelEmitRequest
@@ -44,7 +42,6 @@ def _write_gather_kernel(
         f"const {index_c_type} index{index_suffix}, "
         f"{dtype.c_type} out{out_suffix}) {{"
     )
-    loop_lines, indent = emit_loops(output_shape)
     output_indices = [f"i{dim}" for dim in range(len(output_shape))]
     output_access = _emit_strided_access(
         "out",
@@ -74,16 +71,13 @@ def _write_gather_kernel(
         sizes=input_shape,
         c_type=dtype.c_type,
     )
-    body_lines = [
-        f"{indent}ssize_t idx = (ssize_t)({index_access});",
-        f"{indent}{output_access} = {input_access};",
-    ]
-    footer_lines = emit_footer(output_shape, indent)
     rendered = gather_template.render(
         signature=signature,
-        loop_lines=loop_lines,
-        body_lines=body_lines,
-        footer_lines=footer_lines,
+        output_access=output_access,
+        index_access=index_access,
+        input_access=input_access,
+        output_shape=output_shape,
+        gather_dim=gather_dim,
     )
     return rendered.splitlines()
 
