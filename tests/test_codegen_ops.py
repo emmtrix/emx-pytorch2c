@@ -90,33 +90,6 @@ def _as_strided_sequence(value):
     return None
 
 
-def _cdist_sample_filter(sample):
-    if not isinstance(sample.input, torch.Tensor):
-        return False
-    if len(sample.args) < 2:
-        return False
-    x2 = sample.args[0]
-    if not isinstance(x2, torch.Tensor):
-        return False
-    p_value = sample.args[1]
-    compute_mode = sample.args[2] if len(sample.args) > 2 else None
-    try:
-        p_value = float(p_value)
-    except (TypeError, ValueError):
-        return False
-    if p_value != 2.0:
-        return False
-    if compute_mode not in (None, 0):
-        return False
-    if sample.input.ndim != 2 or x2.ndim != 2:
-        return False
-    if sample.input.shape[1] != x2.shape[1]:
-        return False
-    if not sample.input.is_contiguous() or not x2.is_contiguous():
-        return False
-    return True
-
-
 def _sample_matches_constraints(sample, dtype, constraints):
     tensors = _extract_tensors(sample)
     if not tensors:
@@ -731,9 +704,6 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten._cdist_forward.default: {
         "allowed_dtypes": (torch.float32,),
-        "allow_noncontiguous": False,
-        "requires_contiguous": True,
-        "sample_filter": _cdist_sample_filter,
     },
     torch.ops.aten.gelu.default: {
         "allowed_dtypes": (torch.float32,),

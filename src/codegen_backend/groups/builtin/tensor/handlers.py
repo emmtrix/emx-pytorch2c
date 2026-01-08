@@ -493,15 +493,18 @@ class CdistHandler(OpKindHandler):
                 "codegen cdist expects two input tensors"
             )
         x1_shape, x2_shape = input_shapes[:2]
-        if len(x1_shape) != 2 or len(x2_shape) != 2:
+        if len(x1_shape) < 2 or len(x2_shape) < 2:
             raise CodegenBackendError(
-                "codegen cdist expects 2D input tensors"
+                "codegen cdist expects input tensors with rank >= 2"
             )
-        if x1_shape[1] != x2_shape[1]:
+        if x1_shape[-1] != x2_shape[-1]:
             raise CodegenBackendError(
                 "codegen cdist expects matching feature dimensions"
             )
-        return (x1_shape[0], x2_shape[0])
+        batch_shape = shape_utils.broadcast_output_shape(
+            op_node.spec.name, x1_shape[:-2], x2_shape[:-2]
+        )
+        return batch_shape + (x1_shape[-2], x2_shape[-2])
 
 
 class AddmmHandler(OpKindHandler):

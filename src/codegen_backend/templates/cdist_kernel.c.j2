@@ -1,12 +1,57 @@
 {{ signature }}
+{% for batch in batch_dims %}
+  for (int64_t {{ batch.index }} = 0; {{ batch.index }} < {{ batch.size }}; ++{{ batch.index }}) {
+{% endfor %}
   for (int64_t i = 0; i < {{ n }}; ++i) {
     for (int64_t j = 0; j < {{ r }}; ++j) {
+{% if use_mm %}
+      {{ c_type }} dot = 0;
+      {{ c_type }} x1_norm = 0;
+      {{ c_type }} x2_norm = 0;
+      for (int64_t k = 0; k < {{ m }}; ++k) {
+        {{ c_type }} x1_val = {{ x1_access }};
+        {{ c_type }} x2_val = {{ x2_access }};
+        dot += x1_val * x2_val;
+        x1_norm += x1_val * x1_val;
+        x2_norm += x2_val * x2_val;
+      }
+      {{ c_type }} dist_sq = x1_norm + x2_norm - 2 * dot;
+      if (dist_sq < {{ zero_literal }}) {
+        dist_sq = {{ zero_literal }};
+      }
+      {{ output_access }} = sqrtf(dist_sq);
+{% elif p_zero %}
       {{ c_type }} acc = 0;
       for (int64_t k = 0; k < {{ m }}; ++k) {
-        {{ c_type }} diff = x1[i][k] - x2[j][k];
+        {{ c_type }} diff = {{ x1_access }} - {{ x2_access }};
+        acc += diff != {{ zero_literal }} ? {{ one_literal }} : {{ zero_literal }};
+      }
+      {{ output_access }} = acc;
+{% elif p_inf %}
+      {{ c_type }} acc = {{ zero_literal }};
+      for (int64_t k = 0; k < {{ m }}; ++k) {
+        {{ c_type }} diff = fabsf({{ x1_access }} - {{ x2_access }});
+        acc = fmaxf(acc, diff);
+      }
+      {{ output_access }} = acc;
+{% elif p_two %}
+      {{ c_type }} acc = 0;
+      for (int64_t k = 0; k < {{ m }}; ++k) {
+        {{ c_type }} diff = {{ x1_access }} - {{ x2_access }};
         acc += diff * diff;
       }
-      out[i][j] = sqrtf(acc);
+      {{ output_access }} = sqrtf(acc);
+{% else %}
+      {{ c_type }} acc = 0;
+      for (int64_t k = 0; k < {{ m }}; ++k) {
+        {{ c_type }} diff = {{ x1_access }} - {{ x2_access }};
+        acc += powf(fabsf(diff), {{ p_literal }});
+      }
+      {{ output_access }} = powf(acc, {{ inv_p_literal }});
+{% endif %}
     }
   }
+{% for _ in batch_dims %}
+  }
+{% endfor %}
 }
