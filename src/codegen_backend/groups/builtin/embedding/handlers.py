@@ -230,9 +230,9 @@ class _BackendEmbeddingBagHandler(EmbeddingBagHandler):
             raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if not isinstance(offsets, torch.fx.Node) or offsets not in shapes:
             raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
-        if dtype_info.torch_dtype is not torch.float32:
+        if dtype_info.torch_dtype not in (torch.float32, torch.float64):
             raise CodegenBackendError(
-                "codegen _embedding_bag supports only torch.float32 tensors"
+                "codegen _embedding_bag supports only torch.float32 or torch.float64 tensors"
             )
         if dtypes[weight] is not dtype_info.torch_dtype:
             raise CodegenBackendError(
@@ -322,9 +322,9 @@ class _BackendEmbeddingDenseBackwardHandler(EmbeddingDenseBackwardHandler):
             raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if not isinstance(indices, torch.fx.Node) or indices not in shapes:
             raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
-        if dtype_info.torch_dtype is not torch.float32:
+        if dtype_info.torch_dtype not in (torch.float32, torch.float64):
             raise CodegenBackendError(
-                "codegen embedding_dense_backward supports only torch.float32 tensors"
+                "codegen embedding_dense_backward supports only torch.float32 or torch.float64 tensors"
             )
         if dtypes[grad_output] is not dtype_info.torch_dtype:
             raise CodegenBackendError(

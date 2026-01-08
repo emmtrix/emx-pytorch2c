@@ -319,13 +319,13 @@ class _BackendPool1dHandler(Pool1dHandler):
             raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if input_arg not in shapes:
             raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
-        if dtype_info.torch_dtype is not torch.float32:
+        if dtype_info.torch_dtype not in (torch.float32, torch.float64):
             raise CodegenBackendError(
-                f"codegen {op_spec.name} supports only torch.float32 tensors"
+                f"codegen {op_spec.name} supports only torch.float32 or torch.float64 tensors"
             )
-        if dtypes[input_arg] is not torch.float32:
+        if dtypes[input_arg] not in (torch.float32, torch.float64):
             raise CodegenBackendError(
-                f"codegen {op_spec.name} supports only torch.float32 tensors"
+                f"codegen {op_spec.name} supports only torch.float32 or torch.float64 tensors"
             )
         if isinstance(kernel_size, torch.fx.Node) or isinstance(
             padding, torch.fx.Node
@@ -515,13 +515,13 @@ class _BackendPool2dHandler(Pool2dHandler):
             raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if input_arg not in shapes:
             raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
-        if dtype_info.torch_dtype is not torch.float32:
+        if dtype_info.torch_dtype not in (torch.float32, torch.float64):
             raise CodegenBackendError(
-                f"codegen {op_spec.name} supports only torch.float32 tensors"
+                f"codegen {op_spec.name} supports only torch.float32 or torch.float64 tensors"
             )
-        if dtypes[input_arg] is not torch.float32:
+        if dtypes[input_arg] not in (torch.float32, torch.float64):
             raise CodegenBackendError(
-                f"codegen {op_spec.name} supports only torch.float32 tensors"
+                f"codegen {op_spec.name} supports only torch.float32 or torch.float64 tensors"
             )
         if isinstance(kernel_size, torch.fx.Node) or isinstance(
             padding, torch.fx.Node
@@ -700,13 +700,13 @@ class _BackendPool3dHandler(Pool3dHandler):
             raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if input_arg not in shapes:
             raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
-        if dtype_info.torch_dtype is not torch.float32:
+        if dtype_info.torch_dtype not in (torch.float32, torch.float64):
             raise CodegenBackendError(
-                f"codegen {op_spec.name} supports only torch.float32 tensors"
+                f"codegen {op_spec.name} supports only torch.float32 or torch.float64 tensors"
             )
-        if dtypes[input_arg] is not torch.float32:
+        if dtypes[input_arg] not in (torch.float32, torch.float64):
             raise CodegenBackendError(
-                f"codegen {op_spec.name} supports only torch.float32 tensors"
+                f"codegen {op_spec.name} supports only torch.float32 or torch.float64 tensors"
             )
         if isinstance(kernel_size, torch.fx.Node) or isinstance(
             padding, torch.fx.Node
@@ -914,16 +914,16 @@ class _BackendPool2dBackwardHandler(Pool2dBackwardHandler):
             raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if grad_output not in shapes or input_arg not in shapes:
             raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
-        if dtype_info.torch_dtype is not torch.float32:
+        if dtype_info.torch_dtype not in (torch.float32, torch.float64):
             raise CodegenBackendError(
-                f"codegen {op_spec.name} supports only torch.float32 tensors"
+                f"codegen {op_spec.name} supports only torch.float32 or torch.float64 tensors"
             )
         if (
-            dtypes[grad_output] is not torch.float32
-            or dtypes[input_arg] is not torch.float32
+            dtypes[grad_output] not in (torch.float32, torch.float64)
+            or dtypes[input_arg] not in (torch.float32, torch.float64)
         ):
             raise CodegenBackendError(
-                f"codegen {op_spec.name} supports only torch.float32 tensors"
+                f"codegen {op_spec.name} supports only torch.float32 or torch.float64 tensors"
             )
         grad_output_shape = shapes[grad_output]
         input_shape = shapes[input_arg]

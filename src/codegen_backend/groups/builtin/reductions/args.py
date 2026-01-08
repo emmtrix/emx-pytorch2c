@@ -144,10 +144,11 @@ class ReductionsArgParser:
         if dtype is not None:
             if isinstance(dtype, torch.fx.Node):
                 raise CodegenBackendError(
-                    f"codegen {op_name} expects dtype to be torch.float32, torch.int8, torch.uint8, torch.uint32, torch.int32, or torch.bool"
+                    f"codegen {op_name} expects dtype to be torch.float32, torch.float64, torch.int8, torch.uint8, torch.uint32, torch.int32, or torch.bool"
                 )
             if dtype not in (
                 torch.float32,
+                torch.float64,
                 torch.int8,
                 torch.uint8,
                 torch.uint32,
@@ -155,7 +156,7 @@ class ReductionsArgParser:
                 torch.bool,
             ):
                 raise CodegenBackendError(
-                    f"codegen {op_name} expects dtype to be torch.float32, torch.int8, torch.uint8, torch.uint32, torch.int32, or torch.bool"
+                    f"codegen {op_name} expects dtype to be torch.float32, torch.float64, torch.int8, torch.uint8, torch.uint32, torch.int32, or torch.bool"
                 )
         reduction_dims = self.normalize_reduction_dims(op_name, dim, len(input_shape))
         reduce_all = dim is None
@@ -333,11 +334,11 @@ class ReductionsArgParser:
             if dtype is not None:
                 if isinstance(dtype, torch.fx.Node):
                     raise CodegenBackendError(
-                        f"codegen {op_name} expects dtype to be torch.float32 or None"
+                        f"codegen {op_name} expects dtype to be torch.float32, torch.float64, or None"
                     )
-                if dtype is not torch.float32:
+                if dtype not in (torch.float32, torch.float64):
                     raise CodegenBackendError(
-                        f"codegen {op_name} expects dtype to be torch.float32 or None"
+                        f"codegen {op_name} expects dtype to be torch.float32, torch.float64, or None"
                     )
         return dim_value, dtype
 

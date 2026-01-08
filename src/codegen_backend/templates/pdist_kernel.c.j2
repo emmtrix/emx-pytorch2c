@@ -7,7 +7,7 @@
         {{ c_type }} diff = input[i][k] - input[j][k];
         acc += diff * diff;
       }
-      out[out_index++] = sqrtf(acc);
+      out[out_index++] = {{ sqrt_fn }}(acc);
     }
   }
 }

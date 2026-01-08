@@ -31,6 +31,7 @@ def _write_pdist_kernel(
         n=n,
         m=m,
         c_type=dtype.c_type,
+        sqrt_fn=f"{dtype.scalar_prefix}sqrt",
     )
     return rendered.strip().splitlines()
 

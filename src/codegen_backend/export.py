@@ -101,11 +101,34 @@ def _format_float32_hex(value: float) -> str:
     return f"{sign}0x1.{fraction:06x}p{exponent_val:+d}"
 
 
+def _format_float64_hex(value: float) -> str:
+    bits = struct.unpack("<Q", struct.pack("<d", float(value)))[0]
+    sign = "-" if (bits >> 63) else ""
+    exponent = (bits >> 52) & 0x7FF
+    mantissa = bits & 0xFFFFFFFFFFFFF
+    if exponent == 0 and mantissa == 0:
+        return f"{sign}0x0.0p+0"
+    if exponent == 0x7FF:
+        if mantissa == 0:
+            return f"{sign}INFINITY"
+        return "NAN"
+    if exponent == 0:
+        shift = mantissa.bit_length() - 1
+        exponent_val = shift - 1074
+        fraction = (mantissa - (1 << shift)) << (52 - shift)
+    else:
+        exponent_val = exponent - 1023
+        fraction = mantissa
+    return f"{sign}0x1.{fraction:013x}p{exponent_val:+d}"
+
+
 def _format_weight_value(value: object, dtype: torch.dtype) -> str:
     if dtype is torch.bool:
         return "1" if bool(value) else "0"
-    if dtype.is_floating_point:
+    if dtype is torch.float32:
         return f"{_format_float32_hex(float(value))}f"
+    if dtype is torch.float64:
+        return _format_float64_hex(float(value))
     return str(int(value))
 
 

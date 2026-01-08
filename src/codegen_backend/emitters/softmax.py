@@ -82,6 +82,8 @@ def _write_softmax_kernel(
         input_access_current=input_access_current,
         output_access=output_access,
         is_log=op_spec.name in {"log_softmax", "_log_softmax"},
+        exp_fn=f"{dtype.scalar_prefix}exp",
+        log_fn=f"{dtype.scalar_prefix}log",
     )
     return rendered.strip().splitlines()
 

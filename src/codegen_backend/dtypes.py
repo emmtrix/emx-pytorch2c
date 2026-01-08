@@ -22,6 +22,13 @@ _CODEGEN_DTYPES = {
         scalar_prefix="ref_scalar_f32_",
         suffix="f32",
     ),
+    torch.float64: _CodegenDType(
+        torch_dtype=torch.float64,
+        c_type="double",
+        scalar_header="ops_scalar_f64.h",
+        scalar_prefix="ref_scalar_f64_",
+        suffix="f64",
+    ),
     torch.int8: _CodegenDType(
         torch_dtype=torch.int8,
         c_type="int8_t",
@@ -91,5 +98,6 @@ _C_TYPE_BY_DTYPE = {
     torch.int32: "int32_t",
     torch.int64: "int64_t",
     torch.float32: "float",
+    torch.float64: "double",
 }
 _EMBEDDING_INDEX_DTYPES = {torch.int32, torch.int64}

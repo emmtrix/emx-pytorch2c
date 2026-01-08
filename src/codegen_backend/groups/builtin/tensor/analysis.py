@@ -189,13 +189,13 @@ class TensorOpBuilder:
             if not isinstance(bias, torch.fx.Node) or bias not in self._shapes:
                 raise error_expected_tensor(op_spec.name)
             bias_node = bias
-        if dtype_info.torch_dtype is not torch.float32:
+        if dtype_info.torch_dtype not in (torch.float32, torch.float64):
             raise CodegenBackendError(
-                f"codegen {op_spec.name} supports only torch.float32"
+                f"codegen {op_spec.name} supports only torch.float32 or torch.float64"
             )
-        if self._dtypes[input_arg] is not torch.float32:
+        if self._dtypes[input_arg] not in (torch.float32, torch.float64):
             raise CodegenBackendError(
-                f"codegen {op_spec.name} supports only torch.float32"
+                f"codegen {op_spec.name} supports only torch.float32 or torch.float64"
             )
         input_shape = self._shapes[input_arg]
         if len(input_shape) < 2:
@@ -222,27 +222,27 @@ class TensorOpBuilder:
                 raise CodegenBackendError(
                     f"codegen {op_spec.name} requires contiguous stats"
                 )
-            if self._dtypes[stat_arg] is not torch.float32:
+            if self._dtypes[stat_arg] not in (torch.float32, torch.float64):
                 raise CodegenBackendError(
-                    f"codegen {op_spec.name} supports only torch.float32"
+                    f"codegen {op_spec.name} supports only torch.float32 or torch.float64"
                 )
         if weight_node is not None:
             if self._shapes[weight_node] != (channels,):
                 raise CodegenBackendError(
                     f"codegen {op_spec.name} expects weight shape to match channels"
                 )
-            if self._dtypes[weight_node] is not torch.float32:
+            if self._dtypes[weight_node] not in (torch.float32, torch.float64):
                 raise CodegenBackendError(
-                    f"codegen {op_spec.name} supports only torch.float32"
+                    f"codegen {op_spec.name} supports only torch.float32 or torch.float64"
                 )
         if bias_node is not None:
             if self._shapes[bias_node] != (channels,):
                 raise CodegenBackendError(
                     f"codegen {op_spec.name} expects bias shape to match channels"
                 )
-            if self._dtypes[bias_node] is not torch.float32:
+            if self._dtypes[bias_node] not in (torch.float32, torch.float64):
                 raise CodegenBackendError(
-                    f"codegen {op_spec.name} supports only torch.float32"
+                    f"codegen {op_spec.name} supports only torch.float32 or torch.float64"
                 )
         try:
             training_value = self._analysis_service.resolve_scalar_arg(

@@ -90,6 +90,10 @@ def _write_cdist_kernel(
         m=m,
         r=r,
         c_type=dtype.c_type,
+        sqrt_fn=f"{dtype.scalar_prefix}sqrt",
+        abs_fn=f"{dtype.scalar_prefix}abs",
+        max_fn=f"{dtype.scalar_prefix}fmax",
+        pow_fn=f"{dtype.scalar_prefix}pow",
         x1_access=_format_strided_access(
             "x1",
             x1_shape,

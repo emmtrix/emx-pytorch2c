@@ -11,12 +11,12 @@
     }
     {{ c_type }} sum = 0.0f;
     for (int64_t r{{ softmax_dim }} = 0; r{{ softmax_dim }} < {{ softmax_size }}; ++r{{ softmax_dim }}) {
-        sum += expf({{ input_access_r }} - max_val);
+        sum += {{ exp_fn }}({{ input_access_r }} - max_val);
     }
 {% if is_log %}
-    {{ output_access }} = {{ input_access_current }} - max_val - logf(sum);
+    {{ output_access }} = {{ input_access_current }} - max_val - {{ log_fn }}(sum);
 {% else %}
-    {{ output_access }} = expf({{ input_access_current }} - max_val) / sum;
+    {{ output_access }} = {{ exp_fn }}({{ input_access_current }} - max_val) / sum;
 {% endif %}
 {% for dim in output_dims | reverse %}
     }

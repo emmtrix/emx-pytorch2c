@@ -82,6 +82,14 @@ class GraphBuilder:
                         elif example.numel() == 1:
                             continue
                         continue
+                    if (
+                        dtype_info is not None
+                        and example.numel() == 1
+                        and example.dim() == 0
+                        and example.dtype is not dtype_info.torch_dtype
+                    ):
+                        scalar_values[node] = example.item()
+                        continue
                     shapes[node] = tuple(example.shape)
                     strides[node] = tuple(example.stride())
                     dtypes[node] = example.dtype

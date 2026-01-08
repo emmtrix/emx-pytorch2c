@@ -21,7 +21,7 @@ def _input_c_type(dtype: torch.dtype, graph_dtype: _CodegenDType) -> str:
     if dtype in _EMBEDDING_INDEX_DTYPES:
         return _C_TYPE_BY_DTYPE[dtype]
     raise CodegenBackendError(
-        "codegen backend supports only torch.float32, torch.int8, torch.uint8, torch.uint32, torch.int32, torch.int64, or torch.bool tensors"
+        "codegen backend supports only torch.float32, torch.float64, torch.int8, torch.uint8, torch.uint32, torch.int32, torch.int64, or torch.bool tensors"
     )
 
 
@@ -32,7 +32,7 @@ def _dtype_to_c_type(dtype: torch.dtype, graph_dtype: _CodegenDType) -> str:
     if c_type is not None:
         return c_type
     raise CodegenBackendError(
-        "codegen backend supports only torch.float32, torch.int8, torch.uint8, torch.uint32, torch.int32, torch.int64, or torch.bool tensors"
+        "codegen backend supports only torch.float32, torch.float64, torch.int8, torch.uint8, torch.uint32, torch.int32, torch.int64, or torch.bool tensors"
     )
 
 
@@ -41,7 +41,7 @@ def dtype_to_c_type(dtype: torch.dtype) -> str:
     if c_type is not None:
         return c_type
     raise CodegenBackendError(
-        "codegen backend supports only torch.float32, torch.int8, torch.uint8, torch.uint32, torch.int32, torch.int64, or torch.bool tensors"
+        "codegen backend supports only torch.float32, torch.float64, torch.int8, torch.uint8, torch.uint32, torch.int32, torch.int64, or torch.bool tensors"
     )
 
 
@@ -56,6 +56,8 @@ def _format_scalar_literal(value: float, dtype: _CodegenDType) -> str:
         return str(int(value))
     if dtype.torch_dtype is torch.float32:
         return f"{float(value)}f"
+    if dtype.torch_dtype is torch.float64:
+        return f"{float(value)}"
     raise CodegenBackendError(
         "codegen addmm-like ops support only floating point or integer tensors"
     )

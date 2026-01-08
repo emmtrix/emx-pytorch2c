@@ -5,7 +5,7 @@ from typing import List, Sequence
 import torch
 
 from codegen_backend.errors import CodegenBackendError
-from codegen_backend.c_types import _input_c_type
+from codegen_backend.c_types import _format_scalar_literal, _input_c_type
 from codegen_backend.dtypes import _CODEGEN_DTYPES, _CodegenDType, _INTEGER_CODEGEN_DTYPES
 from codegen_backend.emitters.base import (
     KindEmitterBase,
@@ -32,7 +32,7 @@ def _write_cumsum_kernel(
     output_dtype_info = _CODEGEN_DTYPES.get(output_dtype)
     if output_dtype_info is None:
         raise CodegenBackendError(
-            "codegen cumsum supports only torch.float32, torch.int8, torch.uint8, or torch.int32"
+            "codegen cumsum supports only torch.float32, torch.float64, torch.int8, torch.uint8, or torch.int32"
         )
     output_c_type = output_dtype_info.c_type
     input_c_type = _input_c_type(graph_dtype.torch_dtype, graph_dtype)
@@ -56,7 +56,11 @@ def _write_cumsum_kernel(
         sizes=input_shape,
         c_type=output_dtype_info.c_type,
     )
-    acc_init = "0" if output_dtype in _INTEGER_CODEGEN_DTYPES else "0.0f"
+    acc_init = (
+        "0"
+        if output_dtype in _INTEGER_CODEGEN_DTYPES
+        else _format_scalar_literal(0.0, output_dtype_info)
+    )
     lines.append(f"{indent}{output_dtype_info.c_type} acc = {acc_init};")
     lines.append(
         f"{indent}for (int64_t r{cumsum_dim} = 0; r{cumsum_dim} <= i{cumsum_dim}; ++r{cumsum_dim}) {{"

@@ -152,9 +152,9 @@ class _BackendReductionHandler(ReductionHandler):
         param_values: Dict[str, object] = {}
         parser = self._ctx.arg_parser
         if op_spec.name == "norm":
-            if dtype_info.torch_dtype is not torch.float32:
+            if dtype_info.torch_dtype not in (torch.float32, torch.float64):
                 raise CodegenBackendError(
-                    "codegen norm supports only torch.float32 tensors"
+                    "codegen norm supports only torch.float32 or torch.float64 tensors"
                 )
             reduction_dims, keepdim, reduce_all, norm_p = parser.parse_norm_args(
                 op_spec.name, node, input_shapes[0]
@@ -166,12 +166,12 @@ class _BackendReductionHandler(ReductionHandler):
             )
             if unbiased is not None:
                 param_values["unbiased"] = unbiased
-            if (
-                op_spec.name == "var"
-                and dtype_info.torch_dtype is not torch.float32
+            if op_spec.name == "var" and dtype_info.torch_dtype not in (
+                torch.float32,
+                torch.float64,
             ):
                 raise CodegenBackendError(
-                    "codegen var supports only torch.float32 tensors"
+                    "codegen var supports only torch.float32 or torch.float64 tensors"
                 )
         param_values["reduce_all"] = reduce_all
         op_node = _OpNode(
@@ -290,20 +290,20 @@ class _BackendSoftmaxHandler(SoftmaxHandler):
         input_arg = node.args[0]
         if not isinstance(input_arg, torch.fx.Node) or input_arg not in shapes:
             raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
-        if dtype_info.torch_dtype is not torch.float32:
+        if dtype_info.torch_dtype not in (torch.float32, torch.float64):
             raise CodegenBackendError(
-                f"codegen {op_spec.name} supports only torch.float32 tensors"
+                f"codegen {op_spec.name} supports only torch.float32 or torch.float64 tensors"
             )
-        if dtypes[input_arg] is not torch.float32:
+        if dtypes[input_arg] not in (torch.float32, torch.float64):
             raise CodegenBackendError(
-                f"codegen {op_spec.name} supports only torch.float32 tensors"
+                f"codegen {op_spec.name} supports only torch.float32 or torch.float64 tensors"
             )
         dim, dtype = self._ctx.arg_parser.parse_softmax_args(
             op_spec.name, node, shapes[input_arg]
         )
-        if dtype is not None and dtype is not torch.float32:
+        if dtype is not None and dtype not in (torch.float32, torch.float64):
             raise CodegenBackendError(
-                f"codegen {op_spec.name} expects dtype to be torch.float32 or None"
+                f"codegen {op_spec.name} expects dtype to be torch.float32, torch.float64, or None"
             )
         output_shape = shapes[input_arg]
         shapes[node] = output_shape

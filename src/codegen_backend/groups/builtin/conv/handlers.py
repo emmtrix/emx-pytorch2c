@@ -409,25 +409,25 @@ class _BackendConv1dHandler(Conv1dHandler):
             )
         if isinstance(groups, torch.fx.Node):
             raise CodegenBackendError("codegen conv1d expects constant groups")
-        if dtype_info.torch_dtype is not torch.float32:
+        if dtype_info.torch_dtype not in (torch.float32, torch.float64):
             raise CodegenBackendError(
-                "codegen conv1d supports only torch.float32 tensors"
+                "codegen conv1d supports only torch.float32 or torch.float64 tensors"
             )
         if input_arg not in shapes or weight_arg not in shapes:
             raise self._ctx.analysis_service.error_expected_tensor("conv1d")
         if (
-            dtypes[input_arg] is not torch.float32
-            or dtypes[weight_arg] is not torch.float32
+            dtypes[input_arg] not in (torch.float32, torch.float64)
+            or dtypes[weight_arg] not in (torch.float32, torch.float64)
         ):
             raise CodegenBackendError(
-                "codegen conv1d supports only torch.float32 tensors"
+                "codegen conv1d supports only torch.float32 or torch.float64 tensors"
             )
         if bias_node is not None:
             if bias_node not in shapes:
                 raise self._ctx.analysis_service.error_expected_tensor("conv1d")
-            if dtypes[bias_node] is not torch.float32:
+            if dtypes[bias_node] not in (torch.float32, torch.float64):
                 raise CodegenBackendError(
-                    "codegen conv1d supports only torch.float32 tensors"
+                    "codegen conv1d supports only torch.float32 or torch.float64 tensors"
                 )
         input_shape = shapes[input_arg]
         weight_shape = shapes[weight_arg]
@@ -534,25 +534,25 @@ class _BackendConv2dHandler(Conv2dHandler):
             raise CodegenBackendError("codegen conv2d expects constant output_padding")
         if isinstance(groups, torch.fx.Node):
             raise CodegenBackendError("codegen conv2d expects constant groups")
-        if dtype_info.torch_dtype is not torch.float32:
+        if dtype_info.torch_dtype not in (torch.float32, torch.float64):
             raise CodegenBackendError(
-                "codegen conv2d supports only torch.float32 tensors"
+                "codegen conv2d supports only torch.float32 or torch.float64 tensors"
             )
         if input_arg not in shapes or weight_arg not in shapes:
             raise self._ctx.analysis_service.error_expected_tensor("conv2d")
         if (
-            dtypes[input_arg] is not torch.float32
-            or dtypes[weight_arg] is not torch.float32
+            dtypes[input_arg] not in (torch.float32, torch.float64)
+            or dtypes[weight_arg] not in (torch.float32, torch.float64)
         ):
             raise CodegenBackendError(
-                "codegen conv2d supports only torch.float32 tensors"
+                "codegen conv2d supports only torch.float32 or torch.float64 tensors"
             )
         if bias_node is not None:
             if bias_node not in shapes:
                 raise self._ctx.analysis_service.error_expected_tensor("conv2d")
-            if dtypes[bias_node] is not torch.float32:
+            if dtypes[bias_node] not in (torch.float32, torch.float64):
                 raise CodegenBackendError(
-                    "codegen conv2d supports only torch.float32 tensors"
+                    "codegen conv2d supports only torch.float32 or torch.float64 tensors"
                 )
         input_shape = shapes[input_arg]
         weight_shape = shapes[weight_arg]

@@ -441,13 +441,13 @@ class _BackendElementwiseHandler(ElementwiseHandler):
                     f"codegen {op_spec.name} expects integer tensors"
                 )
         if op_spec.name in _FLOAT_ONLY_UNARY_OPS:
-            if dtype_info.torch_dtype is not torch.float32:
+            if dtype_info.torch_dtype not in (torch.float32, torch.float64):
                 raise CodegenBackendError(
-                    f"codegen {op_spec.name} supports only torch.float32 tensors"
+                    f"codegen {op_spec.name} supports only torch.float32 or torch.float64 tensors"
                 )
-            if any(dtype is not torch.float32 for dtype in input_dtypes):
+            if any(dtype not in (torch.float32, torch.float64) for dtype in input_dtypes):
                 raise CodegenBackendError(
-                    f"codegen {op_spec.name} supports only torch.float32 tensors"
+                    f"codegen {op_spec.name} supports only torch.float32 or torch.float64 tensors"
                 )
         if op_spec.name in {"clamp", "clamp_tensor"} and dtype_info.torch_dtype is torch.bool:
             raise CodegenBackendError("codegen clamp supports only numeric tensors")

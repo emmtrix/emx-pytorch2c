@@ -18,7 +18,7 @@
     {{ c_type }} mean = running_mean[c];
     {{ c_type }} var = running_var[c];
 {% endif %}
-    {{ c_type }} inv = {{ one_literal }} / sqrtf(var + {{ eps }});
+    {{ c_type }} inv = {{ one_literal }} / {{ sqrt_fn }}(var + {{ eps }});
 {% if has_weight %}
     {{ c_type }} scale = weight[c];
 {% else %}

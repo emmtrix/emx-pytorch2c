@@ -6,6 +6,7 @@ from typing import List, Sequence, Tuple
 import torch
 
 from codegen_backend.dtypes import _INTEGER_CODEGEN_DTYPES, _CodegenDType
+from codegen_backend.c_types import _format_scalar_literal
 from codegen_backend.emitters.base import (
     _format_array_suffix,
     _is_contiguous,
@@ -72,6 +73,11 @@ _MINMAX_INIT_VALUES = {
         "max": "-INFINITY",
         "amin": "INFINITY",
         "min": "INFINITY",
+    },
+    torch.float64: {
+        "amax": "-INFINITY",
+        "max": "-INFINITY",
+        "amin": "INFINITY",
     },
     torch.int8: {
         "amax": "INT8_MIN",
@@ -285,8 +291,14 @@ def _write_norm_kernel(
         abs_fn = "ref_scalar_f32_abs"
         pow_fn = "ref_scalar_f32_pow"
         input_access = f"(float){input_access}"
-    p_literal = f"{float(p_value)}f"
-    inv_p_literal = f"{(1.0 / p_value)}f" if not is_zero_p else "0.0f"
+    if dtype.torch_dtype is torch.float64:
+        p_literal = _format_scalar_literal(p_value, dtype)
+        inv_p_literal = (
+            _format_scalar_literal(1.0 / p_value, dtype) if not is_zero_p else "0.0"
+        )
+    else:
+        p_literal = f"{float(p_value)}f"
+        inv_p_literal = f"{(1.0 / p_value)}f" if not is_zero_p else "0.0f"
     rendered = norm_template.render(
         signature=signature,
         input_rank=input_rank,
@@ -391,11 +403,8 @@ def _write_reduction_kernel(
             "init_value": init_value_config,
             "post_op": None,
         }
-        isnan_fn = (
-            f"{dtype.scalar_prefix}isnan"
-            if dtype.torch_dtype is torch.float32
-            else None
-        )
+        if dtype.torch_dtype in (torch.float32, torch.float64):
+            isnan_fn = f"{dtype.scalar_prefix}isnan"
     reduction_count = 1
     for dim in reduction_dims:
         reduction_count *= input_shape[dim]
@@ -406,12 +415,16 @@ def _write_reduction_kernel(
         init_value = init_value_config
     elif bool_reduction or dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES:
         init_value = str(init_value_config)
+    elif dtype.torch_dtype is torch.float64:
+        init_value = f"{init_value_config}.0"
     else:
         init_value = f"{init_value_config}.0f"
     post_op = None
     if config["post_op"] == "mean":
         if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES:
             post_op = f"acc /= {reduction_count};"
+        elif dtype.torch_dtype is torch.float64:
+            post_op = f"acc /= (double){reduction_count};"
         else:
             post_op = f"acc /= (float){reduction_count};"
     rendered = reduction_template.render(
@@ -430,7 +443,7 @@ def _write_reduction_kernel(
         is_minmax=minmax_name in {"amax", "amin"}
         and dtype.torch_dtype is not torch.bool,
         compare_op=compare_op if minmax_name in {"amax", "amin"} else None,
-        is_float=dtype.torch_dtype is torch.float32,
+        is_float=dtype.torch_dtype in (torch.float32, torch.float64),
         isnan_fn=isnan_fn,
         output_access=output_access,
         acc_type=acc_type,

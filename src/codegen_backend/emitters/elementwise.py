@@ -83,6 +83,13 @@ class ElementwiseEmitter(KindEmitterBase):
             "b_access": None,
             "cond_access": None,
             "input_access": None,
+            "zero_literal": _format_scalar_literal(0.0, req.dtype),
+            "exp_fn": f"{req.dtype.scalar_prefix}exp",
+            "log1p_fn": f"{req.dtype.scalar_prefix}log1p",
+            "tanh_fn": f"{req.dtype.scalar_prefix}tanh",
+            "erf_fn": f"{req.dtype.scalar_prefix}erf",
+            "fmin_fn": f"{req.dtype.scalar_prefix}fmin",
+            "fmax_fn": f"{req.dtype.scalar_prefix}fmax",
         }
         if elementwise_kind == "binary":
             if "scalar" in params:
@@ -220,9 +227,9 @@ class ElementwiseEmitter(KindEmitterBase):
                 c_type=_input_c_type(req.input_dtypes[0], req.dtype),
             )
             if op_spec.name in _PARAMETRIC_UNARY_OPS:
-                if req.dtype.torch_dtype is not torch.float32:
+                if req.dtype.torch_dtype not in (torch.float32, torch.float64):
                     raise CodegenBackendError(
-                        f"codegen {op_spec.name} supports only torch.float32 tensors"
+                        f"codegen {op_spec.name} supports only torch.float32 or torch.float64 tensors"
                     )
                 context.update(
                     {

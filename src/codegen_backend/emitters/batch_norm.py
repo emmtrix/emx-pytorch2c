@@ -55,6 +55,7 @@ def _write_batch_norm_kernel(
         has_bias=has_bias,
         one_literal=_format_scalar_literal(1.0, dtype),
         zero_literal=_format_scalar_literal(0.0, dtype),
+        sqrt_fn=f"{dtype.scalar_prefix}sqrt",
     )
     return rendered.strip().splitlines()
 
