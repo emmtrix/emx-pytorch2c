@@ -292,9 +292,9 @@ class Compiler:
                     else torch.device("cpu")
                 )
                 for node in graph.empty_outputs:
+                    if _maybe_fill_batch_norm_stats(node, env):
+                        continue
                     if node not in env:
-                        if _maybe_fill_batch_norm_stats(node, env):
-                            continue
                         env[node] = torch.empty(
                             graph.shapes[node],
                             dtype=graph.dtypes[node],

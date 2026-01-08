@@ -201,35 +201,30 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
             strides[node] = strides[source]
             dtypes[node] = dtypes[source]
             return None
-        shapes[node] = (0,)
+        output_shape = (0,)
+        if source.target in {
+            torch.ops.aten._native_batch_norm_legit,
+            torch.ops.aten._native_batch_norm_legit.default,
+        }:
+            if len(source.args) < 6:
+                raise CodegenBackendError(
+                    "codegen backend expects batch_norm to include training flag"
+                )
+            training_arg = source.args[5]
+            training_value = resolve_scalar_arg(
+                "batch_norm", training_arg, scalar_values
+            )
+            if bool(training_value):
+                if len(shapes[source]) < 2:
+                    raise CodegenBackendError(
+                        "codegen backend expects batch_norm input rank >= 2"
+                    )
+                output_shape = (shapes[source][1],)
+        shapes[node] = output_shape
         strides[node] = _contiguous_strides(shapes[node])
         dtypes[node] = dtypes[source]
         empty_outputs.add(node)
         return None
-        else:
-            output_shape = (0,)
-            if source.target in {
-                torch.ops.aten._native_batch_norm_legit,
-                torch.ops.aten._native_batch_norm_legit.default,
-            }:
-                if len(source.args) < 6:
-                    raise CodegenBackendError(
-                        "codegen backend expects batch_norm to include training flag"
-                    )
-                training_arg = source.args[5]
-                training_value = resolve_scalar_arg(
-                    "batch_norm", training_arg, scalar_values
-                )
-                if bool(training_value):
-                    if len(shapes[source]) < 2:
-                        raise CodegenBackendError(
-                            "codegen backend expects batch_norm input rank >= 2"
-                        )
-                    output_shape = (shapes[source][1],)
-            shapes[node] = output_shape
-            strides[node] = _contiguous_strides(shapes[node])
-            dtypes[node] = dtypes[source]
-            empty_outputs.add(node)
 
 
 __all__ = ["TensorAnalyzer"]

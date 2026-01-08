@@ -197,5 +197,5 @@
 
 ## Summary
 - total core aten ops: 192
-- supported by codegen: 141 / 192 (73.4%)
-- unsupported by codegen: 51
+- supported by codegen: 144 / 192 (75.0%)
+- unsupported by codegen: 48
