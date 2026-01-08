@@ -830,6 +830,100 @@ class TensorOpBuilder:
             return self._finalize_node(
                 node, op_node, dtype_info, [self._shapes[input_arg]]
             )
+        if op_spec.name == "flatten":
+            if len(node.args) > 3:
+                raise CodegenBackendError(
+                    "codegen flatten expects input, start_dim, and end_dim arguments"
+                )
+            start_dim = 0
+            end_dim = -1
+            if len(node.args) > 1:
+                start_dim = node.args[1]
+            if len(node.args) > 2:
+                end_dim = node.args[2]
+            if node.kwargs:
+                if "start_dim" in node.kwargs:
+                    if len(node.args) > 1:
+                        raise error_kwarg_specified_once(
+                            op_spec.name, "start_dim"
+                        )
+                    start_dim = node.kwargs["start_dim"]
+                if "end_dim" in node.kwargs:
+                    if len(node.args) > 2:
+                        raise error_kwarg_specified_once(
+                            op_spec.name, "end_dim"
+                        )
+                    end_dim = node.kwargs["end_dim"]
+                extra = set(node.kwargs) - {"start_dim", "end_dim"}
+                if extra:
+                    raise CodegenBackendError(
+                        f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
+                    )
+            if isinstance(start_dim, torch.fx.Node) or isinstance(
+                end_dim, torch.fx.Node
+            ):
+                raise CodegenBackendError(
+                    "codegen flatten expects start_dim/end_dim to be constants"
+                )
+            start_dim_value = parse_constant_int(
+                op_spec.name, "start_dim", start_dim
+            )
+            end_dim_value = parse_constant_int(
+                op_spec.name, "end_dim", end_dim
+            )
+            input_shape = self._shapes[input_arg]
+            rank = len(input_shape)
+            if rank == 0:
+                raise CodegenBackendError(
+                    "codegen flatten expects input to have at least one dimension"
+                )
+            if start_dim_value < 0:
+                start_dim_value += rank
+            if end_dim_value < 0:
+                end_dim_value += rank
+            if start_dim_value < 0 or start_dim_value >= rank:
+                raise CodegenBackendError(
+                    "codegen flatten start_dim is out of range"
+                )
+            if end_dim_value < 0 or end_dim_value >= rank:
+                raise CodegenBackendError(
+                    "codegen flatten end_dim is out of range"
+                )
+            if start_dim_value > end_dim_value:
+                raise CodegenBackendError(
+                    "codegen flatten expects start_dim <= end_dim"
+                )
+            from codegen_backend.emitters.base import _is_contiguous
+
+            if not _is_contiguous(
+                input_shape, self._strides[input_arg]
+            ):
+                raise CodegenBackendError(
+                    "codegen flatten expects contiguous input"
+                )
+            flattened_dim = math.prod(
+                input_shape[start_dim_value : end_dim_value + 1]
+            )
+            output_shape = (
+                list(input_shape[:start_dim_value])
+                + [flattened_dim]
+                + list(input_shape[end_dim_value + 1 :])
+            )
+            output_shape_tuple = tuple(output_shape)
+            op_node = _OpNode(
+                node=node,
+                spec=op_spec,
+                inputs=[input_arg],
+                output_shape=(),
+                params={
+                    "size": output_shape_tuple,
+                    "view_strides": _contiguous_strides(output_shape_tuple),
+                    "storage_offset": 0,
+                },
+            )
+            return self._finalize_node(
+                node, op_node, dtype_info, [input_shape]
+            )
         if len(node.args) < 2:
             raise CodegenBackendError(
                 f"codegen {op_spec.name} expects input and size arguments"

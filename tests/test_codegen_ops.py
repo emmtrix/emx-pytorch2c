@@ -463,6 +463,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.relu6.default,
     torch.ops.aten.permute.default,
     torch.ops.aten.view.default,
+    torch.ops.aten.flatten.using_ints,
     torch.ops.aten.reshape.default,
     torch.ops.aten.resize_.default,
     torch.ops.aten.unsqueeze.default,
@@ -883,6 +884,9 @@ CODEGEN_OP_TEST_CONFIG = {
         "allowed_dtypes": (torch.float32,),
     },
     torch.ops.aten.view.default: {
+        "requires_contiguous": True,
+    },
+    torch.ops.aten.flatten.using_ints: {
         "requires_contiguous": True,
     },
     torch.ops.aten.cat.default: {

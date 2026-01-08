@@ -858,7 +858,7 @@
 | `find` | — |
 | `fix` | — |
 | `fix_` | — |
-| `flatten` | — |
+| `flatten` | ✅ |
 | `flatten_dense_tensors` | — |
 | `flip` | ✅ |
 | `fliplr` | — |
@@ -1719,5 +1719,5 @@
 
 ## Summary
 - total aten ops: 1714
-- supported by codegen: 267 / 1714 (15.6 %)
-- unsupported by codegen: 1447
+- supported by codegen: 268 / 1714 (15.6 %)
+- unsupported by codegen: 1446

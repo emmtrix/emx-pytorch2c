@@ -200,6 +200,13 @@ class ViewHandler(OpKindHandler):
                     "codegen reshape expects shape to be resolved"
                 )
             return tuple(size)
+        if op_node.spec.name == "flatten":
+            size = op_node.p("size", None)
+            if size is None:
+                raise CodegenBackendError(
+                    "codegen flatten expects shape to be resolved"
+                )
+            return tuple(size)
         raise CodegenBackendError(f"Unsupported view op: {op_node.spec.name}")
 
 

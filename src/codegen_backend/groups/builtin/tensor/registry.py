@@ -41,6 +41,11 @@ def build_supported_ops() -> dict[str, _OpSpec]:
         torch.ops.aten.reshape.default,
         torch.ops.aten.reshape,
     ).build()
+    registry.register_op("flatten", kind=OpKind.VIEW).targets(
+        torch.flatten,
+        torch.ops.aten.flatten.using_ints,
+        torch.ops.aten.flatten,
+    ).build()
     registry.register_op("squeeze", kind=OpKind.VIEW).targets(
         torch.ops.aten.squeeze.dim,
         torch.ops.aten.squeeze.dims,
