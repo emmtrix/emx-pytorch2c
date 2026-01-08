@@ -180,4 +180,16 @@ static inline uint8_t ref_scalar_u8_round(uint8_t a) {
     return a;
 }
 
+#define REF_U8_UNARY_FROM_F32(name)                         \
+    static inline uint8_t ref_scalar_u8_##name(uint8_t a) { \
+        return ref_scalar_u8_from_f32(ref_scalar_f32_##name((float)a)); \
+    }
+
+REF_U8_UNARY_FROM_F32(acos)
+REF_U8_UNARY_FROM_F32(arccos)
+REF_U8_UNARY_FROM_F32(atan)
+REF_U8_UNARY_FROM_F32(arctan)
+
+#undef REF_U8_UNARY_FROM_F32
+
 #endif

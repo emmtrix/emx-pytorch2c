@@ -93,7 +93,10 @@ class GraphBuilder:
                         try:
                             scalar_values[node] = operator.index(example)
                         except TypeError:
-                            pass
+                            raise CodegenBackendError(
+                                "codegen backend only supports Tensor or scalar "
+                                f"(number/indexable) inputs for placeholder {node}"
+                            )
                 continue
             if node.op in {"call_function", "call_method"}:
                 handled = False
