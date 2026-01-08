@@ -32,6 +32,7 @@ from codegen_backend.groups.builtin.tensor.parsing import (
     parse_diagonal_args,
     parse_empty_strided_stride,
     parse_gather_args,
+    parse_index_select_args,
     parse_linear_args,
     parse_resize_size,
 )
@@ -465,6 +466,11 @@ class TensorOpBuilder:
         input_nodes = [input_arg, weight_arg]
         input_shapes = [self._shapes[input_arg], self._shapes[weight_arg]]
         input_dtypes = [self._dtypes[arg] for arg in input_nodes]
+        input_shape, weight_shape = input_shapes
+        if len(input_shape) < 2 or len(weight_shape) != 2:
+            raise CodegenBackendError(
+                "codegen linear expects input rank >= 2 and 2D weight"
+            )
         if bias is not None:
             if not isinstance(bias, torch.fx.Node) or bias not in self._shapes:
                 raise error_expected_tensor(op_spec.name)
@@ -676,6 +682,49 @@ class TensorOpBuilder:
             node, op_node, dtype_info, [input_shape, index_shape]
         )
 
+    def build_index_select(
+        self, node: torch.fx.Node, op_spec: _OpSpec, dtype_info: _CodegenDType
+    ) -> _OpNode:
+        input_arg, dim, index = parse_index_select_args(node)
+        if not isinstance(input_arg, torch.fx.Node) or input_arg not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if not isinstance(index, torch.fx.Node) or index not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if self._dtypes[input_arg] is not dtype_info.torch_dtype:
+            raise CodegenBackendError(
+                "codegen index_select expects input to match the graph dtype"
+            )
+        if self._dtypes[index] not in _EMBEDDING_INDEX_DTYPES:
+            raise CodegenBackendError(
+                "codegen index_select expects index dtype to be torch.int32 or torch.int64"
+            )
+        input_shape = self._shapes[input_arg]
+        if not input_shape:
+            raise CodegenBackendError(
+                "codegen index_select expects input to have at least 1 dimension"
+            )
+        index_shape = self._shapes[index]
+        if len(index_shape) != 1:
+            raise CodegenBackendError(
+                "codegen index_select expects index to be a 1D tensor"
+            )
+        dim_value = parse_constant_int(op_spec.name, "dim", dim)
+        if dim_value < 0:
+            dim_value += len(input_shape)
+        if dim_value < 0 or dim_value >= len(input_shape):
+            raise CodegenBackendError("codegen index_select dim is out of range")
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[input_arg, index],
+            output_shape=(),
+            inplace_input=None,
+            params={"dim": dim_value},
+        )
+        return self._finalize_node(
+            node, op_node, dtype_info, [input_shape, index_shape]
+        )
+
     def build_view(
         self, node: torch.fx.Node, op_spec: _OpSpec, dtype_info: _CodegenDType
     ) -> _OpNode:
@@ -720,39 +769,62 @@ class TensorOpBuilder:
                 raise CodegenBackendError(
                     "codegen as_strided expects size and stride"
                 )
-            if isinstance(size, torch.fx.Node) or isinstance(stride, torch.fx.Node):
-                raise CodegenBackendError(
-                    "codegen as_strided expects size/stride to be constants"
-                )
             if storage_offset is None:
                 storage_offset = 0
-            if isinstance(storage_offset, torch.fx.Node):
-                raise CodegenBackendError(
-                    "codegen as_strided expects storage_offset to be an int"
-                )
-            size_tuple = normalize_as_strided_sequence(op_spec.name, size, "size")
+            if (
+                isinstance(storage_offset, torch.fx.Node)
+                and storage_offset in self._scalar_values
+            ):
+                storage_offset = self._scalar_values[storage_offset]
+            stride_input = (
+                stride
+                if isinstance(stride, torch.fx.Node) and stride in self._shapes
+                else None
+            )
+            size_tuple = normalize_as_strided_sequence(
+                op_spec.name,
+                size,
+                "size",
+                scalar_values=self._scalar_values,
+            )
             stride_tuple = normalize_as_strided_sequence(
-                op_spec.name, stride, "stride"
+                op_spec.name,
+                stride,
+                "stride",
+                scalar_values=self._scalar_values,
             )
             if len(size_tuple) != len(stride_tuple):
                 raise CodegenBackendError(
                     "codegen as_strided expects size and stride to match length"
                 )
-            storage_offset_value = int(operator.index(storage_offset))
-            if storage_offset_value < 0:
-                raise CodegenBackendError(
-                    "codegen as_strided expects storage_offset to be non-negative"
-                )
+            storage_offset_value = parse_constant_int(
+                op_spec.name, "storage_offset", storage_offset
+            )
+            inputs = [input_arg]
+            params = {
+                "size": size_tuple,
+                "view_strides": stride_tuple,
+                "storage_offset": storage_offset_value,
+            }
+            if stride_input is not None:
+                stride_shape = self._shapes[stride_input]
+                stride_dtype = self._dtypes[stride_input]
+                if stride_dtype not in (torch.int32, torch.int64):
+                    raise CodegenBackendError(
+                        "codegen as_strided expects stride tensor to have an int dtype"
+                    )
+                if len(stride_shape) != 1 or stride_shape[0] != len(size_tuple):
+                    raise CodegenBackendError(
+                        "codegen as_strided expects stride tensor to match size length"
+                    )
+                inputs.append(stride_input)
+                params["view_strides_input_index"] = len(inputs) - 1
             op_node = _OpNode(
                 node=node,
                 spec=op_spec,
-                inputs=[input_arg],
+                inputs=inputs,
                 output_shape=(),
-                params={
-                    "size": size_tuple,
-                    "view_strides": stride_tuple,
-                    "storage_offset": storage_offset_value,
-                },
+                params=params,
             )
             return self._finalize_node(
                 node, op_node, dtype_info, [self._shapes[input_arg]]
@@ -851,6 +923,100 @@ class TensorOpBuilder:
             return self._finalize_node(
                 node, op_node, dtype_info, [self._shapes[input_arg]]
             )
+        if op_spec.name == "flatten":
+            if len(node.args) > 3:
+                raise CodegenBackendError(
+                    "codegen flatten expects input, start_dim, and end_dim arguments"
+                )
+            start_dim = 0
+            end_dim = -1
+            if len(node.args) > 1:
+                start_dim = node.args[1]
+            if len(node.args) > 2:
+                end_dim = node.args[2]
+            if node.kwargs:
+                if "start_dim" in node.kwargs:
+                    if len(node.args) > 1:
+                        raise error_kwarg_specified_once(
+                            op_spec.name, "start_dim"
+                        )
+                    start_dim = node.kwargs["start_dim"]
+                if "end_dim" in node.kwargs:
+                    if len(node.args) > 2:
+                        raise error_kwarg_specified_once(
+                            op_spec.name, "end_dim"
+                        )
+                    end_dim = node.kwargs["end_dim"]
+                extra = set(node.kwargs) - {"start_dim", "end_dim"}
+                if extra:
+                    raise CodegenBackendError(
+                        f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
+                    )
+            if isinstance(start_dim, torch.fx.Node) or isinstance(
+                end_dim, torch.fx.Node
+            ):
+                raise CodegenBackendError(
+                    "codegen flatten expects start_dim/end_dim to be constants"
+                )
+            start_dim_value = parse_constant_int(
+                op_spec.name, "start_dim", start_dim
+            )
+            end_dim_value = parse_constant_int(
+                op_spec.name, "end_dim", end_dim
+            )
+            input_shape = self._shapes[input_arg]
+            rank = len(input_shape)
+            if rank == 0:
+                raise CodegenBackendError(
+                    "codegen flatten expects input to have at least one dimension"
+                )
+            if start_dim_value < 0:
+                start_dim_value += rank
+            if end_dim_value < 0:
+                end_dim_value += rank
+            if start_dim_value < 0 or start_dim_value >= rank:
+                raise CodegenBackendError(
+                    "codegen flatten start_dim is out of range"
+                )
+            if end_dim_value < 0 or end_dim_value >= rank:
+                raise CodegenBackendError(
+                    "codegen flatten end_dim is out of range"
+                )
+            if start_dim_value > end_dim_value:
+                raise CodegenBackendError(
+                    "codegen flatten expects start_dim <= end_dim"
+                )
+            from codegen_backend.emitters.base import _is_contiguous
+
+            if not _is_contiguous(
+                input_shape, self._strides[input_arg]
+            ):
+                raise CodegenBackendError(
+                    "codegen flatten expects contiguous input"
+                )
+            flattened_dim = math.prod(
+                input_shape[start_dim_value : end_dim_value + 1]
+            )
+            output_shape = (
+                list(input_shape[:start_dim_value])
+                + [flattened_dim]
+                + list(input_shape[end_dim_value + 1 :])
+            )
+            output_shape_tuple = tuple(output_shape)
+            op_node = _OpNode(
+                node=node,
+                spec=op_spec,
+                inputs=[input_arg],
+                output_shape=(),
+                params={
+                    "size": output_shape_tuple,
+                    "view_strides": _contiguous_strides(output_shape_tuple),
+                    "storage_offset": 0,
+                },
+            )
+            return self._finalize_node(
+                node, op_node, dtype_info, [input_shape]
+            )
         if len(node.args) < 2:
             raise CodegenBackendError(
                 f"codegen {op_spec.name} expects input and size arguments"
@@ -862,7 +1028,9 @@ class TensorOpBuilder:
                 raise CodegenBackendError(
                     f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
                 )
-        size = normalize_as_strided_sequence(op_spec.name, size_arg, "size")
+        size = normalize_as_strided_sequence(
+            op_spec.name, size_arg, "size", scalar_values=self._scalar_values
+        )
         input_shape = self._shapes[input_arg]
         output_numel = math.prod(size) if size else 1
         input_numel = math.prod(input_shape) if input_shape else 1

@@ -5,6 +5,7 @@ from typing import List, Sequence, Tuple
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.dtypes import _CodegenDType
 from codegen_backend.emitters.base import KindEmitterBase, _format_array_suffix
+from codegen_backend.indexing import _contiguous_strides, _emit_strided_access
 from codegen_backend.kinds import KernelEmitRequest
 from codegen_backend.specs import _OpSpec
 from codegen_backend.templates import get_template_env
@@ -20,9 +21,12 @@ def _write_conv2d_kernel(
     stride: Tuple[int, int],
     padding: Tuple[int, int],
     dilation: Tuple[int, int],
+    output_padding: Tuple[int, int],
     groups: int,
     dtype: _CodegenDType,
     has_bias: bool,
+    input_strides: Sequence[int],
+    weight_strides: Sequence[int],
 ) -> List[str]:
     template_name = (
         "conv2d_transpose_kernel.c.j2" if transposed else "conv2d_kernel.c.j2"
@@ -49,6 +53,49 @@ def _write_conv2d_kernel(
     stride_h, stride_w = stride
     pad_h, pad_w = padding
     dil_h, dil_w = dilation
+    out_pad_h, out_pad_w = output_padding
+    input_expected = _contiguous_strides(input_shape)
+    weight_expected = _contiguous_strides(weight_shape)
+    input_is_contig = all(
+        size == 1 or stride == expected_stride
+        for size, stride, expected_stride in zip(
+            input_shape, input_strides, input_expected
+        )
+    )
+    weight_is_contig = all(
+        size == 1 or stride == expected_stride
+        for size, stride, expected_stride in zip(
+            weight_shape, weight_strides, weight_expected
+        )
+    )
+    if transposed:
+        if has_batch:
+            input_indices = ["n", "ic", "ih", "iw"]
+        else:
+            input_indices = ["ic", "ih", "iw"]
+        weight_indices = ["ic", "oc", "kh", "kw"]
+    else:
+        if has_batch:
+            input_indices = ["n", "in_c", "in_h_idx", "in_w_idx"]
+        else:
+            input_indices = ["in_c", "in_h_idx", "in_w_idx"]
+        weight_indices = ["oc", "ic", "kh", "kw"]
+    input_access = _emit_strided_access(
+        "input",
+        input_indices,
+        input_strides,
+        contig=input_is_contig,
+        sizes=input_shape,
+        c_type=dtype.c_type,
+    )
+    weight_access = _emit_strided_access(
+        "weight",
+        weight_indices,
+        weight_strides,
+        contig=weight_is_contig,
+        sizes=weight_shape,
+        c_type=dtype.c_type,
+    )
     input_suffix = _format_array_suffix(input_shape)
     weight_suffix = _format_array_suffix(weight_shape)
     output_suffix = _format_array_suffix(output_shape)
@@ -77,10 +124,14 @@ def _write_conv2d_kernel(
         pad_w=pad_w,
         dil_h=dil_h,
         dil_w=dil_w,
+        out_pad_h=out_pad_h,
+        out_pad_w=out_pad_w,
         groups=groups,
         c_type=dtype.c_type,
         has_bias=has_bias,
         has_batch=has_batch,
+        input_access=input_access,
+        weight_access=weight_access,
     )
     return rendered.strip().splitlines()
 
@@ -101,7 +152,10 @@ class Conv2dEmitter(KindEmitterBase):
             req.params.get("stride", (1, 1)),
             req.params.get("padding", (0, 0)),
             req.params.get("dilation", (1, 1)),
+            req.params.get("output_padding", (0, 0)),
             int(req.params.get("groups", 1)),
             dtype,
             bool(req.params.get("has_bias", False)),
+            req.input_strides[0],
+            req.input_strides[1],
         )

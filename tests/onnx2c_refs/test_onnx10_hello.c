@@ -67,13 +67,13 @@ static const float weight_MatMul_dense_4_bias[1] = {
 };
 
 void node1_linear_f32(const float input[1][1], const float weight[16][1], const float bias[16], float out[1][16]) {
-    for (int64_t i = 0; i < 1; ++i) {
+    for (int64_t i0 = 0; i0 < 1; ++i0) {
         for (int64_t j = 0; j < 16; ++j) {
             float acc = 0.0f;
             for (int64_t t = 0; t < 1; ++t) {
-                acc += input[i][t] * weight[j][t];
+                acc += input[i0][t] * weight[j][t];
             }
-            out[i][j] = acc + bias[j];
+            out[i0][j] = acc + bias[j];
         }
     }
 }
@@ -87,13 +87,13 @@ void node2_relu_f32(const float a[1][16], float out[1][16]) {
 }
 
 void node3_linear_f32(const float input[1][16], const float weight[16][16], const float bias[16], float out[1][16]) {
-    for (int64_t i = 0; i < 1; ++i) {
+    for (int64_t i0 = 0; i0 < 1; ++i0) {
         for (int64_t j = 0; j < 16; ++j) {
             float acc = 0.0f;
             for (int64_t t = 0; t < 16; ++t) {
-                acc += input[i][t] * ((float*)weight)[j * 1 + t * 16];
+                acc += input[i0][t] * ((float*)weight)[j * 1 + t * 16];
             }
-            out[i][j] = acc + bias[j];
+            out[i0][j] = acc + bias[j];
         }
     }
 }
@@ -107,13 +107,13 @@ void node4_relu_f32(const float a[1][16], float out[1][16]) {
 }
 
 void node5_linear_f32(const float input[1][16], const float weight[1][16], const float bias[1], float out[1][1]) {
-    for (int64_t i = 0; i < 1; ++i) {
+    for (int64_t i0 = 0; i0 < 1; ++i0) {
         for (int64_t j = 0; j < 1; ++j) {
             float acc = 0.0f;
             for (int64_t t = 0; t < 16; ++t) {
-                acc += input[i][t] * weight[j][t];
+                acc += input[i0][t] * weight[j][t];
             }
-            out[i][j] = acc + bias[j];
+            out[i0][j] = acc + bias[j];
         }
     }
 }

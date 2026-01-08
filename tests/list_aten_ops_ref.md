@@ -858,7 +858,7 @@
 | `find` | — |
 | `fix` | — |
 | `fix_` | — |
-| `flatten` | — |
+| `flatten` | ✅ |
 | `flatten_dense_tensors` | — |
 | `flip` | ✅ |
 | `fliplr` | — |
@@ -974,7 +974,7 @@
 | `index_put_` | — |
 | `index_reduce` | — |
 | `index_reduce_` | — |
-| `index_select` | — |
+| `index_select` | ✅ |
 | `index_select_backward` | — |
 | `indices` | — |
 | `indices_copy` | — |
@@ -1719,5 +1719,5 @@
 
 ## Summary
 - total aten ops: 1714
-- supported by codegen: 267 / 1714 (15.6 %)
-- unsupported by codegen: 1447
+- supported by codegen: 269 / 1714 (15.7 %)
+- unsupported by codegen: 1445

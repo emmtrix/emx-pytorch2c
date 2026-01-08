@@ -1,6 +1,10 @@
 {{ signature }}
     int64_t in_per_group = {{ in_channels }} / {{ groups }};
     int64_t out_per_group = {{ out_channels }} / {{ groups }};
+    int64_t out_pad_h = {{ out_pad_h }};
+    int64_t out_pad_w = {{ out_pad_w }};
+    (void)out_pad_h;
+    (void)out_pad_w;
     {% if has_batch %}
     for (int64_t n = 0; n < {{ batch }}; ++n) {
         for (int64_t oc = 0; oc < {{ out_channels }}; ++oc) {
@@ -22,8 +26,8 @@
                                 if (in_w_idx < 0 || in_w_idx >= {{ in_w }}) {
                                     continue;
                                 }
-                                acc += input[n][in_c][in_h_idx][in_w_idx] *
-                                    weight[oc][ic][kh][kw];
+                                acc += {{ input_access }} *
+                                    {{ weight_access }};
                             }
                         }
                     }
@@ -55,8 +59,8 @@
                             if (in_w_idx < 0 || in_w_idx >= {{ in_w }}) {
                                 continue;
                             }
-                            acc += input[in_c][in_h_idx][in_w_idx] *
-                                weight[oc][ic][kh][kw];
+                            acc += {{ input_access }} *
+                                {{ weight_access }};
                         }
                     }
                 }

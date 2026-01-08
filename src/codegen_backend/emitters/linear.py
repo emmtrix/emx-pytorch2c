@@ -35,7 +35,7 @@ def _write_linear_kernel(
     has_bias = bias_shape is not None and bias_strides is not None
     acc_type = dtype.c_type
     acc_init = "0" if dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES else "0.0f"
-    m, k = input_shape
+    *batch_shape, k = input_shape
     n, weight_k = weight_shape
     if weight_k != k:
         raise CodegenBackendError(
@@ -52,7 +52,8 @@ def _write_linear_kernel(
         bias_suffix = _format_array_suffix(bias_shape)
         signature_parts.append(f"const {dtype.c_type} bias{bias_suffix}")
     signature_parts.append(f"{dtype.c_type} out{out_suffix}")
-    output_indices = ("i", "j")
+    batch_indices = tuple(f"i{dim}" for dim in range(len(batch_shape)))
+    output_indices = (*batch_indices, "j")
     bias_access = "0"
     if has_bias:
         bias_is_contiguous = _is_contiguous(bias_shape, bias_strides)
@@ -71,14 +72,14 @@ def _write_linear_kernel(
             f"void node{node_index}_{op_name}_{dtype.suffix}("
             f"{', '.join(signature_parts)}) {{"
         ),
-        m=m,
+        batch_shape=batch_shape,
         n=n,
         k=k,
         acc_type=acc_type,
         acc_init=acc_init,
         input_access=_emit_strided_access(
             "input",
-            ("i", "t"),
+            (*batch_indices, "t"),
             input_strides,
             input_is_contiguous,
             sizes=input_shape,
@@ -94,7 +95,7 @@ def _write_linear_kernel(
         ),
         out_access=_emit_strided_access(
             "out",
-            ("i", "j"),
+            output_indices,
             output_strides,
             output_is_contiguous,
             sizes=output_shape,

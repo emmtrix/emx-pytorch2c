@@ -5,6 +5,10 @@
 void node1_conv2d_f32(const float input[1][2][5][5], const float weight[3][2][3][3], const float bias[3], float out[1][3][3][3]) {
     int64_t in_per_group = 2 / 1;
     int64_t out_per_group = 3 / 1;
+    int64_t out_pad_h = 0;
+    int64_t out_pad_w = 0;
+    (void)out_pad_h;
+    (void)out_pad_w;
     for (int64_t n = 0; n < 1; ++n) {
         for (int64_t oc = 0; oc < 3; ++oc) {
             int64_t group = oc / out_per_group;

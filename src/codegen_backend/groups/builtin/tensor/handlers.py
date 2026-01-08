@@ -24,6 +24,7 @@ from codegen_backend.emitters.diagonal import DiagonalEmitter
 from codegen_backend.emitters.empty_strided import EmptyStridedEmitter
 from codegen_backend.emitters.flip import FlipEmitter
 from codegen_backend.emitters.gather import GatherEmitter
+from codegen_backend.emitters.index_select import IndexSelectEmitter
 from codegen_backend.emitters.linear import LinearEmitter
 from codegen_backend.emitters.matmul import MatmulEmitter
 from codegen_backend.emitters.pad import PadEmitter
@@ -200,6 +201,13 @@ class ViewHandler(OpKindHandler):
                     "codegen reshape expects shape to be resolved"
                 )
             return tuple(size)
+        if op_node.spec.name == "flatten":
+            size = op_node.p("size", None)
+            if size is None:
+                raise CodegenBackendError(
+                    "codegen flatten expects shape to be resolved"
+                )
+            return tuple(size)
         raise CodegenBackendError(f"Unsupported view op: {op_node.spec.name}")
 
 
@@ -297,6 +305,29 @@ class GatherHandler(OpKindHandler):
         input_shapes: Sequence[Tuple[int, ...]],
     ) -> Tuple[int, ...]:
         return input_shapes[1]
+
+
+class IndexSelectHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(
+            node_index,
+            op_node,
+            graph,
+            params={"dim": int(op_node.p("dim"))},
+        )
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        input_shape, index_shape = input_shapes
+        dim = int(op_node.p("dim"))
+        output_shape = list(input_shape)
+        output_shape[dim] = index_shape[0]
+        return tuple(output_shape)
 
 
 class ConcatHandler(OpKindHandler):
@@ -533,13 +564,15 @@ class LinearHandler(OpKindHandler):
         input_shapes: Sequence[Tuple[int, ...]],
     ) -> Tuple[int, ...]:
         input_shape, weight_shape = input_shapes[:2]
-        if len(input_shape) != 2 or len(weight_shape) != 2:
-            raise CodegenBackendError("codegen linear expects 2D input and weight")
-        if input_shape[1] != weight_shape[1]:
+        if len(input_shape) < 2 or len(weight_shape) != 2:
+            raise CodegenBackendError(
+                "codegen linear expects input rank >= 2 and 2D weight"
+            )
+        if input_shape[-1] != weight_shape[1]:
             raise CodegenBackendError(
                 "codegen linear requires input and weight inner dims to match"
             )
-        output_shape = (input_shape[0], weight_shape[0])
+        output_shape = (*input_shape[:-1], weight_shape[0])
         if op_node.p("has_bias", False):
             bias_shape = input_shapes[2]
             if (
@@ -1194,6 +1227,11 @@ def build_handlers(context: TensorContext) -> Dict[OpKind, OpKindHandler]:
             context,
             GatherEmitter(),
             builder=_build_with_dtype(context, "build_gather"),
+        ),
+        OpKind.INDEX_SELECT: IndexSelectHandler(
+            context,
+            IndexSelectEmitter(),
+            builder=_build_with_dtype(context, "build_index_select"),
         ),
         OpKind.COL2IM: Col2imHandler(
             context,

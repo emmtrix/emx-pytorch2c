@@ -52,6 +52,42 @@ def parse_gather_args(
     return input_arg, dim, index, sparse_grad
 
 
+def parse_index_select_args(
+    node: torch.fx.Node,
+) -> Tuple[object, object, object]:
+    if len(node.args) > 3:
+        raise CodegenBackendError(
+            "codegen index_select expects at most three inputs"
+        )
+    if not node.args:
+        raise CodegenBackendError(
+            "codegen index_select expects input, dim, and index"
+        )
+    input_arg = node.args[0]
+    dim = node.args[1] if len(node.args) > 1 else None
+    index = node.args[2] if len(node.args) > 2 else None
+    if node.kwargs:
+        if "dim" in node.kwargs:
+            if dim is not None:
+                raise error_kwarg_specified_once("index_select", "dim")
+            dim = node.kwargs["dim"]
+        if "index" in node.kwargs:
+            if index is not None:
+                raise error_kwarg_specified_once("index_select", "index")
+            index = node.kwargs["index"]
+        extra = set(node.kwargs) - {"dim", "index"}
+        if extra:
+            raise CodegenBackendError(
+                "codegen index_select got unexpected kwargs: "
+                f"{sorted(extra)}"
+            )
+    if dim is None or index is None:
+        raise CodegenBackendError(
+            "codegen index_select expects dim and index arguments"
+        )
+    return input_arg, dim, index
+
+
 def parse_addmm_like_scalar(
     op_name: str, name: str, value: object | None
 ) -> float:
