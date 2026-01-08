@@ -38,7 +38,7 @@ def _write_embedding_bag_kernel(
     padding_idx: int,
     include_last_offset: bool,
 ) -> List[str]:
-    embedding_template = get_template_env().get_template("embedding_kernel.c.j2")
+    embedding_template = get_template_env().get_template("embedding_bag_kernel.c.j2")
     weight_suffix = _format_array_suffix(weight_shape)
     indices_suffix = _format_array_suffix(indices_shape)
     offsets_suffix = _format_array_suffix(offsets_shape)

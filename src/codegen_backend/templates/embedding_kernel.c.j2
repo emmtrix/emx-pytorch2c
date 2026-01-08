@@ -1,10 +1,18 @@
 {{ signature }}
-{% for line in loop_lines %}
-{{ line }}
+{% for dim in range(output_access.sizes | length) %}
+{{ "    " * (dim + 1) }}for (ssize_t i{{ dim }} = 0; i{{ dim }} < {{ output_access.sizes[dim] }}; ++i{{ dim }}) {
 {% endfor %}
-{% for line in body_lines %}
-{{ line }}
+{{ "    " * (output_access.sizes | length + 1) }}ssize_t idx = (ssize_t)({{ index_access }});
+{% if padding_idx != -1 %}
+{{ "    " * (output_access.sizes | length + 1) }}if (idx == {{ padding_idx }}) {
+{{ "    " * (output_access.sizes | length + 2) }}{{ output_access.expr }} = {{ zero_literal }};
+{{ "    " * (output_access.sizes | length + 1) }}} else {
+{{ "    " * (output_access.sizes | length + 2) }}{{ output_access.expr }} = {{ weight_access }};
+{{ "    " * (output_access.sizes | length + 1) }}}
+{% else %}
+{{ "    " * (output_access.sizes | length + 1) }}{{ output_access.expr }} = {{ weight_access }};
+{% endif %}
+{% for dim in range(output_access.sizes | length - 1, -1, -1) %}
+{{ "    " * (dim + 1) }}}
 {% endfor %}
-{% for line in footer_lines %}
-{{ line }}
-{% endfor %}
+}

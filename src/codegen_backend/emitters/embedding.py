@@ -11,8 +11,6 @@ from codegen_backend.emitters.base import (
     KindEmitterBase,
     _format_array_suffix,
     _is_contiguous,
-    emit_footer,
-    emit_loops,
 )
 from codegen_backend.indexing import _emit_strided_access
 from codegen_backend.kinds import KernelEmitRequest
@@ -44,11 +42,10 @@ def _write_embedding_kernel(
         f"const {index_c_type} indices{indices_suffix}, "
         f"{dtype.c_type} out{out_suffix}) {{"
     )
-    loop_lines, indent = emit_loops(output_shape)
     indices_rank = len(indices_shape)
     output_rank = len(output_shape)
     output_indices = [f"i{dim}" for dim in range(output_rank)]
-    output_access = _emit_strided_access(
+    output_access_expr = _emit_strided_access(
         "out",
         output_indices,
         output_strides,
@@ -56,6 +53,10 @@ def _write_embedding_kernel(
         sizes=output_shape,
         c_type=dtype.c_type,
     )
+    output_access = {
+        "expr": output_access_expr,
+        "sizes": list(output_shape),
+    }
     index_indices = [f"i{dim}" for dim in range(indices_rank)]
     index_access = _emit_strided_access(
         "indices",
@@ -73,26 +74,14 @@ def _write_embedding_kernel(
         sizes=weight_shape,
         c_type=dtype.c_type,
     )
-    body_lines = [f"{indent}ssize_t idx = (ssize_t)({index_access});"]
-    if padding_idx != -1:
-        zero_literal = _format_scalar_literal(0.0, dtype)
-        body_lines.extend(
-            [
-                f"{indent}if (idx == {padding_idx}) {{",
-                f"{indent}    {output_access} = {zero_literal};",
-                f"{indent}}} else {{",
-                f"{indent}    {output_access} = {weight_access};",
-                f"{indent}}}",
-            ]
-        )
-    else:
-        body_lines.append(f"{indent}{output_access} = {weight_access};")
-    footer_lines = emit_footer(output_shape, indent)
+    zero_literal = _format_scalar_literal(0.0, dtype) if padding_idx != -1 else None
     rendered = embedding_template.render(
         signature=signature,
-        loop_lines=loop_lines,
-        body_lines=body_lines,
-        footer_lines=footer_lines,
+        output_access=output_access,
+        index_access=index_access,
+        weight_access=weight_access,
+        padding_idx=padding_idx,
+        zero_literal=zero_literal,
     )
     return rendered.splitlines()
 
