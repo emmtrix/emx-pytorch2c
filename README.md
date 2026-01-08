@@ -85,15 +85,25 @@ result = export_generic_c(f, example_inputs, temp_allocation_threshold=2048)
 print(result.c_source)
 ```
 
-You can also control temporary allocation for `torch.compile` by constructing a
-backend with the same threshold:
+#### Example: Generated C (from `tests/codegen_refs/add_single.c`)
 
-```python
-from codegen_backend import CodegenBackend
+Below is a minimal example of the emitted C for a simple add. It highlights two
+key characteristics of the generated code: explicit fixed-size arrays in the
+function signatures and straightforward loop nests over each tensor dimension.
 
-backend = CodegenBackend(temp_allocation_threshold=2048)
-compiled = torch.compile(f, backend=backend.codegen_generic_backend)
+```c
+void node1_add_f32(const float a[2][3], const float b[2][3], float out[2][3]) {
+    for (int64_t i0 = 0; i0 < 2; ++i0) {
+        for (int64_t i1 = 0; i1 < 3; ++i1) {
+            out[i0][i1] = ref_scalar_f32_add(a[i0][i1], b[i0][i1]);
+        }
+    }
+}
 ```
+
+In other words, shapes are materialized as explicit array extents, and compute
+is expressed as deterministic, nested `for` loops rather than vectorized or
+opaque library calls.
 
 ### 3) ONNX to C via CLI
 
