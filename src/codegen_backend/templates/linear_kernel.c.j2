@@ -1,5 +1,7 @@
 {{ signature }}
-    for (int64_t i = 0; i < {{ m }}; ++i) {
+{% for size in batch_shape %}
+    for (int64_t i{{ loop.index0 }} = 0; i{{ loop.index0 }} < {{ size }}; ++i{{ loop.index0 }}) {
+{% endfor %}
         for (int64_t j = 0; j < {{ n }}; ++j) {
             {{ acc_type }} acc = {{ acc_init }};
             for (int64_t t = 0; t < {{ k }}; ++t) {
@@ -7,5 +9,7 @@
             }
             {{ out_access }} = acc + {{ bias_access }};
         }
+{% for size in batch_shape | reverse %}
     }
+{% endfor %}
 }

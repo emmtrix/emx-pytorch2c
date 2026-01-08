@@ -6,6 +6,7 @@ from typing import Dict, Mapping, Tuple
 import torch
 import torch.fx
 
+from codegen_backend.analysis_helpers import resolve_scalar_arg
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.groups.analysis import GroupAnalysisResult, RegistryGroupAnalyzer
 from codegen_backend.indexing import _contiguous_strides
@@ -53,6 +54,7 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
                 shapes=shapes,
                 strides=strides,
                 dtypes=dtypes,
+                scalar_values=scalar_values,
                 alias_map=alias_map,
                 empty_outputs=empty_outputs,
             )
@@ -76,6 +78,7 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
         shapes: Dict[torch.fx.Node, Tuple[int, ...]],
         strides: Dict[torch.fx.Node, Tuple[int, ...]],
         dtypes: Dict[torch.fx.Node, torch.dtype],
+        scalar_values: Dict[torch.fx.Node, object],
         alias_map: Dict[torch.fx.Node, torch.fx.Node],
         empty_outputs: set[torch.fx.Node],
     ) -> None:
@@ -121,7 +124,26 @@ class TensorAnalyzer(RegistryGroupAnalyzer):
             strides[node] = strides[source]
             dtypes[node] = dtypes[source]
         else:
-            shapes[node] = (0,)
+            output_shape = (0,)
+            if source.target in {
+                torch.ops.aten._native_batch_norm_legit,
+                torch.ops.aten._native_batch_norm_legit.default,
+            }:
+                if len(source.args) < 6:
+                    raise CodegenBackendError(
+                        "codegen backend expects batch_norm to include training flag"
+                    )
+                training_arg = source.args[5]
+                training_value = resolve_scalar_arg(
+                    "batch_norm", training_arg, scalar_values
+                )
+                if bool(training_value):
+                    if len(shapes[source]) < 2:
+                        raise CodegenBackendError(
+                            "codegen backend expects batch_norm input rank >= 2"
+                        )
+                    output_shape = (shapes[source][1],)
+            shapes[node] = output_shape
             strides[node] = _contiguous_strides(shapes[node])
             dtypes[node] = dtypes[source]
             empty_outputs.add(node)

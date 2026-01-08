@@ -103,8 +103,34 @@ def resolve_scalar_arg(
 
 
 def normalize_as_strided_sequence(
-    op_name: str, value: object, arg_name: str
+    op_name: str,
+    value: object,
+    arg_name: str,
+    *,
+    scalar_values: Dict[torch.fx.Node, object] | None = None,
 ) -> Tuple[int, ...]:
+    if isinstance(value, torch.fx.Node):
+        if scalar_values is not None and value in scalar_values:
+            value = scalar_values[value]
+        else:
+            for key in ("val", "example_value"):
+                if key in value.meta:
+                    value = value.meta[key]
+                    break
+            else:
+                raise CodegenBackendError(
+                    f"codegen {op_name} expects {arg_name} to be a sequence; "
+                    "missing node.meta for keys: val, example_value"
+                )
+    if isinstance(value, torch.Tensor):
+        if value.numel() == 1:
+            value = (value.item(),)
+        else:
+            if value.dim() != 1:
+                raise CodegenBackendError(
+                    f"codegen {op_name} expects {arg_name} to be a 1D tensor"
+                )
+            value = value.tolist()
     if isinstance(value, torch.Size):
         seq = tuple(value)
     elif isinstance(value, ABCSequence) and not isinstance(value, (str, bytes)):
@@ -113,12 +139,13 @@ def normalize_as_strided_sequence(
         raise CodegenBackendError(
             f"codegen {op_name} expects {arg_name} to be a sequence"
         )
-    try:
-        return tuple(int(operator.index(item)) for item in seq)
-    except TypeError as exc:
-        raise CodegenBackendError(
-            f"codegen {op_name} expects {arg_name} entries to be int-like"
-        ) from exc
+    normalized: list[int] = []
+    for item in seq:
+        if isinstance(item, torch.fx.Node):
+            if scalar_values is not None and item in scalar_values:
+                item = scalar_values[item]
+        normalized.append(parse_constant_int(op_name, arg_name, item))
+    return tuple(normalized)
 
 
 def normalize_flip_dims(op_name: str, dims: object, rank: int) -> Tuple[int, ...]:

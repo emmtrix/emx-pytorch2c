@@ -97,7 +97,7 @@
 | `hardtanh` | ✅ |
 | `index.Tensor` | — |
 | `index_put` | — |
-| `index_select` | — |
+| `index_select` | ✅ |
 | `isinf` | ✅ |
 | `isnan` | ✅ |
 | `le.Scalar` | ✅ |
@@ -197,5 +197,5 @@
 
 ## Summary
 - total core aten ops: 192
-- supported by codegen: 139 / 192 (72.4%)
-- unsupported by codegen: 53
+- supported by codegen: 140 / 192 (72.9%)
+- unsupported by codegen: 52

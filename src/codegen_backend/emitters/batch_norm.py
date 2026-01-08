@@ -18,6 +18,8 @@ def _write_batch_norm_kernel(
     output_shape: Sequence[int],
     dtype: _CodegenDType,
     eps: float,
+    momentum: float,
+    training: bool,
     has_weight: bool,
     has_bias: bool,
 ) -> List[str]:
@@ -34,8 +36,8 @@ def _write_batch_norm_kernel(
     signature = (
         f"void node{node_index}_{op_spec.name}_{dtype.suffix}("
         f"const {dtype.c_type} input{input_suffix}, "
-        f"const {dtype.c_type} running_mean[{channels}], "
-        f"const {dtype.c_type} running_var[{channels}], "
+        f"{dtype.c_type} running_mean[{channels}], "
+        f"{dtype.c_type} running_var[{channels}], "
         f"{weight_arg}"
         f"{bias_arg}"
         f"{dtype.c_type} out{output_suffix}) {{"
@@ -47,6 +49,8 @@ def _write_batch_norm_kernel(
         inner_size=inner_size,
         c_type=dtype.c_type,
         eps=_format_scalar_literal(eps, dtype),
+        momentum=_format_scalar_literal(momentum, dtype),
+        training=training,
         has_weight=has_weight,
         has_bias=has_bias,
         one_literal=_format_scalar_literal(1.0, dtype),
@@ -68,6 +72,8 @@ class BatchNormEmitter(KindEmitterBase):
             req.output_shape,
             dtype,
             float(req.params.get("eps", 1e-5)),
+            float(req.params.get("momentum", 0.1)),
+            bool(req.params.get("training", False)),
             bool(req.params.get("has_weight", False)),
             bool(req.params.get("has_bias", False)),
         )

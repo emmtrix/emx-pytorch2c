@@ -12,13 +12,13 @@ static const float weight_MatMul_my_weight[2][2] = {
 };
 
 void node1_linear_f32(const float input[1][2], const float weight[2][2], float out[1][2]) {
-    for (int64_t i = 0; i < 1; ++i) {
+    for (int64_t i0 = 0; i0 < 1; ++i0) {
         for (int64_t j = 0; j < 2; ++j) {
             float acc = 0.0f;
             for (int64_t t = 0; t < 2; ++t) {
-                acc += input[i][t] * ((float*)weight)[j * 1 + t * 2];
+                acc += input[i0][t] * ((float*)weight)[j * 1 + t * 2];
             }
-            out[i][j] = acc + 0;
+            out[i0][j] = acc + 0;
         }
     }
 }
