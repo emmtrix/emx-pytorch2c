@@ -11,9 +11,10 @@ BACKEND = CodegenBackend()
 
 
 def _assert_codegen_source_matches(
-    reference_name: str, source_fn, fn, example_inputs
+    reference_name: str, source_fn, fn, example_inputs, reference_dir: Path | None = None
 ) -> None:
-    reference_path = REFERENCE_DIR / reference_name
+    reference_root = reference_dir or REFERENCE_DIR
+    reference_path = reference_root / reference_name
     gm = torch.fx.symbolic_trace(fn)
     source = source_fn(gm, example_inputs).lstrip()
     if os.getenv("UPDATE_REFS"):

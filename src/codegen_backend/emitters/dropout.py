@@ -27,9 +27,12 @@ class DropoutEmitter(KindEmitterBase):
             req.input_shapes,
             req.input_dtypes,
             dtype,
+            input_dim_names=req.input_dim_names,
+            output_dim_names=req.output_dim_names,
+            dim_order=req.dim_order,
         )
         output_dims = [
-            {"dim": dim, "size": size}
+            {"dim": dim, "size": req.output_dim_names.get(dim, size)}
             for dim, size in enumerate(req.output_shape)
         ]
         input_access = emit_input_access(

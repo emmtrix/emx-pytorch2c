@@ -8,7 +8,7 @@ import torch.fx
 
 from codegen_backend.backend_helpers import _kernel_inputs, _resolve_alias
 from codegen_backend.c_types import _dtype_to_c_type, _input_c_type
-from codegen_backend.emitters.base import _format_array_suffix
+from codegen_backend.emitters.base import _format_array_suffix, _format_dim_args
 from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.graph import _GenericGraph
@@ -97,33 +97,35 @@ class Emitter:
             handler.postprocess(op_node, graph)
             kernel_lines = handler.emit(index, op_node, graph)
             kernels.append(_format_c_indentation("\n".join(kernel_lines)))
-        input_args = ", ".join(
-            [
-                (
-                    f"const {_input_c_type(graph.dtypes[node], graph.dtype)} "
-                    f"input_{idx}{_format_array_suffix(graph.shapes[node])}"
-                )
-                for idx, node in enumerate(placeholders)
-            ]
-        )
-        input_args = f"{input_args}, " if input_args else ""
+        signature_parts: List[str] = []
+        dim_args = _format_dim_args(graph.variable_dim_order)
+        if dim_args:
+            signature_parts.append(dim_args)
+        input_args = [
+            (
+                f"const {_input_c_type(graph.dtypes[node], graph.dtype)} "
+                f"input_{idx}{_format_array_suffix(graph.shapes[node], graph.variable_dim_names.get(node))}"
+            )
+            for idx, node in enumerate(placeholders)
+        ]
+        signature_parts.extend(input_args)
         output_nodes = graph.output_nodes
         if len(output_nodes) == 1:
             output_names = ["out"]
         else:
             output_names = [f"out_{idx}" for idx in range(len(output_nodes))]
-        output_args = ", ".join(
-            [
-                (
-                    f"{_dtype_to_c_type(graph.dtypes[node], graph.dtype)} "
-                    f"{name}{_format_array_suffix(graph.shapes[node])}"
-                )
-                for name, node in zip(output_names, output_nodes)
-            ]
-        )
+        output_args = [
+            (
+                f"{_dtype_to_c_type(graph.dtypes[node], graph.dtype)} "
+                f"{name}{_format_array_suffix(graph.shapes[node], graph.variable_dim_names.get(node))}"
+            )
+            for name, node in zip(output_names, output_nodes)
+        ]
+        signature_parts.extend(output_args)
+        signature_args = ", ".join(signature_parts)
         signature = (
             f"void ref_codegen_main_{graph.dtype.suffix}("
-            f"{input_args}{output_args}) {{"
+            f"{signature_args}) {{"
         )
         name_map: Dict[torch.fx.Node, str] = {}
         for idx, placeholder in enumerate(placeholders):
@@ -191,7 +193,11 @@ class Emitter:
                 for arg in _kernel_inputs(op_node)
             ]
             output_name = name_map[op_node.node]
-            args = ", ".join([*input_names, output_name])
+            args_parts = []
+            if graph.variable_dim_order:
+                args_parts.append(", ".join(graph.variable_dim_order))
+            args_parts.extend([*input_names, output_name])
+            args = ", ".join(args_parts)
             call_lines.append(
                 f"node{index}_{op_node.spec.name}_{graph.dtype.suffix}({args});"
             )

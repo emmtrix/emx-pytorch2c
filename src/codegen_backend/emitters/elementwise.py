@@ -54,9 +54,12 @@ class ElementwiseEmitter(KindEmitterBase):
             req.dtype,
             params,
             signature_kind=signature_kind,
+            input_dim_names=req.input_dim_names,
+            output_dim_names=req.output_dim_names,
+            dim_order=req.dim_order,
         )
         output_dims = [
-            {"dim": dim, "size": size}
+            {"dim": dim, "size": req.output_dim_names.get(dim, size)}
             for dim, size in enumerate(req.output_shape)
         ]
         output_access = emit_output_access(

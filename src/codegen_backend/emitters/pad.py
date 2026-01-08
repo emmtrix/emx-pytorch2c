@@ -36,6 +36,9 @@ class PadEmitter(KindEmitterBase):
             [input_dtype],
             req.dtype,
             signature_kind="unary",
+            input_dim_names=req.input_dim_names,
+            output_dim_names=req.output_dim_names,
+            dim_order=req.dim_order,
         )
         output_access = emit_output_access(
             output_shape, output_strides, c_type=req.dtype.c_type
