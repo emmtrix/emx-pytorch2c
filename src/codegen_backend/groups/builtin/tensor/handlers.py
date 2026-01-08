@@ -41,20 +41,7 @@ from codegen_backend.kinds import (
     TensorContext,
 )
 from codegen_backend.specs import OpKind, _OpSpec
-from codegen_backend.groups.builtin.tensor.analysis import (
-    handle_addmm_like_node,
-    handle_batch_norm_node,
-    handle_cdist_node,
-    handle_constant_pad_node,
-    handle_cumsum_node,
-    handle_diagonal_node,
-    handle_flip_node,
-    handle_gather_node,
-    handle_linear_node,
-    handle_pdist_node,
-    handle_resize_node,
-    handle_view_node,
-)
+from codegen_backend.groups.builtin.tensor.analysis import TensorOpBuilder
 from codegen_backend.groups.builtin.tensor.parsing import (
     parse_arange_dtype,
     parse_concat_args,
@@ -854,15 +841,11 @@ class _BackendAddrHandler(AddrHandler):
     ) -> OpNodeBuildResult | None:
         if dtype_info is None:
             return None
-        op_node = handle_addmm_like_node(
-            node,
-            op_spec,
-            dtype_info,
-            shapes,
-            strides,
-            dtypes,
-            inplace_input,
-            infer_output_shape=self._ctx.analysis_service.infer_output_shape,
+        op_builder = TensorOpBuilder(
+            self._ctx.analysis_service, shapes, strides, dtypes, scalar_values
+        )
+        op_node = op_builder.build_addmm_like(
+            node, op_spec, dtype_info, inplace_input
         )
         if inplace_input is not None:
             input_shape = shapes[op_node.inputs[inplace_input]]
@@ -1172,22 +1155,22 @@ def build_handlers(context: TensorContext) -> Dict[OpKind, OpKindHandler]:
         OpKind.FLIP: FlipHandler(
             context,
             FlipEmitter(),
-            builder=_build_with_dtype(context, handle_flip_node),
+            builder=_build_with_dtype(context, "build_flip"),
         ),
         OpKind.PAD: PadHandler(
             context,
             PadEmitter(),
-            builder=_build_with_dtype(context, handle_constant_pad_node),
+            builder=_build_with_dtype(context, "build_constant_pad"),
         ),
         OpKind.VIEW: ViewHandler(
             context,
             ViewEmitter(),
-            builder=_build_with_dtype(context, handle_view_node),
+            builder=_build_with_dtype(context, "build_view"),
         ),
         OpKind.RESIZE: ResizeHandler(
             context,
             ResizeEmitter(),
-            builder=_build_with_inplace(context, handle_resize_node),
+            builder=_build_with_inplace(context, "build_resize"),
         ),
         OpKind.MATMUL: _BackendMatmulHandler(context, MatmulEmitter()),
         OpKind.ADDR: _BackendAddrHandler(context, AddrEmitter()),
@@ -1198,17 +1181,17 @@ def build_handlers(context: TensorContext) -> Dict[OpKind, OpKindHandler]:
         OpKind.DIAGONAL: DiagonalHandler(
             context,
             DiagonalEmitter(),
-            builder=_build_with_dtype(context, handle_diagonal_node),
+            builder=_build_with_dtype(context, "build_diagonal"),
         ),
         OpKind.CUMSUM: CumsumHandler(
             context,
             CumsumEmitter(),
-            builder=_build_with_dtype(context, handle_cumsum_node),
+            builder=_build_with_dtype(context, "build_cumsum"),
         ),
         OpKind.GATHER: GatherHandler(
             context,
             GatherEmitter(),
-            builder=_build_with_dtype(context, handle_gather_node),
+            builder=_build_with_dtype(context, "build_gather"),
         ),
         OpKind.COL2IM: Col2imHandler(
             context,
@@ -1218,41 +1201,41 @@ def build_handlers(context: TensorContext) -> Dict[OpKind, OpKindHandler]:
         OpKind.BATCH_NORM: BatchNormHandler(
             context,
             BatchNormEmitter(),
-            builder=_build_with_scalar(context, handle_batch_norm_node),
+            builder=_build_with_dtype(context, "build_batch_norm"),
         ),
         OpKind.PDIST: PdistHandler(
             context,
             PdistEmitter(),
-            builder=_build_with_dtype(context, handle_pdist_node),
+            builder=_build_with_dtype(context, "build_pdist"),
         ),
         OpKind.CDIST: CdistHandler(
             context,
             CdistEmitter(),
-            builder=_build_with_dtype(context, handle_cdist_node),
+            builder=_build_with_dtype(context, "build_cdist"),
         ),
         OpKind.ADDMM: AddmmHandler(
             context,
             AddmmEmitter(),
-            builder=_build_with_inplace(context, handle_addmm_like_node),
+            builder=_build_with_inplace(context, "build_addmm_like"),
         ),
         OpKind.LINEAR: LinearHandler(
             context,
             LinearEmitter(),
-            builder=_build_with_dtype(context, handle_linear_node),
+            builder=_build_with_dtype(context, "build_linear"),
         ),
         OpKind.ADDBMM: AddbmmHandler(
             context,
             AddbmmEmitter(),
-            builder=_build_with_inplace(context, handle_addmm_like_node),
+            builder=_build_with_inplace(context, "build_addmm_like"),
         ),
         OpKind.ADDMV: AddmvHandler(
             context,
             AddmvEmitter(),
-            builder=_build_with_inplace(context, handle_addmm_like_node),
+            builder=_build_with_inplace(context, "build_addmm_like"),
         ),
     }
 
-def _build_with_dtype(context, func):
+def _build_with_dtype(context, builder_method_name):
     def builder(
         node,
         op_spec,
@@ -1265,21 +1248,18 @@ def _build_with_dtype(context, func):
     ):
         if dtype_info is None:
             return None
-        op_node = func(
-            node,
-            op_spec,
-            dtype_info,
-            shapes,
-            strides,
-            dtypes,
-            infer_output_shape=context.analysis_service.infer_output_shape,
+        op_builder = TensorOpBuilder(
+            context.analysis_service, shapes, strides, dtypes, scalar_values
+        )
+        op_node = getattr(op_builder, builder_method_name)(
+            node, op_spec, dtype_info
         )
         return OpNodeBuildResult(op_node)
 
     return builder
 
 
-def _build_with_scalar(context, func):
+def _build_with_inplace(context, builder_method_name):
     def builder(
         node,
         op_spec,
@@ -1292,43 +1272,11 @@ def _build_with_scalar(context, func):
     ):
         if dtype_info is None:
             return None
-        op_node = func(
-            node,
-            op_spec,
-            dtype_info,
-            shapes,
-            strides,
-            dtypes,
-            scalar_values,
-            infer_output_shape=context.analysis_service.infer_output_shape,
+        op_builder = TensorOpBuilder(
+            context.analysis_service, shapes, strides, dtypes, scalar_values
         )
-        return OpNodeBuildResult(op_node)
-
-    return builder
-
-
-def _build_with_inplace(context, func):
-    def builder(
-        node,
-        op_spec,
-        dtype_info,
-        shapes,
-        strides,
-        dtypes,
-        scalar_values,
-        inplace_input,
-    ):
-        if dtype_info is None:
-            return None
-        op_node = func(
-            node,
-            op_spec,
-            dtype_info,
-            shapes,
-            strides,
-            dtypes,
-            inplace_input,
-            infer_output_shape=context.analysis_service.infer_output_shape,
+        op_node = getattr(op_builder, builder_method_name)(
+            node, op_spec, dtype_info, inplace_input
         )
         return OpNodeBuildResult(op_node)
 
