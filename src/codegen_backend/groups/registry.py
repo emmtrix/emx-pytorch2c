@@ -52,8 +52,28 @@ class GroupRegistry:
 
     def merged_target_registry(self) -> Dict[object, _TargetInfo]:
         merged: Dict[object, _TargetInfo] = {}
+        sources: Dict[object, tuple[str, str, _OpSpec]] = {}
         for group in self.groups:
-            merged.update(group.target_registry())
+            for target, target_info in group.target_registry().items():
+                if target in merged:
+                    existing_info = merged[target]
+                    if (
+                        existing_info != target_info
+                        or existing_info.op_spec is not target_info.op_spec
+                    ):
+                        existing_group, existing_op, _ = sources[target]
+                        raise ValueError(
+                            "Target collision for "
+                            f"{target!r}: "
+                            f"{existing_group}/{existing_op} vs "
+                            f"{group.name}/{target_info.op_spec.name}"
+                        )
+                merged[target] = target_info
+                sources[target] = (
+                    group.name,
+                    target_info.op_spec.name,
+                    target_info.op_spec,
+                )
         return merged
 
     def merged_kind_handler_registrations(
