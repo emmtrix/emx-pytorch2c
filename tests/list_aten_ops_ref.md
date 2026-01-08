@@ -588,7 +588,7 @@
 | `atleast_3d` | — |
 | `avg_pool1d` | ✅ |
 | `avg_pool2d` | ✅ |
-| `avg_pool2d_backward` | — |
+| `avg_pool2d_backward` | ✅ |
 | `avg_pool3d` | — |
 | `avg_pool3d_backward` | — |
 | `backward` | — |
@@ -1719,5 +1719,5 @@
 
 ## Summary
 - total aten ops: 1714
-- supported by codegen: 269 / 1714 (15.7 %)
-- unsupported by codegen: 1445
+- supported by codegen: 270 / 1714 (15.8 %)
+- unsupported by codegen: 1444

@@ -221,6 +221,39 @@ def parse_adaptive_avg_pool2d_backward_args(
     return grad_output, input_arg
 
 
+def parse_avg_pool2d_backward_args(
+    node: torch.fx.Node,
+) -> Tuple[torch.fx.Node, torch.fx.Node, object, object, object, object, object, object]:
+    args = list(node.args)
+    kwargs = dict(node.kwargs)
+    if len(args) != 8:
+        raise CodegenBackendError(
+            "codegen avg_pool2d_backward expects grad_output, input, kernel_size, stride, padding, ceil_mode, count_include_pad, and divisor_override"
+        )
+    if kwargs:
+        raise CodegenBackendError(
+            "codegen avg_pool2d_backward expects no keyword arguments"
+        )
+    grad_output = args[0]
+    input_arg = args[1]
+    kernel_size = args[2]
+    stride = args[3]
+    padding = args[4]
+    ceil_mode = args[5]
+    count_include_pad = args[6]
+    divisor_override = args[7]
+    return (
+        grad_output,
+        input_arg,
+        kernel_size,
+        stride,
+        padding,
+        ceil_mode,
+        count_include_pad,
+        divisor_override,
+    )
+
+
 def parse_max_pool2d_args(
     node: torch.fx.Node,
 ) -> Tuple[torch.fx.Node, object, object, object, object, object]:
@@ -400,6 +433,7 @@ __all__ = [
     "parse_adaptive_avg_pool3d_args",
     "parse_avg_pool1d_args",
     "parse_avg_pool2d_args",
+    "parse_avg_pool2d_backward_args",
     "parse_max_pool1d_args",
     "parse_max_pool2d_args",
 ]

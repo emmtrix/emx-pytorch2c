@@ -392,6 +392,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.adaptive_avg_pool1d.default,
     torch.ops.aten._adaptive_avg_pool2d.default,
     torch.ops.aten._adaptive_avg_pool2d_backward.default,
+    torch.ops.aten.avg_pool2d_backward.default,
     torch.ops.aten._adaptive_avg_pool3d.default,
     torch.ops.aten._native_batch_norm_legit.default,
     torch.ops.aten._native_batch_norm_legit_no_training.default,
@@ -678,6 +679,7 @@ CODEGEN_SPECIAL_TEST_OPS = [
     torch.ops.aten.adaptive_avg_pool1d.default,
     torch.ops.aten._adaptive_avg_pool2d.default,
     torch.ops.aten._adaptive_avg_pool2d_backward.default,
+    torch.ops.aten.avg_pool2d_backward.default,
     torch.ops.aten._adaptive_avg_pool3d.default,
     torch.ops.aten._native_batch_norm_legit_no_training.default,
     torch.ops.aten._cdist_forward.default,
@@ -748,6 +750,10 @@ CODEGEN_OP_TEST_CONFIG = {
         "allow_noncontiguous": False,
         "requires_contiguous": True,
         "sample_filter": _cdist_sample_filter,
+    },
+    torch.ops.aten.avg_pool2d_backward.default: {
+        "allowed_dtypes": (torch.float32,),
+        "requires_contiguous": True,
     },
     torch.ops.aten.gelu.default: {
         "allowed_dtypes": (torch.float32,),
@@ -1077,6 +1083,50 @@ class TestCodegenSpecialOps(TestCase):
         )
         expected = torch.ops.aten._adaptive_avg_pool2d_backward.default(
             grad_output, input_tensor
+        )
+        result = compiled(grad_output, input_tensor)
+        torch.testing.assert_close(result, expected)
+
+    def test_codegen_avg_pool2d_backward(self):
+        input_tensor = torch.randn(1, 2, 4, 4)
+        kernel_size = (2, 2)
+        stride = (2, 2)
+        padding = (1, 1)
+        ceil_mode = False
+        count_include_pad = False
+        divisor_override = None
+        output = torch.ops.aten.avg_pool2d.default(
+            input_tensor,
+            kernel_size,
+            stride,
+            padding,
+            ceil_mode,
+            count_include_pad,
+            divisor_override,
+        )
+        grad_output = torch.randn_like(output)
+        compiled = torch.compile(
+            lambda grad, inp: torch.ops.aten.avg_pool2d_backward.default(
+                grad,
+                inp,
+                kernel_size,
+                stride,
+                padding,
+                ceil_mode,
+                count_include_pad,
+                divisor_override,
+            ),
+            backend=codegen_generic_backend,
+        )
+        expected = torch.ops.aten.avg_pool2d_backward.default(
+            grad_output,
+            input_tensor,
+            kernel_size,
+            stride,
+            padding,
+            ceil_mode,
+            count_include_pad,
+            divisor_override,
         )
         result = compiled(grad_output, input_tensor)
         torch.testing.assert_close(result, expected)

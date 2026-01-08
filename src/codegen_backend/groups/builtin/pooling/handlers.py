@@ -31,6 +31,7 @@ from codegen_backend.groups.builtin.pooling.parsing import (
     parse_adaptive_avg_pool3d_args,
     parse_avg_pool1d_args,
     parse_avg_pool2d_args,
+    parse_avg_pool2d_backward_args,
     parse_max_pool1d_args,
     parse_max_pool2d_args,
 )
@@ -203,6 +204,10 @@ class Pool2dBackwardHandler(OpKindHandler):
             params={
                 "kernel_size": op_node.p("kernel_size", (1, 1)),
                 "stride": op_node.p("stride", (1, 1)),
+                "padding": op_node.p("padding", (0, 0)),
+                "ceil_mode": bool(op_node.p("ceil_mode", False)),
+                "count_include_pad": bool(op_node.p("count_include_pad", False)),
+                "divisor_override": op_node.p("divisor_override"),
             },
         )
 
@@ -825,7 +830,25 @@ class _BackendPool2dBackwardHandler(Pool2dBackwardHandler):
     ) -> OpNodeBuildResult | None:
         if dtype_info is None:
             return None
-        grad_output, input_arg = parse_adaptive_avg_pool2d_backward_args(node)
+        if op_spec.name == "_adaptive_avg_pool2d_backward":
+            grad_output, input_arg = parse_adaptive_avg_pool2d_backward_args(node)
+            kernel_size = None
+            stride = None
+            padding = (0, 0)
+            ceil_mode = False
+            count_include_pad = True
+            divisor_override = None
+        else:
+            (
+                grad_output,
+                input_arg,
+                kernel_size,
+                stride,
+                padding,
+                ceil_mode,
+                count_include_pad,
+                divisor_override,
+            ) = parse_avg_pool2d_backward_args(node)
         if not isinstance(grad_output, torch.fx.Node) or not isinstance(
             input_arg, torch.fx.Node
         ):
@@ -834,52 +857,100 @@ class _BackendPool2dBackwardHandler(Pool2dBackwardHandler):
             raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if dtype_info.torch_dtype is not torch.float32:
             raise CodegenBackendError(
-                "codegen adaptive_avg_pool2d_backward supports only torch.float32 tensors"
+                f"codegen {op_spec.name} supports only torch.float32 tensors"
             )
         if (
             dtypes[grad_output] is not torch.float32
             or dtypes[input_arg] is not torch.float32
         ):
             raise CodegenBackendError(
-                "codegen adaptive_avg_pool2d_backward supports only torch.float32 tensors"
+                f"codegen {op_spec.name} supports only torch.float32 tensors"
             )
         grad_output_shape = shapes[grad_output]
         input_shape = shapes[input_arg]
         if len(grad_output_shape) != 4 or len(input_shape) != 4:
             raise CodegenBackendError(
-                "codegen adaptive_avg_pool2d_backward requires 4D input tensors"
+                f"codegen {op_spec.name} requires 4D input tensors"
             )
         if not self._is_contiguous(grad_output_shape, strides[grad_output]):
             raise CodegenBackendError(
-                "codegen adaptive_avg_pool2d_backward requires contiguous grad_output tensors"
+                f"codegen {op_spec.name} requires contiguous grad_output tensors"
             )
         if not self._is_contiguous(input_shape, strides[input_arg]):
             raise CodegenBackendError(
-                "codegen adaptive_avg_pool2d_backward requires contiguous input tensors"
+                f"codegen {op_spec.name} requires contiguous input tensors"
             )
         if (
             grad_output_shape[0] != input_shape[0]
             or grad_output_shape[1] != input_shape[1]
         ):
             raise CodegenBackendError(
-                "codegen adaptive_avg_pool2d_backward requires matching batch and channel sizes"
+                f"codegen {op_spec.name} requires matching batch and channel sizes"
             )
-        out_h, out_w = grad_output_shape[2], grad_output_shape[3]
-        in_h, in_w = input_shape[2], input_shape[3]
-        if out_h <= 0 or out_w <= 0:
-            raise CodegenBackendError(
-                "codegen adaptive_avg_pool2d_backward expects output size to be positive"
+        if op_spec.name == "_adaptive_avg_pool2d_backward":
+            out_h, out_w = grad_output_shape[2], grad_output_shape[3]
+            in_h, in_w = input_shape[2], input_shape[3]
+            if out_h <= 0 or out_w <= 0:
+                raise CodegenBackendError(
+                    "codegen adaptive_avg_pool2d_backward expects output size to be positive"
+                )
+            if in_h % out_h != 0 or in_w % out_w != 0:
+                raise CodegenBackendError(
+                    "codegen adaptive_avg_pool2d_backward requires input sizes divisible by output_size"
+                )
+            kernel_pair = (in_h // out_h, in_w // out_w)
+            if kernel_pair[0] <= 0 or kernel_pair[1] <= 0:
+                raise CodegenBackendError(
+                    "codegen adaptive_avg_pool2d_backward expects positive kernel size"
+                )
+            stride_pair = kernel_pair
+            padding_pair = (0, 0)
+        else:
+            if isinstance(kernel_size, torch.fx.Node):
+                raise CodegenBackendError(
+                    "codegen avg_pool2d_backward expects kernel_size to be a list"
+                )
+            if isinstance(stride, torch.fx.Node):
+                raise CodegenBackendError(
+                    "codegen avg_pool2d_backward expects stride to be a list"
+                )
+            if isinstance(padding, torch.fx.Node):
+                raise CodegenBackendError(
+                    "codegen avg_pool2d_backward expects padding to be a list"
+                )
+            kernel_pair = normalize_param(
+                normalize_int_or_pair, "kernel_size", kernel_size
             )
-        if in_h % out_h != 0 or in_w % out_w != 0:
-            raise CodegenBackendError(
-                "codegen adaptive_avg_pool2d_backward requires input sizes divisible by output_size"
+            stride_pair = normalize_param(
+                normalize_int_or_pair, "stride", stride
             )
-        kernel_pair = (in_h // out_h, in_w // out_w)
-        if kernel_pair[0] <= 0 or kernel_pair[1] <= 0:
-            raise CodegenBackendError(
-                "codegen adaptive_avg_pool2d_backward expects positive kernel size"
+            padding_pair = normalize_param(
+                normalize_int_or_pair, "padding", padding
             )
-        stride_pair = kernel_pair
+            if (
+                kernel_pair[0] <= 0
+                or kernel_pair[1] <= 0
+                or stride_pair[0] <= 0
+                or stride_pair[1] <= 0
+                or padding_pair[0] < 0
+                or padding_pair[1] < 0
+            ):
+                raise CodegenBackendError(
+                    "codegen avg_pool2d_backward expects positive kernel and stride with non-negative padding"
+                )
+            if not isinstance(ceil_mode, bool):
+                raise CodegenBackendError(
+                    "codegen avg_pool2d_backward expects ceil_mode to be a bool"
+                )
+            if not isinstance(count_include_pad, bool):
+                raise CodegenBackendError(
+                    "codegen avg_pool2d_backward expects count_include_pad to be a bool"
+                )
+            if divisor_override is not None:
+                if not isinstance(divisor_override, int) or divisor_override <= 0:
+                    raise CodegenBackendError(
+                        "codegen avg_pool2d_backward expects divisor_override to be a positive int"
+                    )
         op_node = _OpNode(
             node=node,
             spec=op_spec,
@@ -889,6 +960,10 @@ class _BackendPool2dBackwardHandler(Pool2dBackwardHandler):
             params={
                 "kernel_size": kernel_pair,
                 "stride": stride_pair,
+                "padding": padding_pair,
+                "ceil_mode": bool(ceil_mode),
+                "count_include_pad": count_include_pad,
+                "divisor_override": divisor_override,
             },
         )
         output_shape = self._ctx.analysis_service.infer_output_shape(
