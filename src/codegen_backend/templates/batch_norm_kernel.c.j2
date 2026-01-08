@@ -1,24 +1,44 @@
 {{ signature }}
-  for (int64_t n = 0; n < {{ batch }}; ++n) {
-    for (int64_t c = 0; c < {{ channels }}; ++c) {
-      {{ c_type }} mean = running_mean[c];
-      {{ c_type }} var = running_var[c];
-      {{ c_type }} inv = {{ one_literal }} / sqrtf(var + {{ eps }});
-{% if has_weight %}
-      {{ c_type }} scale = weight[c];
+  for (int64_t c = 0; c < {{ channels }}; ++c) {
+{% if training %}
+    {{ c_type }} sum = {{ zero_literal }};
+    {{ c_type }} sumsq = {{ zero_literal }};
+    for (int64_t n = 0; n < {{ batch }}; ++n) {
+      for (int64_t i = 0; i < {{ inner_size }}; ++i) {
+        int64_t idx = (n * {{ channels }} + c) * {{ inner_size }} + i;
+        {{ c_type }} value = (({{ c_type }}*)input)[idx];
+        sum += value;
+        sumsq += value * value;
+      }
+    }
+    {{ c_type }} count = ({{ c_type }})({{ batch }} * {{ inner_size }});
+    {{ c_type }} mean = count > {{ zero_literal }} ? sum / count : {{ zero_literal }};
+    {{ c_type }} var = count > {{ zero_literal }} ? (sumsq / count - mean * mean) : {{ zero_literal }};
 {% else %}
-      {{ c_type }} scale = {{ one_literal }};
+    {{ c_type }} mean = running_mean[c];
+    {{ c_type }} var = running_var[c];
+{% endif %}
+    {{ c_type }} inv = {{ one_literal }} / sqrtf(var + {{ eps }});
+{% if has_weight %}
+    {{ c_type }} scale = weight[c];
+{% else %}
+    {{ c_type }} scale = {{ one_literal }};
 {% endif %}
 {% if has_bias %}
-      {{ c_type }} offset = bias[c];
+    {{ c_type }} offset = bias[c];
 {% else %}
-      {{ c_type }} offset = {{ zero_literal }};
+    {{ c_type }} offset = {{ zero_literal }};
 {% endif %}
+    for (int64_t n = 0; n < {{ batch }}; ++n) {
       for (int64_t i = 0; i < {{ inner_size }}; ++i) {
         int64_t idx = (n * {{ channels }} + c) * {{ inner_size }} + i;
         {{ c_type }} value = (({{ c_type }}*)input)[idx];
         (({{ c_type }}*)out)[idx] = (value - mean) * inv * scale + offset;
       }
     }
+{% if training %}
+    running_mean[c] = ({{ one_literal }} - {{ momentum }}) * running_mean[c] + {{ momentum }} * mean;
+    running_var[c] = ({{ one_literal }} - {{ momentum }}) * running_var[c] + {{ momentum }} * var;
+{% endif %}
   }
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import operator
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Sequence, Tuple
 
@@ -119,6 +120,7 @@ class Compiler:
         output_structure = graph.output_structure
         output_value = graph.output_value
         output_inplace_input = graph.output_inplace_input
+        op_node_by_node = {op.node: op for op in graph.op_nodes}
         library_cache: Dict[
             Tuple[Tuple[Tuple[int, ...], ...], Tuple[Tuple[int, ...], ...]],
             _GenericLibrary,
@@ -131,6 +133,8 @@ class Compiler:
             graph = self._builder.build(gm, _normalize_conv_inputs(new_inputs))
             lib = self._compile_generic_library(graph)
             output_inplace_input = graph.output_inplace_input
+            op_node_by_node.clear()
+            op_node_by_node.update({op.node: op for op in graph.op_nodes})
 
         def resolve_output(value: object, env: Dict[torch.fx.Node, object]) -> object:
             if isinstance(value, torch.fx.Node):
@@ -139,6 +143,38 @@ class Compiler:
                 resolved = [resolve_output(item, env) for item in value]
                 return type(value)(resolved)
             return value
+
+        def _maybe_fill_batch_norm_stats(
+            node: torch.fx.Node, env: Dict[torch.fx.Node, object]
+        ) -> bool:
+            if node.op == "call_function" and node.target is operator.getitem:
+                source, index = node.args
+            elif node.op == "call_method" and node.target == "getitem":
+                source, index = node.args
+            else:
+                return False
+            if not isinstance(source, torch.fx.Node):
+                return False
+            op_node = op_node_by_node.get(source)
+            if op_node is None or op_node.spec.kind != OpKind.BATCH_NORM:
+                return False
+            if not bool(op_node.p("training", False)):
+                return False
+            if index not in (1, 1.0, 2, 2.0):
+                return False
+            input_node = op_node.inputs[0]
+            input_tensor = env.get(_resolve_alias(input_node, graph.alias_map))
+            if not isinstance(input_tensor, torch.Tensor):
+                return False
+            if input_tensor.ndim < 2:
+                return False
+            reduce_dims = (0, *range(2, input_tensor.ndim))
+            mean = input_tensor.mean(dim=reduce_dims)
+            var = input_tensor.var(dim=reduce_dims, unbiased=False)
+            eps = float(op_node.p("eps", 1e-5))
+            invstd = torch.rsqrt(var + eps)
+            env[node] = mean if index in (1, 1.0) else invstd
+            return True
 
         def compiled(*args: object, **kwargs: object) -> object:
             if kwargs:
@@ -242,6 +278,8 @@ class Compiler:
                 )
                 for node in graph.empty_outputs:
                     if node not in env:
+                        if _maybe_fill_batch_norm_stats(node, env):
+                            continue
                         env[node] = torch.empty(
                             graph.shapes[node],
                             dtype=graph.dtypes[node],
