@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterable, Set
 
 import torch
+from torch.testing._internal.common_methods_invocations import op_db
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -121,18 +122,61 @@ def _summarize_ops(aten_ops: Iterable[str], codegen_ops: Set[str]) -> tuple[int,
     return total, codegen_only
 
 
+def _opinfo_display_name(opinfo) -> str:
+    variant = opinfo.variant_test_name
+    if variant:
+        return f"{opinfo.aten_name}.{variant}"
+    return opinfo.aten_name
+
+
+def _opinfo_dtypes(opinfo) -> tuple[torch.dtype, ...]:
+    dtypes = opinfo.dtypesIfCPU or opinfo.dtypes
+    if dtypes is None:
+        return ()
+    dtype_list = list(dtypes)
+    return tuple(sorted(dtype_list, key=lambda dtype: str(dtype)))
+
+
+def _count_opinfo_samples(opinfo) -> int:
+    dtypes = _opinfo_dtypes(opinfo)
+    if not dtypes:
+        return 0
+    samples = list(opinfo.sample_inputs("cpu", dtypes[0]))
+    return len(samples)
+
+
+def _opinfo_test_case_counts(op_names: Set[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for opinfo in op_db:
+        name = _opinfo_display_name(opinfo)
+        if name not in op_names:
+            continue
+        counts[name] = counts.get(name, 0) + _count_opinfo_samples(opinfo)
+    return counts
+
+
 def main() -> None:
     aten_ops = sorted(_aten_ops_from_schemas())
     codegen_ops = _ops_from_codegen_tests(
         REPO_ROOT / "tests" / "test_codegen_ops.py"
     )
+    opinfo_counts = _opinfo_test_case_counts(set(aten_ops))
 
     print("# All ATen ops support (codegen backend)")
     print()
-    print("| aten op | codegen support |")
-    print("| --- | --- |")
+    print(
+        "This list shows all ATen operators, whether the codegen backend supports them,"
+        " and how many OpInfo sample inputs exist for the first CPU dtype."
+    )
+    print()
+    print("| aten op | codegen support | opinfo test cases |")
+    print("| --- | --- | --- |")
     for op_name in aten_ops:
-        print(f"| `{op_name}` | {_format_support_label(op_name in codegen_ops)} |")
+        opinfo_count = opinfo_counts.get(op_name)
+        opinfo_label = "—" if opinfo_count is None else str(opinfo_count)
+        print(
+            f"| `{op_name}` | {_format_support_label(op_name in codegen_ops)} | {opinfo_label} |"
+        )
 
     total, supported_codegen = _summarize_ops(aten_ops, codegen_ops)
     unsupported = total - supported_codegen

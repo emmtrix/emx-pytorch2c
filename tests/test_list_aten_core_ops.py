@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REFERENCE_FILE = Path(__file__).resolve().parent / "list_aten_core_ops_ref.md"
+REFERENCE_FILE = Path(__file__).resolve().parent / "list_core_ops_ref.md"
 
 
 def _run_list_aten_core_ops() -> str:
