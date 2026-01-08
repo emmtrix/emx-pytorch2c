@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, List
+from math import prod
+from typing import Callable, Dict, List, Sequence
 
 import torch
 import torch.fx
@@ -44,6 +45,7 @@ class Emitter:
             [], Dict[OpKind, KindHandlerRegistration]
         ]
         | None = None,
+        temp_allocation_threshold: int = 1024,
     ) -> None:
         self._templates_env = templates_env
         self._kind_handlers = kind_handlers
@@ -52,6 +54,19 @@ class Emitter:
             if kind_handler_registrations is not None
             else lambda: {}
         )
+        if temp_allocation_threshold < 0:
+            raise ValueError("temp_allocation_threshold must be >= 0")
+        self._temp_allocation_threshold = temp_allocation_threshold
+
+    def _temp_pointer_suffix(self, shape: Sequence[int]) -> str:
+        if len(shape) <= 1:
+            return ""
+        return _format_array_suffix(shape[1:])
+
+    def _format_numel_expr(self, shape: Sequence[int]) -> str:
+        if not shape:
+            return "1"
+        return " * ".join(str(dim) for dim in shape)
 
     def emit(self, graph: _GenericGraph) -> str:
         return self._write_generic_source(graph)
@@ -117,6 +132,9 @@ class Emitter:
             name_map[output_node] = output_name
         temp_index = 0
         temp_decls: List[str] = []
+        temp_allocs: List[str] = []
+        temp_frees: List[str] = []
+        needs_malloc = False
         for op_node in op_nodes:
             if op_node.node in output_nodes:
                 if op_node.inplace_input is not None:
@@ -140,9 +158,32 @@ class Emitter:
             name_map[op_node.node] = temp_name
             temp_dtype = graph.dtypes[op_node.node]
             temp_c_type = _dtype_to_c_type(temp_dtype, graph.dtype)
-            temp_decls.append(
-                f"{temp_c_type} {temp_name}{_format_array_suffix(op_node.output_shape)};"
+            temp_numel = prod(op_node.output_shape) if op_node.output_shape else 1
+            temp_bytes = (
+                torch.tensor([], dtype=temp_dtype).element_size() * temp_numel
             )
+            if self._temp_allocation_threshold > 0 and (
+                temp_bytes > self._temp_allocation_threshold
+            ):
+                needs_malloc = True
+                pointer_suffix = self._temp_pointer_suffix(op_node.output_shape)
+                numel_expr = self._format_numel_expr(op_node.output_shape)
+                if pointer_suffix:
+                    temp_allocs.append(
+                        f"{temp_c_type} (*{temp_name}){pointer_suffix} = "
+                        f"malloc(sizeof({temp_c_type}) * {numel_expr});"
+                    )
+                else:
+                    temp_allocs.append(
+                        f"{temp_c_type} *{temp_name} = "
+                        f"malloc(sizeof({temp_c_type}) * {numel_expr});"
+                    )
+                temp_frees.append(f"free({temp_name});")
+            else:
+                temp_decls.append(
+                    f"{temp_c_type} {temp_name}"
+                    f"{_format_array_suffix(op_node.output_shape)};"
+                )
         call_lines: List[str] = []
         for index, op_node in enumerate(op_nodes, start=1):
             input_names = [
@@ -154,6 +195,8 @@ class Emitter:
             call_lines.append(
                 f"node{index}_{op_node.spec.name}_{graph.dtype.suffix}({args});"
             )
+        if needs_malloc:
+            headers.append("#include <stdlib.h>")
         template = self._templates_env().get_template("generic_source.c.j2")
         return (
             template.render(
@@ -161,6 +204,8 @@ class Emitter:
                 kernels=kernels,
                 signature=signature,
                 temp_decls=temp_decls,
+                temp_allocs=temp_allocs,
+                temp_frees=temp_frees,
                 call_lines=call_lines,
             )
             + "\n"

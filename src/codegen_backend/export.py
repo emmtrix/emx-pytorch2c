@@ -289,16 +289,19 @@ def export_generic_c(
     out_path: str,
     function_name: str = "model_run",
     truncate_weights_after: int | None = None,
+    temp_allocation_threshold: int = 1024,
 ) -> str:
     if truncate_weights_after is not None and truncate_weights_after < 1:
         raise ValueError("truncate_weights_after must be >= 1")
+    if temp_allocation_threshold < 0:
+        raise ValueError("temp_allocation_threshold must be >= 0")
     (
         lifted_gm,
         lifted_inputs,
         weight_placeholders,
         weight_tensors,
     ) = _lift_get_attr_to_placeholders(gm, example_inputs)
-    backend = CodegenBackend()
+    backend = CodegenBackend(temp_allocation_threshold=temp_allocation_threshold)
     graph = backend._analyze_generic_graph(lifted_gm, lifted_inputs)
     source = backend._write_generic_source(graph)
     weights = {
