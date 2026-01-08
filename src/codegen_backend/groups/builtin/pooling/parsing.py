@@ -426,6 +426,67 @@ def parse_avg_pool2d_args(
     )
 
 
+def parse_avg_pool3d_args(
+    node: torch.fx.Node,
+) -> Tuple[torch.fx.Node, object, object, object, object, object, object]:
+    args = list(node.args)
+    kwargs = dict(node.kwargs)
+    if len(args) < 2 or len(args) > 7:
+        raise CodegenBackendError("codegen avg_pool3d expects pooling arguments")
+    input_arg = args[0]
+    kernel_size = args[1]
+    stride = None
+    padding = 0
+    ceil_mode = False
+    count_include_pad = True
+    divisor_override = None
+    remaining = args[2:]
+    if len(remaining) >= 1:
+        stride = remaining[0]
+    if len(remaining) >= 2:
+        padding = remaining[1]
+    if len(remaining) >= 3:
+        ceil_mode = remaining[2]
+    if len(remaining) >= 4:
+        count_include_pad = remaining[3]
+    if len(remaining) >= 5:
+        divisor_override = remaining[4]
+    if kwargs:
+        extra = set(kwargs) - {
+            "kernel_size",
+            "stride",
+            "padding",
+            "ceil_mode",
+            "count_include_pad",
+            "divisor_override",
+        }
+        if extra:
+            raise CodegenBackendError(
+                f"codegen avg_pool3d got unexpected kwargs: {sorted(extra)}"
+            )
+        if "kernel_size" in kwargs:
+            kernel_size = kwargs["kernel_size"]
+        if "stride" in kwargs:
+            stride = kwargs["stride"]
+        if "padding" in kwargs:
+            padding = kwargs["padding"]
+        if "ceil_mode" in kwargs:
+            ceil_mode = kwargs["ceil_mode"]
+        if "count_include_pad" in kwargs:
+            count_include_pad = kwargs["count_include_pad"]
+        if "divisor_override" in kwargs:
+            divisor_override = kwargs["divisor_override"]
+    return (
+        input_arg,
+        kernel_size,
+        stride,
+        padding,
+        ceil_mode,
+        count_include_pad,
+        divisor_override,
+    )
+
+
 __all__ = [
     "parse_adaptive_avg_pool1d_args",
     "parse_adaptive_avg_pool2d_args",
@@ -433,6 +494,7 @@ __all__ = [
     "parse_adaptive_avg_pool3d_args",
     "parse_avg_pool1d_args",
     "parse_avg_pool2d_args",
+    "parse_avg_pool3d_args",
     "parse_avg_pool2d_backward_args",
     "parse_max_pool1d_args",
     "parse_max_pool2d_args",

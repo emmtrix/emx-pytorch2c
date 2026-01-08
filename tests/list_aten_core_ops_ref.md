@@ -42,7 +42,7 @@
 | `avg_pool1d` | ✅ |
 | `avg_pool2d` | ✅ |
 | `avg_pool2d_backward` | ✅ |
-| `avg_pool3d` | — |
+| `avg_pool3d` | ✅ |
 | `bitwise_and.Scalar` | ✅ |
 | `bitwise_and.Tensor` | ✅ |
 | `bitwise_not` | ✅ |

@@ -209,6 +209,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.convolution.default,
     torch.ops.aten.avg_pool1d.default,
     torch.ops.aten.avg_pool2d.default,
+    torch.ops.aten.avg_pool3d.default,
     torch.ops.aten.cos.default,
     torch.ops.aten.cosh.default,
     torch.ops.aten.cumsum.default,

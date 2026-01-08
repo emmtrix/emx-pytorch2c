@@ -53,6 +53,11 @@ def build_supported_ops() -> dict[str, _OpSpec]:
         torch.ops.aten.avg_pool2d.default,
         torch.ops.aten.avg_pool2d,
     ).build()
+    registry.register_op("avg_pool3d", kind=OpKind.POOL3D).targets(
+        F.avg_pool3d,
+        torch.ops.aten.avg_pool3d.default,
+        torch.ops.aten.avg_pool3d,
+    ).build()
     registry.register_op("max_pool2d", kind=OpKind.POOL2D).targets(
         F.max_pool2d,
         torch.ops.aten.max_pool2d.default,

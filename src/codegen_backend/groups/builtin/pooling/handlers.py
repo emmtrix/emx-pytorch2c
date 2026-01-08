@@ -31,6 +31,7 @@ from codegen_backend.groups.builtin.pooling.parsing import (
     parse_adaptive_avg_pool3d_args,
     parse_avg_pool1d_args,
     parse_avg_pool2d_args,
+    parse_avg_pool3d_args,
     parse_avg_pool2d_backward_args,
     parse_max_pool1d_args,
     parse_max_pool2d_args,
@@ -101,6 +102,7 @@ def _pool3d_output_shape_from_shapes(
     stride: Tuple[int, int, int],
     padding: Tuple[int, int, int],
     dilation: Tuple[int, int, int],
+    ceil_mode: bool = False,
 ) -> Tuple[int, int, int, int, int]:
     batch, channels, in_d, in_h, in_w = input_shape
     k_d, k_h, k_w = kernel_size
@@ -114,9 +116,20 @@ def _pool3d_output_shape_from_shapes(
         raise CodegenBackendError(
             "codegen pool3d requires output shape (N, C, D_out, H_out, W_out)"
         )
-    out_d = numerator_d // stride_d + 1
-    out_h = numerator_h // stride_h + 1
-    out_w = numerator_w // stride_w + 1
+    if ceil_mode:
+        out_d = (numerator_d + stride_d - 1) // stride_d + 1
+        out_h = (numerator_h + stride_h - 1) // stride_h + 1
+        out_w = (numerator_w + stride_w - 1) // stride_w + 1
+        if (out_d - 1) * stride_d >= in_d + pad_d:
+            out_d -= 1
+        if (out_h - 1) * stride_h >= in_h + pad_h:
+            out_h -= 1
+        if (out_w - 1) * stride_w >= in_w + pad_w:
+            out_w -= 1
+    else:
+        out_d = numerator_d // stride_d + 1
+        out_h = numerator_h // stride_h + 1
+        out_w = numerator_w // stride_w + 1
     return batch, channels, out_d, out_h, out_w
 
 
@@ -188,6 +201,7 @@ class Pool3dHandler(OpKindHandler):
             op_node.p("stride", (1, 1, 1)),
             op_node.p("padding", (0, 0, 0)),
             op_node.p("dilation", (1, 1, 1)),
+            bool(op_node.p("ceil_mode", False)),
         )
 
 
@@ -662,14 +676,26 @@ class _BackendPool3dHandler(Pool3dHandler):
     ) -> OpNodeBuildResult | None:
         if dtype_info is None:
             return None
-        input_arg, output_size = parse_adaptive_avg_pool3d_args(node)
-        kernel_size = None
-        stride = None
-        padding = (0, 0, 0)
-        dilation = (1, 1, 1)
-        ceil_mode = False
-        count_include_pad = False
-        divisor_override = None
+        if op_spec.name == "adaptive_avg_pool3d":
+            input_arg, output_size = parse_adaptive_avg_pool3d_args(node)
+            kernel_size = None
+            stride = None
+            padding = (0, 0, 0)
+            dilation = (1, 1, 1)
+            ceil_mode = False
+            count_include_pad = False
+            divisor_override = None
+        else:
+            (
+                input_arg,
+                kernel_size,
+                stride,
+                padding,
+                ceil_mode,
+                count_include_pad,
+                divisor_override,
+            ) = parse_avg_pool3d_args(node)
+            dilation = (1, 1, 1)
         if not isinstance(input_arg, torch.fx.Node):
             raise self._ctx.analysis_service.error_expected_tensor(op_spec.name)
         if input_arg not in shapes:
@@ -711,49 +737,82 @@ class _BackendPool3dHandler(Pool3dHandler):
             raise CodegenBackendError(
                 f"codegen {op_spec.name} requires contiguous input tensors"
             )
-        if isinstance(output_size, torch.fx.Node):
-            raise CodegenBackendError(
-                "codegen adaptive_avg_pool3d expects output_size to be a tuple of ints"
-            )
-        if isinstance(output_size, torch.Size):
-            output_size = tuple(output_size)
-        if isinstance(output_size, int):
-            output_triplet = (output_size, output_size, output_size)
-        elif isinstance(output_size, (tuple, list)):
-            if len(output_size) != 3:
+        if op_spec.name == "adaptive_avg_pool3d":
+            if isinstance(output_size, torch.fx.Node):
                 raise CodegenBackendError(
-                    "codegen adaptive_avg_pool3d expects output_size to have three values"
+                    "codegen adaptive_avg_pool3d expects output_size to be a tuple of ints"
                 )
-            output_triplet = tuple(output_size)
+            if isinstance(output_size, torch.Size):
+                output_size = tuple(output_size)
+            if isinstance(output_size, int):
+                output_triplet = (output_size, output_size, output_size)
+            elif isinstance(output_size, (tuple, list)):
+                if len(output_size) != 3:
+                    raise CodegenBackendError(
+                        "codegen adaptive_avg_pool3d expects output_size to have three values"
+                    )
+                output_triplet = tuple(output_size)
+            else:
+                raise CodegenBackendError(
+                    "codegen adaptive_avg_pool3d expects output_size to be a tuple of ints"
+                )
+            if not all(isinstance(item, int) for item in output_triplet):
+                raise CodegenBackendError(
+                    "codegen adaptive_avg_pool3d expects output_size to be a tuple of ints"
+                )
+            if not all(item > 0 for item in output_triplet):
+                raise CodegenBackendError(
+                    "codegen adaptive_avg_pool3d expects output_size to be positive"
+                )
+            in_d, in_h, in_w = input_shape[2], input_shape[3], input_shape[4]
+            if (
+                in_d % output_triplet[0] != 0
+                or in_h % output_triplet[1] != 0
+                or in_w % output_triplet[2] != 0
+            ):
+                raise CodegenBackendError(
+                    "codegen adaptive_avg_pool3d requires input sizes divisible by output_size"
+                )
+            kernel_triplet = (
+                in_d // output_triplet[0],
+                in_h // output_triplet[1],
+                in_w // output_triplet[2],
+            )
+            stride_triplet = kernel_triplet
+            padding_triplet = (0, 0, 0)
+            dilation_triplet = (1, 1, 1)
         else:
-            raise CodegenBackendError(
-                "codegen adaptive_avg_pool3d expects output_size to be a tuple of ints"
+            if isinstance(kernel_size, torch.fx.Node):
+                raise CodegenBackendError(
+                    f"codegen {op_spec.name} expects kernel_size to be a list"
+                )
+            if kernel_size is None:
+                raise CodegenBackendError(
+                    f"codegen {op_spec.name} expects kernel_size and stride"
+                )
+            kernel_triplet = normalize_param(
+                normalize_int_or_tuple, "kernel_size", kernel_size, 3
             )
-        if not all(isinstance(item, int) for item in output_triplet):
-            raise CodegenBackendError(
-                "codegen adaptive_avg_pool3d expects output_size to be a tuple of ints"
+            if stride is None:
+                stride_triplet = kernel_triplet
+            else:
+                if isinstance(stride, torch.fx.Node):
+                    raise CodegenBackendError(
+                        f"codegen {op_spec.name} expects stride to be a list"
+                    )
+                stride_triplet = normalize_param(
+                    normalize_int_or_tuple, "stride", stride, 3
+                )
+            if isinstance(padding, torch.fx.Node):
+                raise CodegenBackendError(
+                    f"codegen {op_spec.name} expects padding to be a list"
+                )
+            padding_triplet = normalize_param(
+                normalize_int_or_tuple, "padding", padding, 3
             )
-        if not all(item > 0 for item in output_triplet):
-            raise CodegenBackendError(
-                "codegen adaptive_avg_pool3d expects output_size to be positive"
+            dilation_triplet = normalize_param(
+                normalize_int_or_tuple, "dilation", dilation, 3
             )
-        in_d, in_h, in_w = input_shape[2], input_shape[3], input_shape[4]
-        if (
-            in_d % output_triplet[0] != 0
-            or in_h % output_triplet[1] != 0
-            or in_w % output_triplet[2] != 0
-        ):
-            raise CodegenBackendError(
-                "codegen adaptive_avg_pool3d requires input sizes divisible by output_size"
-            )
-        kernel_triplet = (
-            in_d // output_triplet[0],
-            in_h // output_triplet[1],
-            in_w // output_triplet[2],
-        )
-        stride_triplet = kernel_triplet
-        padding_triplet = (0, 0, 0)
-        dilation_triplet = (1, 1, 1)
         if (
             kernel_triplet[0] <= 0
             or kernel_triplet[1] <= 0
