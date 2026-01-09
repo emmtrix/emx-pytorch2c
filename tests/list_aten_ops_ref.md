@@ -1355,7 +1355,7 @@ This list shows all ATen operators, whether the codegen backend supports them, a
 | `randn_like` | — | 7 |
 | `random` | — | — |
 | `random_` | — | — |
-| `randperm` | — | — |
+| `randperm` | ✅ | — |
 | `range` | — | — |
 | `ravel` | — | 3 |
 | `real` | ✅ | 3 |
@@ -1363,11 +1363,11 @@ This list shows all ATen operators, whether the codegen backend supports them, a
 | `reciprocal_` | ✅ | — |
 | `record_stream` | — | — |
 | `refine_names` | — | — |
-| `reflection_pad1d` | — | — |
+| `reflection_pad1d` | ✅ | — |
 | `reflection_pad1d_backward` | — | — |
-| `reflection_pad2d` | — | — |
+| `reflection_pad2d` | ✅ | — |
 | `reflection_pad2d_backward` | — | — |
-| `reflection_pad3d` | — | — |
+| `reflection_pad3d` | ✅ | — |
 | `reflection_pad3d_backward` | — | — |
 | `relu` | ✅ | 4 |
 | `relu6` | ✅ | 3 |
@@ -1385,9 +1385,9 @@ This list shows all ATen operators, whether the codegen backend supports them, a
 | `replace` | — | — |
 | `replication_pad1d` | — | — |
 | `replication_pad1d_backward` | — | — |
-| `replication_pad2d` | — | — |
+| `replication_pad2d` | ✅ | — |
 | `replication_pad2d_backward` | — | — |
-| `replication_pad3d` | — | — |
+| `replication_pad3d` | ✅ | — |
 | `replication_pad3d_backward` | — | — |
 | `requires_grad_` | — | — |
 | `reshape` | ✅ | 7 |
@@ -1434,8 +1434,8 @@ This list shows all ATen operators, whether the codegen backend supports them, a
 | `save` | — | — |
 | `scalar_tensor` | ✅ | 3 |
 | `scaled_dot_product_attention` | — | — |
-| `scatter` | — | 27 |
-| `scatter_` | — | — |
+| `scatter` | ✅ | 27 |
+| `scatter_` | ✅ | — |
 | `scatter_add` | — | 7 |
 | `scatter_add_` | — | — |
 | `scatter_reduce` | — | — |
@@ -1721,5 +1721,5 @@ This list shows all ATen operators, whether the codegen backend supports them, a
 
 ## Summary
 - total aten ops: 1714
-- supported by codegen: 294 / 1714 (17.2 %)
-- unsupported by codegen: 1420
+- supported by codegen: 302 / 1714 (17.6 %)
+- unsupported by codegen: 1412

@@ -40,6 +40,7 @@ from codegen_backend.emitters.pdist import PdistEmitter
 from codegen_backend.emitters.repeat import RepeatEmitter
 from codegen_backend.emitters.resize import ResizeEmitter
 from codegen_backend.emitters.scalar_tensor import ScalarTensorEmitter
+from codegen_backend.emitters.scatter import ScatterEmitter
 from codegen_backend.emitters.select_scatter import SelectScatterEmitter
 from codegen_backend.emitters.split_with_sizes import SplitWithSizesEmitter
 from codegen_backend.emitters.sort import SortEmitter
@@ -179,14 +180,14 @@ class PadHandler(OpKindHandler):
         pad_after = op_node.p("pad_after", ())
         if not pad_before or not pad_after:
             raise CodegenBackendError(
-                "codegen constant_pad_nd expects constant padding arguments"
+                "codegen pad expects padding arguments"
             )
         output_shape = []
         for size, before, after in zip(input_shape, pad_before, pad_after):
             new_size = size + before + after
             if new_size < 0:
                 raise CodegenBackendError(
-                    "codegen constant_pad_nd expects non-negative output sizes"
+                    "codegen pad expects non-negative output sizes"
                 )
             output_shape.append(new_size)
         return tuple(output_shape)
@@ -226,6 +227,13 @@ class ViewHandler(OpKindHandler):
             if size is None:
                 raise CodegenBackendError(
                     "codegen reshape expects shape to be resolved"
+                )
+            return tuple(size)
+        if op_node.spec.name == "select":
+            size = op_node.p("size", None)
+            if size is None:
+                raise CodegenBackendError(
+                    "codegen select expects shape to be resolved"
                 )
             return tuple(size)
         if op_node.spec.name == "flatten":
@@ -315,6 +323,35 @@ class RandomHandler(OpKindHandler):
         size = op_node.p("size", None)
         if size is None:
             raise CodegenBackendError("codegen random expects a size argument")
+        return tuple(size)
+
+
+class RandpermHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(node_index, op_node, graph, inputs=())
+
+    def infer_graph_dtype(
+        self, node: torch.fx.Node, op_spec: _OpSpec
+    ) -> torch.dtype | None:
+        dtype_value = node.kwargs.get("dtype")
+        if isinstance(dtype_value, torch.fx.Node):
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects dtype to be a constant"
+            )
+        if dtype_value is None:
+            dtype_value = torch.int64
+        return dtype_value
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        size = op_node.p("size", None)
+        if size is None:
+            raise CodegenBackendError("codegen randperm expects a size argument")
         return tuple(size)
 
 
@@ -435,6 +472,20 @@ class MaskedScatterHandler(OpKindHandler):
 
 
 class SelectScatterHandler(OpKindHandler):
+    def emit(
+        self, node_index: int, op_node: _OpNode, graph: _GenericGraph
+    ) -> List[str]:
+        return self._emit_standard(node_index, op_node, graph)
+
+    def infer_shapes(
+        self,
+        op_node: _OpNode,
+        input_shapes: Sequence[Tuple[int, ...]],
+    ) -> Tuple[int, ...]:
+        return input_shapes[0]
+
+
+class ScatterHandler(OpKindHandler):
     def emit(
         self, node_index: int, op_node: _OpNode, graph: _GenericGraph
     ) -> List[str]:
@@ -1685,7 +1736,7 @@ def build_handlers(context: TensorContext) -> Dict[OpKind, OpKindHandler]:
         OpKind.PAD: PadHandler(
             context,
             PadEmitter(),
-            builder=_build_with_dtype(context, "build_constant_pad"),
+            builder=_build_with_dtype(context, "build_pad"),
         ),
         OpKind.VIEW: ViewHandler(
             context,
@@ -1712,6 +1763,11 @@ def build_handlers(context: TensorContext) -> Dict[OpKind, OpKindHandler]:
             context,
             EmptyStridedEmitter(),
             builder=_build_with_dtype(context, "build_random"),
+        ),
+        OpKind.RANDPERM: RandpermHandler(
+            context,
+            EmptyStridedEmitter(),
+            builder=_build_with_dtype(context, "build_randperm"),
         ),
         OpKind.SCALAR_TENSOR: _BackendScalarTensorHandler(
             context, ScalarTensorEmitter()
@@ -1755,6 +1811,11 @@ def build_handlers(context: TensorContext) -> Dict[OpKind, OpKindHandler]:
             context,
             SelectScatterEmitter(),
             builder=_build_with_inplace(context, "build_select_scatter"),
+        ),
+        OpKind.SCATTER: ScatterHandler(
+            context,
+            ScatterEmitter(),
+            builder=_build_with_inplace(context, "build_scatter"),
         ),
         OpKind.INDEX_SELECT: IndexSelectHandler(
             context,
@@ -1922,6 +1983,9 @@ def build_kind_handler_registrations() -> Dict[OpKind, "KindHandlerRegistration"
         OpKind.RANDOM: KindHandlerRegistration(
             _BackendRandomHandler, EmptyStridedEmitter
         ),
+        OpKind.RANDPERM: KindHandlerRegistration(
+            RandpermHandler, EmptyStridedEmitter
+        ),
         OpKind.SCALAR_TENSOR: KindHandlerRegistration(
             _BackendScalarTensorHandler, ScalarTensorEmitter
         ),
@@ -1946,6 +2010,7 @@ def build_kind_handler_registrations() -> Dict[OpKind, "KindHandlerRegistration"
         OpKind.SELECT_SCATTER: KindHandlerRegistration(
             SelectScatterHandler, SelectScatterEmitter
         ),
+        OpKind.SCATTER: KindHandlerRegistration(ScatterHandler, ScatterEmitter),
         OpKind.NONZERO: KindHandlerRegistration(
             _BackendNonzeroHandler, NonzeroEmitter
         ),

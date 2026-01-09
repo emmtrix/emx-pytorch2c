@@ -1,0 +1,27 @@
+{{ signature }}
+{% for dim in range(output_shape | length) %}
+    for (ssize_t i{{ dim }} = 0; i{{ dim }} < {{ output_shape[dim] }}; ++i{{ dim }}) {
+{% endfor %}
+{% for dim in range(input_shape | length) %}
+    ssize_t in_{{ dim }} = (ssize_t)i{{ dim }} - {{ pad_before[dim] }};
+{% if mode == "reflection" %}
+    if (in_{{ dim }} < 0) {
+        in_{{ dim }} = -in_{{ dim }};
+    }
+    if (in_{{ dim }} >= {{ input_shape[dim] }}) {
+        in_{{ dim }} = (2 * {{ input_shape[dim] }} - 2) - in_{{ dim }};
+    }
+{% elif mode == "replication" %}
+    if (in_{{ dim }} < 0) {
+        in_{{ dim }} = 0;
+    }
+    if (in_{{ dim }} >= {{ input_shape[dim] }}) {
+        in_{{ dim }} = {{ input_shape[dim] }} - 1;
+    }
+{% endif %}
+{% endfor %}
+    {{ output_access }} = {{ input_access }};
+{% for dim in range(output_shape | length) | reverse %}
+    }
+{% endfor %}
+}

@@ -38,6 +38,8 @@ from codegen_backend.groups.builtin.tensor.parsing import (
     parse_index_select_args,
     parse_linear_args,
     parse_masked_scatter_args,
+    parse_scatter_src_args,
+    parse_scatter_value_args,
     parse_select_scatter_args,
     parse_sort_args,
     parse_resize_size,
@@ -242,6 +244,79 @@ class TensorOpBuilder:
         self._dtypes[node] = dtype_value
         self._strides[node] = _contiguous_strides(size_tuple)
         return op_node
+
+    def build_randperm(
+        self, node: torch.fx.Node, op_spec: _OpSpec, dtype_info: _CodegenDType
+    ) -> _OpNode:
+        if not node.args:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects a size argument"
+            )
+        size_tuple = self._normalize_size_arg(op_spec.name, node.args[0])
+        if len(size_tuple) != 1:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects a single size value"
+            )
+        kwargs = dict(node.kwargs)
+        extra = set(kwargs) - {
+            "dtype",
+            "layout",
+            "device",
+            "pin_memory",
+            "requires_grad",
+        }
+        if extra:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
+            )
+        if kwargs.get("layout") is not None:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects layout to be None"
+            )
+        device = kwargs.get("device")
+        if device is not None and device != "cpu" and device != torch.device("cpu"):
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects device to be None or cpu"
+            )
+        pin_memory = kwargs.get("pin_memory")
+        if pin_memory not in (None, False):
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects pin_memory to be False"
+            )
+        requires_grad = kwargs.get("requires_grad")
+        if requires_grad not in (None, False):
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects requires_grad to be False"
+            )
+        dtype_value = kwargs.get("dtype")
+        if dtype_value is None:
+            dtype_value = dtype_info.torch_dtype
+        supported_dtypes = {
+            torch.float32,
+            torch.float64,
+            torch.int8,
+            torch.uint8,
+            torch.int16,
+            torch.int32,
+            torch.int64,
+        }
+        if dtype_value not in supported_dtypes:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} supports only float32, float64, int8, "
+                "uint8, int16, int32, or int64 tensors"
+            )
+        if dtype_value is not dtype_info.torch_dtype:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects dtype to match the graph dtype"
+            )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[],
+            output_shape=(),
+            params={"size": size_tuple},
+        )
+        return self._finalize_node(node, op_node, dtype_info, [])
 
     def _normalize_normalized_shape(
         self, op_name: str, normalized_shape: object, input_shape: Tuple[int, ...]
@@ -1338,6 +1413,122 @@ class TensorOpBuilder:
                 "pad_before": tuple(pad_before),
                 "pad_after": tuple(pad_after),
                 "value": value,
+                "mode": "constant",
+            },
+        )
+        return self._finalize_node(
+            node, op_node, dtype_info, [input_shape]
+        )
+
+    def build_pad(
+        self, node: torch.fx.Node, op_spec: _OpSpec, dtype_info: _CodegenDType
+    ) -> _OpNode:
+        if op_spec.name == "constant_pad_nd":
+            return self.build_constant_pad(node, op_spec, dtype_info)
+        if op_spec.name == "reflection_pad1d":
+            return self._build_mirror_pad(node, op_spec, dtype_info, 1, "reflection")
+        if op_spec.name == "reflection_pad2d":
+            return self._build_mirror_pad(node, op_spec, dtype_info, 2, "reflection")
+        if op_spec.name == "reflection_pad3d":
+            return self._build_mirror_pad(node, op_spec, dtype_info, 3, "reflection")
+        if op_spec.name == "replication_pad2d":
+            return self._build_mirror_pad(node, op_spec, dtype_info, 2, "replication")
+        if op_spec.name == "replication_pad3d":
+            return self._build_mirror_pad(node, op_spec, dtype_info, 3, "replication")
+        raise CodegenBackendError(
+            f"codegen pad does not support op {op_spec.name}"
+        )
+
+    def _build_mirror_pad(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        pad_dims: int,
+        mode: str,
+    ) -> _OpNode:
+        if len(node.args) < 2:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects input and padding arguments"
+            )
+        input_arg = node.args[0]
+        pad = node.args[1]
+        if node.kwargs:
+            extra = set(node.kwargs)
+            if extra:
+                raise CodegenBackendError(
+                    f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
+                )
+        if not isinstance(input_arg, torch.fx.Node) or input_arg not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if self._dtypes[input_arg] is not dtype_info.torch_dtype:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects input to match the graph dtype"
+            )
+        if isinstance(pad, torch.fx.Node):
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects padding to be a sequence"
+            )
+        if not isinstance(pad, (list, tuple)):
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects padding to be a sequence"
+            )
+        pad_values = []
+        for item in pad:
+            if isinstance(item, torch.fx.Node):
+                raise CodegenBackendError(
+                    f"codegen {op_spec.name} expects padding values to be integers"
+                )
+            try:
+                pad_values.append(int(operator.index(item)))
+            except TypeError:
+                try:
+                    pad_values.append(int(item))
+                except (TypeError, ValueError) as exc:
+                    raise CodegenBackendError(
+                        f"codegen {op_spec.name} expects padding values to be integers"
+                    ) from exc
+        if len(pad_values) != 2 * pad_dims:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects {2 * pad_dims} padding values"
+            )
+        if any(value < 0 for value in pad_values):
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects non-negative padding values"
+            )
+        input_shape = self._shapes[input_arg]
+        rank = len(input_shape)
+        if rank < pad_dims:
+            raise CodegenBackendError(
+                f"codegen {op_spec.name} expects input rank to be >= {pad_dims}"
+            )
+        pad_before = [0] * rank
+        pad_after = [0] * rank
+        for idx in range(pad_dims):
+            dim = rank - 1 - idx
+            pad_before[dim] = pad_values[2 * idx]
+            pad_after[dim] = pad_values[2 * idx + 1]
+        if mode == "reflection":
+            for dim, (before, after) in enumerate(zip(pad_before, pad_after)):
+                if before == 0 and after == 0:
+                    continue
+                if input_shape[dim] <= 0:
+                    raise CodegenBackendError(
+                        f"codegen {op_spec.name} expects non-empty input dimensions"
+                    )
+                if before >= input_shape[dim] or after >= input_shape[dim]:
+                    raise CodegenBackendError(
+                        f"codegen {op_spec.name} expects padding < input size"
+                    )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[input_arg],
+            output_shape=(),
+            params={
+                "pad_before": tuple(pad_before),
+                "pad_after": tuple(pad_after),
+                "mode": mode,
             },
         )
         return self._finalize_node(
@@ -1658,6 +1849,163 @@ class TensorOpBuilder:
             inplace_input=inplace_input,
         )
 
+    def build_scatter(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        inplace_input: int | None,
+    ) -> _OpNode:
+        if op_spec.name == "scatter_src":
+            return self._build_scatter_src(
+                node, op_spec, dtype_info, inplace_input
+            )
+        if op_spec.name == "scatter_value":
+            return self._build_scatter_value(
+                node, op_spec, dtype_info, inplace_input
+            )
+        raise CodegenBackendError(
+            f"codegen scatter does not support op {op_spec.name}"
+        )
+
+    def _build_scatter_src(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        inplace_input: int | None,
+    ) -> _OpNode:
+        input_arg, dim, index, src = parse_scatter_src_args(node)
+        if not isinstance(input_arg, torch.fx.Node) or input_arg not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if not isinstance(index, torch.fx.Node) or index not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if not isinstance(src, torch.fx.Node) or src not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if self._dtypes[input_arg] is not dtype_info.torch_dtype:
+            raise CodegenBackendError(
+                "codegen scatter expects input to match the graph dtype"
+            )
+        if self._dtypes[src] is not dtype_info.torch_dtype:
+            raise CodegenBackendError(
+                "codegen scatter expects src to match the graph dtype"
+            )
+        if self._dtypes[index] not in _EMBEDDING_INDEX_DTYPES:
+            raise CodegenBackendError(
+                "codegen scatter expects index dtype to be torch.int32 or torch.int64"
+            )
+        input_shape = self._shapes[input_arg]
+        index_shape = self._shapes[index]
+        src_shape = self._shapes[src]
+        if len(input_shape) == 0:
+            raise CodegenBackendError(
+                "codegen scatter expects input to have at least 1 dimension"
+            )
+        if len(index_shape) != len(input_shape):
+            raise CodegenBackendError(
+                "codegen scatter expects index to have the same rank as input"
+            )
+        dim_value = parse_constant_int(op_spec.name, "dim", dim)
+        if dim_value < 0:
+            dim_value += len(input_shape)
+        if dim_value < 0 or dim_value >= len(input_shape):
+            raise CodegenBackendError("codegen scatter dim is out of range")
+        if tuple(index_shape) != tuple(src_shape):
+            raise CodegenBackendError(
+                "codegen scatter expects index and src to share the same shape"
+            )
+        for idx, (input_dim, index_dim) in enumerate(
+            zip(input_shape, index_shape)
+        ):
+            if idx == dim_value:
+                continue
+            if input_dim != index_dim:
+                raise CodegenBackendError(
+                    "codegen scatter expects index shape to match input shape "
+                    "for non-scatter dimensions"
+                )
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[input_arg, index, src],
+            output_shape=(),
+            inplace_input=inplace_input,
+            params={"dim": dim_value},
+        )
+        return self._finalize_node(
+            node,
+            op_node,
+            dtype_info,
+            [input_shape, index_shape, src_shape],
+            inplace_input=inplace_input,
+        )
+
+    def _build_scatter_value(
+        self,
+        node: torch.fx.Node,
+        op_spec: _OpSpec,
+        dtype_info: _CodegenDType,
+        inplace_input: int | None,
+    ) -> _OpNode:
+        input_arg, dim, index, value = parse_scatter_value_args(node)
+        if not isinstance(input_arg, torch.fx.Node) or input_arg not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if not isinstance(index, torch.fx.Node) or index not in self._shapes:
+            raise error_expected_tensor(op_spec.name)
+        if self._dtypes[input_arg] is not dtype_info.torch_dtype:
+            raise CodegenBackendError(
+                "codegen scatter expects input to match the graph dtype"
+            )
+        if self._dtypes[index] not in _EMBEDDING_INDEX_DTYPES:
+            raise CodegenBackendError(
+                "codegen scatter expects index dtype to be torch.int32 or torch.int64"
+            )
+        input_shape = self._shapes[input_arg]
+        index_shape = self._shapes[index]
+        if len(input_shape) == 0:
+            raise CodegenBackendError(
+                "codegen scatter expects input to have at least 1 dimension"
+            )
+        if len(index_shape) != len(input_shape):
+            raise CodegenBackendError(
+                "codegen scatter expects index to have the same rank as input"
+            )
+        dim_value = parse_constant_int(op_spec.name, "dim", dim)
+        if dim_value < 0:
+            dim_value += len(input_shape)
+        if dim_value < 0 or dim_value >= len(input_shape):
+            raise CodegenBackendError("codegen scatter dim is out of range")
+        for idx, (input_dim, index_dim) in enumerate(
+            zip(input_shape, index_shape)
+        ):
+            if idx == dim_value:
+                continue
+            if input_dim != index_dim:
+                raise CodegenBackendError(
+                    "codegen scatter expects index shape to match input shape "
+                    "for non-scatter dimensions"
+                )
+        if isinstance(value, torch.fx.Node):
+            raise CodegenBackendError(
+                "codegen scatter expects value to be a constant"
+            )
+        value = _normalize_scalar_value(op_spec.name, value)
+        op_node = _OpNode(
+            node=node,
+            spec=op_spec,
+            inputs=[input_arg, index],
+            output_shape=(),
+            inplace_input=inplace_input,
+            params={"dim": dim_value, "value": value},
+        )
+        return self._finalize_node(
+            node,
+            op_node,
+            dtype_info,
+            [input_shape, index_shape],
+            inplace_input=inplace_input,
+        )
+
     def build_repeat(
         self, node: torch.fx.Node, op_spec: _OpSpec, dtype_info: _CodegenDType
     ) -> _OpNode:
@@ -1941,6 +2289,72 @@ class TensorOpBuilder:
                     "size": output_shape_tuple,
                     "view_strides": _contiguous_strides(output_shape_tuple),
                     "storage_offset": 0,
+                },
+            )
+            return self._finalize_node(
+                node, op_node, dtype_info, [self._shapes[input_arg]]
+            )
+        if op_spec.name == "select":
+            if len(node.args) > 3:
+                raise CodegenBackendError(
+                    "codegen select expects input, dim, and index arguments"
+                )
+            dim = node.args[1] if len(node.args) > 1 else None
+            index = node.args[2] if len(node.args) > 2 else None
+            if node.kwargs:
+                if "dim" in node.kwargs:
+                    if dim is not None:
+                        raise error_kwarg_specified_once(op_spec.name, "dim")
+                    dim = node.kwargs["dim"]
+                if "index" in node.kwargs:
+                    if index is not None:
+                        raise error_kwarg_specified_once(op_spec.name, "index")
+                    index = node.kwargs["index"]
+                extra = set(node.kwargs) - {"dim", "index"}
+                if extra:
+                    raise CodegenBackendError(
+                        f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
+                    )
+            if dim is None or index is None:
+                raise CodegenBackendError(
+                    "codegen select expects dim and index arguments"
+                )
+            input_shape = self._shapes[input_arg]
+            if not input_shape:
+                raise CodegenBackendError(
+                    "codegen select expects input to have at least 1 dimension"
+                )
+            dim_value = parse_constant_int(op_spec.name, "dim", dim)
+            if dim_value < 0:
+                dim_value += len(input_shape)
+            if dim_value < 0 or dim_value >= len(input_shape):
+                raise CodegenBackendError("codegen select dim is out of range")
+            index_value = parse_constant_int(op_spec.name, "index", index)
+            if index_value < 0:
+                index_value += input_shape[dim_value]
+            if index_value < 0 or index_value >= input_shape[dim_value]:
+                raise CodegenBackendError("codegen select index is out of range")
+            output_shape = tuple(
+                size
+                for dim_index, size in enumerate(input_shape)
+                if dim_index != dim_value
+            )
+            input_strides = self._strides[input_arg]
+            view_strides = tuple(
+                stride
+                for dim_index, stride in enumerate(input_strides)
+                if dim_index != dim_value
+            )
+            storage_offset = index_value * input_strides[dim_value]
+            op_node = _OpNode(
+                node=node,
+                spec=op_spec,
+                inputs=[input_arg],
+                output_shape=(),
+                params={
+                    "size": output_shape,
+                    "view_strides": view_strides,
+                    "storage_offset": storage_offset,
                 },
             )
             return self._finalize_node(

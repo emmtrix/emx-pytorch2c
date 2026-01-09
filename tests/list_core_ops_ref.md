@@ -145,23 +145,23 @@ This list shows core ATen operators, whether the codegen backend supports them, 
 | `prod.dim_int` | ✅ | — |
 | `rand` | ✅ | — |
 | `randn` | ✅ | 2 |
-| `randperm` | — | — |
+| `randperm` | ✅ | — |
 | `reciprocal` | ✅ | 3 |
-| `reflection_pad1d` | — | — |
-| `reflection_pad2d` | — | — |
-| `reflection_pad3d` | — | — |
+| `reflection_pad1d` | ✅ | — |
+| `reflection_pad2d` | ✅ | — |
+| `reflection_pad3d` | ✅ | — |
 | `relu` | ✅ | 4 |
 | `remainder.Scalar` | ✅ | — |
 | `remainder.Tensor` | ✅ | — |
 | `repeat` | ✅ | 40 |
-| `replication_pad2d` | — | — |
-| `replication_pad3d` | — | — |
+| `replication_pad2d` | ✅ | — |
+| `replication_pad3d` | ✅ | — |
 | `resize_` | ✅ | 3 |
 | `round` | ✅ | 1 |
 | `rsqrt` | ✅ | 3 |
 | `scalar_tensor` | ✅ | 3 |
-| `scatter.src` | — | — |
-| `scatter.value` | — | — |
+| `scatter.src` | ✅ | — |
+| `scatter.value` | ✅ | — |
 | `scatter_add` | — | 7 |
 | `scatter_reduce.two` | — | — |
 | `select.int` | ✅ | — |
@@ -199,5 +199,5 @@ This list shows core ATen operators, whether the codegen backend supports them, 
 
 ## Summary
 - total core aten ops: 192
-- supported by codegen: 164 / 192 (85.4%)
-- unsupported by codegen: 28
+- supported by codegen: 172 / 192 (89.6%)
+- unsupported by codegen: 20

@@ -207,6 +207,88 @@ def parse_select_scatter_args(
     return input_arg, src, dim, index
 
 
+def parse_scatter_src_args(
+    node: torch.fx.Node,
+) -> Tuple[object, object, object, object]:
+    if len(node.args) > 4:
+        raise CodegenBackendError(
+            "codegen scatter_src expects at most four inputs"
+        )
+    if not node.args:
+        raise CodegenBackendError(
+            "codegen scatter_src expects input, dim, index, and src"
+        )
+    input_arg = node.args[0]
+    dim = node.args[1] if len(node.args) > 1 else None
+    index = node.args[2] if len(node.args) > 2 else None
+    src = node.args[3] if len(node.args) > 3 else None
+    if node.kwargs:
+        if "dim" in node.kwargs:
+            if dim is not None:
+                raise error_kwarg_specified_once("scatter_src", "dim")
+            dim = node.kwargs["dim"]
+        if "index" in node.kwargs:
+            if index is not None:
+                raise error_kwarg_specified_once("scatter_src", "index")
+            index = node.kwargs["index"]
+        if "src" in node.kwargs:
+            if src is not None:
+                raise error_kwarg_specified_once("scatter_src", "src")
+            src = node.kwargs["src"]
+        extra = set(node.kwargs) - {"dim", "index", "src"}
+        if extra:
+            raise CodegenBackendError(
+                "codegen scatter_src got unexpected kwargs: "
+                f"{sorted(extra)}"
+            )
+    if dim is None or index is None or src is None:
+        raise CodegenBackendError(
+            "codegen scatter_src expects dim, index, and src arguments"
+        )
+    return input_arg, dim, index, src
+
+
+def parse_scatter_value_args(
+    node: torch.fx.Node,
+) -> Tuple[object, object, object, object]:
+    if len(node.args) > 4:
+        raise CodegenBackendError(
+            "codegen scatter_value expects at most four inputs"
+        )
+    if not node.args:
+        raise CodegenBackendError(
+            "codegen scatter_value expects input, dim, index, and value"
+        )
+    input_arg = node.args[0]
+    dim = node.args[1] if len(node.args) > 1 else None
+    index = node.args[2] if len(node.args) > 2 else None
+    value = node.args[3] if len(node.args) > 3 else None
+    if node.kwargs:
+        if "dim" in node.kwargs:
+            if dim is not None:
+                raise error_kwarg_specified_once("scatter_value", "dim")
+            dim = node.kwargs["dim"]
+        if "index" in node.kwargs:
+            if index is not None:
+                raise error_kwarg_specified_once("scatter_value", "index")
+            index = node.kwargs["index"]
+        if "value" in node.kwargs:
+            if value is not None:
+                raise error_kwarg_specified_once("scatter_value", "value")
+            value = node.kwargs["value"]
+        extra = set(node.kwargs) - {"dim", "index", "value"}
+        if extra:
+            raise CodegenBackendError(
+                "codegen scatter_value got unexpected kwargs: "
+                f"{sorted(extra)}"
+            )
+    if dim is None or index is None or value is None:
+        raise CodegenBackendError(
+            "codegen scatter_value expects dim, index, and value arguments"
+        )
+    return input_arg, dim, index, value
+
+
 def parse_addmm_like_scalar(
     op_name: str, name: str, value: object | None
 ) -> float:
@@ -667,5 +749,7 @@ __all__ = [
     "parse_masked_scatter_args",
     "parse_linear_args",
     "parse_resize_size",
+    "parse_scatter_src_args",
+    "parse_scatter_value_args",
     "parse_split_with_sizes_args",
 ]

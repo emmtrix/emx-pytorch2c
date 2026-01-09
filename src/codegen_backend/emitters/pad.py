@@ -25,9 +25,15 @@ class PadEmitter(KindEmitterBase):
         input_dtype = req.input_dtypes[0]
         output_shape = req.output_shape
         output_strides = req.output_strides
-        pad_template = get_template_env().get_template(
-            "constant_pad_nd_kernel.c.j2"
-        )
+        mode = req.params.get("mode", "constant")
+        if mode == "constant":
+            pad_template = get_template_env().get_template(
+                "constant_pad_nd_kernel.c.j2"
+            )
+        else:
+            pad_template = get_template_env().get_template(
+                "mirror_pad_nd_kernel.c.j2"
+            )
         signature = emit_signature(
             req.node_index,
             op_spec,
@@ -59,6 +65,7 @@ class PadEmitter(KindEmitterBase):
             )
             return rendered.strip().splitlines()
         pad_before = req.params.get("pad_before", ())
+        pad_after = req.params.get("pad_after", ())
         input_access = _emit_strided_access(
             "a",
             [f"in_{dim}" for dim in range(len(input_shape))],
@@ -75,6 +82,10 @@ class PadEmitter(KindEmitterBase):
             output_shape=output_shape,
             input_shape=input_shape,
             pad_before=pad_before,
-            value=_format_scalar_literal(req.params["value"], req.dtype),
+            pad_after=pad_after,
+            mode=mode,
+            value=_format_scalar_literal(req.params["value"], req.dtype)
+            if mode == "constant"
+            else None,
         )
         return rendered.strip().splitlines()

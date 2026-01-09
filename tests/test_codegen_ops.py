@@ -136,7 +136,17 @@ def _addmm_like_sample_filter(sample):
     if not tensors:
         return True
     dtype = tensors[0].dtype
-    if dtype not in (torch.int8, torch.uint8, torch.uint32, torch.int32, torch.bool):
+    if dtype not in (
+        torch.int8,
+        torch.uint8,
+        torch.int16,
+        torch.uint16,
+        torch.uint32,
+        torch.int32,
+        torch.int64,
+        torch.uint64,
+        torch.bool,
+    ):
         return True
     beta = sample.kwargs.get("beta")
     alpha = sample.kwargs.get("alpha")
@@ -147,6 +157,17 @@ def _addmm_like_sample_filter(sample):
     return _addmm_like_scalar_is_integer(alpha) and _addmm_like_scalar_is_integer(
         beta
     )
+
+
+def _reshape_sample_filter(sample):
+    shape = None
+    if len(sample.args) > 1:
+        shape = sample.args[1]
+    if shape is None:
+        shape = sample.kwargs.get("shape")
+    if isinstance(shape, torch.Tensor):
+        return False
+    return True
 
 
 def _iter_supported_samples(op, device, dtype, constraints):
@@ -277,6 +298,8 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.index_put.default,
     torch.ops.aten.masked_scatter.default,
     torch.ops.aten.index_select.default,
+    torch.ops.aten.scatter.src,
+    torch.ops.aten.scatter.value,
     torch.ops.aten.select_scatter.default,
     torch.ops.aten.split_with_sizes.default,
     torch.ops.aten.sort.default,
@@ -351,8 +374,13 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.reciprocal.default,
     torch.ops.aten.relu.default,
     torch.ops.aten.repeat.default,
+    torch.ops.aten.reflection_pad1d.default,
+    torch.ops.aten.reflection_pad2d.default,
+    torch.ops.aten.reflection_pad3d.default,
     torch.ops.aten.remainder.Tensor,
     torch.ops.aten.remainder.Scalar,
+    torch.ops.aten.replication_pad2d.default,
+    torch.ops.aten.replication_pad3d.default,
     torch.ops.aten.round.default,
     torch.ops.aten.rsqrt.default,
     torch.ops.aten.selu.default,
@@ -401,6 +429,7 @@ CODEGEN_ATEN_OPS = [
     torch.ops.aten.empty_strided.default,
     torch.ops.aten.rand.default,
     torch.ops.aten.randn.default,
+    torch.ops.aten.randperm.default,
     torch.ops.aten.prod.dim_int,
     torch.ops.aten.as_strided.default,
     torch.ops.aten.squeeze.dim,
@@ -485,6 +514,8 @@ INPLACE_ATEN_OPS = [
     torch.ops.aten.log2_.default,
     torch.ops.aten.logit_.default,
     torch.ops.aten.masked_scatter_.default,
+    torch.ops.aten.scatter_.src,
+    torch.ops.aten.scatter_.value,
     torch.ops.aten.mish_.default,
     torch.ops.aten.logical_and_.default,
     torch.ops.aten.logical_not_.default,
@@ -685,6 +716,7 @@ ALIASED_CODEGEN_OPS = {
     torch.ops.aten.any.dims,
     torch.ops.aten.mean.dim,
     torch.ops.aten.sum.dim_IntList,
+    torch.ops.aten.scatter.value,
 }
 CODEGEN_OPS_WITHOUT_OPINFO: list[torch._ops.OpOverload] = []
 CODEGEN_OPS_UNDER_TEST = []
@@ -727,6 +759,12 @@ CODEGEN_SPECIAL_TEST_OPS = [
     torch.ops.aten.native_layer_norm_backward.default,
     torch.ops.aten.native_dropout.default,
     torch.ops.aten.rand.default,
+    torch.ops.aten.randperm.default,
+    torch.ops.aten.reflection_pad1d.default,
+    torch.ops.aten.reflection_pad2d.default,
+    torch.ops.aten.reflection_pad3d.default,
+    torch.ops.aten.replication_pad2d.default,
+    torch.ops.aten.replication_pad3d.default,
 ]
 CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.where.self: {},
@@ -736,6 +774,27 @@ CODEGEN_OP_TEST_CONFIG = {
     torch.ops.aten.scalar_tensor.default: {},
     torch.ops.aten.rand.default: {},
     torch.ops.aten.randn.default: {},
+    torch.ops.aten.randperm.default: {
+        "allowed_dtypes": (
+            torch.float32,
+            torch.float64,
+            torch.int8,
+            torch.uint8,
+            torch.int16,
+            torch.int32,
+            torch.int64,
+        ),
+    },
+    torch.ops.aten.conj_physical.default: {
+        "allowed_dtypes": tuple(
+            dtype for dtype in _CODEGEN_DTYPES if dtype is not torch.uint8
+        ),
+    },
+    torch.ops.aten.sgn.default: {
+        "allowed_dtypes": tuple(
+            dtype for dtype in _CODEGEN_DTYPES if dtype is not torch.uint8
+        ),
+    },
     torch.ops.aten.avg_pool2d_backward.default: {
         "requires_contiguous": True,
     },
@@ -751,6 +810,7 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.reshape.default: {
         "requires_contiguous": True,
+        "sample_filter": _reshape_sample_filter,
     },
     torch.ops.aten.cat.default: {
         "expand_input_list": True,
@@ -941,7 +1001,11 @@ def _reference_for_dtype(
     kwargs: dict[str, object],
     dtype: torch.dtype,
 ) -> torch.Tensor:
-    if aten_overload in {torch.ops.aten.rand.default, torch.ops.aten.randn.default}:
+    if aten_overload in {
+        torch.ops.aten.rand.default,
+        torch.ops.aten.randn.default,
+        torch.ops.aten.randperm.default,
+    }:
         rng_state = torch.get_rng_state()
         expected = aten_overload(*inputs, **kwargs)
         torch.set_rng_state(rng_state)
@@ -1294,6 +1358,80 @@ class TestCodegenSpecialOps(TestCase):
         expected = run()
         torch.manual_seed(0)
         result = compiled()
+        torch.testing.assert_close(result, expected)
+
+    def test_codegen_randperm(self):
+        n = 10
+        dtype = torch.int64
+
+        def run():
+            return torch.ops.aten.randperm.default(n, dtype=dtype)
+
+        compiled = torch.compile(run, backend=codegen_generic_backend)
+        torch.manual_seed(0)
+        expected = run()
+        torch.manual_seed(0)
+        result = compiled()
+        torch.testing.assert_close(result, expected)
+
+    def test_codegen_reflection_pad1d(self):
+        input_tensor = torch.arange(8, dtype=torch.float32).view(1, 1, 8)
+        padding = (2, 1)
+
+        def run(inp):
+            return torch.ops.aten.reflection_pad1d.default(inp, padding)
+
+        compiled = torch.compile(run, backend=codegen_generic_backend)
+        expected = run(input_tensor)
+        result = compiled(input_tensor)
+        torch.testing.assert_close(result, expected)
+
+    def test_codegen_reflection_pad2d(self):
+        input_tensor = torch.arange(24, dtype=torch.float32).view(1, 1, 4, 6)
+        padding = (1, 2, 1, 0)
+
+        def run(inp):
+            return torch.ops.aten.reflection_pad2d.default(inp, padding)
+
+        compiled = torch.compile(run, backend=codegen_generic_backend)
+        expected = run(input_tensor)
+        result = compiled(input_tensor)
+        torch.testing.assert_close(result, expected)
+
+    def test_codegen_reflection_pad3d(self):
+        input_tensor = torch.arange(48, dtype=torch.float32).view(1, 1, 3, 4, 4)
+        padding = (1, 0, 1, 0, 1, 0)
+
+        def run(inp):
+            return torch.ops.aten.reflection_pad3d.default(inp, padding)
+
+        compiled = torch.compile(run, backend=codegen_generic_backend)
+        expected = run(input_tensor)
+        result = compiled(input_tensor)
+        torch.testing.assert_close(result, expected)
+
+    def test_codegen_replication_pad2d(self):
+        input_tensor = torch.arange(20, dtype=torch.float32).view(1, 1, 4, 5)
+        padding = (1, 1, 2, 0)
+
+        def run(inp):
+            return torch.ops.aten.replication_pad2d.default(inp, padding)
+
+        compiled = torch.compile(run, backend=codegen_generic_backend)
+        expected = run(input_tensor)
+        result = compiled(input_tensor)
+        torch.testing.assert_close(result, expected)
+
+    def test_codegen_replication_pad3d(self):
+        input_tensor = torch.arange(48, dtype=torch.float32).view(1, 1, 3, 4, 4)
+        padding = (1, 0, 1, 0, 1, 0)
+
+        def run(inp):
+            return torch.ops.aten.replication_pad3d.default(inp, padding)
+
+        compiled = torch.compile(run, backend=codegen_generic_backend)
+        expected = run(input_tensor)
+        result = compiled(input_tensor)
         torch.testing.assert_close(result, expected)
 
 

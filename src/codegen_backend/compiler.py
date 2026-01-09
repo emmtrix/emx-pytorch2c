@@ -568,19 +568,27 @@ class Compiler:
                     output_op = output_map.get(output_node)
                     if output_op is None:
                         continue
-                    if output_op.spec.kind != OpKind.RANDOM:
-                        continue
                     output_dtype = graph.dtypes[output_node]
                     output_shape = graph.shapes[output_node]
-                    if output_op.spec.name == "rand":
-                        fill = torch.rand(
-                            output_shape, dtype=output_dtype, device=device
+                    if output_op.spec.kind == OpKind.RANDOM:
+                        if output_op.spec.name == "rand":
+                            fill = torch.rand(
+                                output_shape, dtype=output_dtype, device=device
+                            )
+                        else:
+                            fill = torch.randn(
+                                output_shape, dtype=output_dtype, device=device
+                            )
+                        env[output_node].copy_(fill)
+                    elif output_op.spec.kind == OpKind.RANDPERM:
+                        if len(output_shape) != 1:
+                            raise CodegenBackendError(
+                                "codegen randperm expects a 1D output shape"
+                            )
+                        fill = torch.randperm(
+                            output_shape[0], dtype=output_dtype, device=device
                         )
-                    else:
-                        fill = torch.randn(
-                            output_shape, dtype=output_dtype, device=device
-                        )
-                    env[output_node].copy_(fill)
+                        env[output_node].copy_(fill)
             if graph.alias_map:
                 for alias, source in graph.alias_map.items():
                     resolved = _resolve_alias(source, graph.alias_map)

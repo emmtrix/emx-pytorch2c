@@ -16,6 +16,26 @@ def build_supported_ops() -> dict[str, _OpSpec]:
         torch.ops.aten.constant_pad_nd,
         torch.ops.aten.constant_pad_nd.default,
     ).build()
+    registry.register_op("reflection_pad1d", kind=OpKind.PAD).targets(
+        torch.ops.aten.reflection_pad1d,
+        torch.ops.aten.reflection_pad1d.default,
+    ).build()
+    registry.register_op("reflection_pad2d", kind=OpKind.PAD).targets(
+        torch.ops.aten.reflection_pad2d,
+        torch.ops.aten.reflection_pad2d.default,
+    ).build()
+    registry.register_op("reflection_pad3d", kind=OpKind.PAD).targets(
+        torch.ops.aten.reflection_pad3d,
+        torch.ops.aten.reflection_pad3d.default,
+    ).build()
+    registry.register_op("replication_pad2d", kind=OpKind.PAD).targets(
+        torch.ops.aten.replication_pad2d,
+        torch.ops.aten.replication_pad2d.default,
+    ).build()
+    registry.register_op("replication_pad3d", kind=OpKind.PAD).targets(
+        torch.ops.aten.replication_pad3d,
+        torch.ops.aten.replication_pad3d.default,
+    ).build()
     registry.register_op("arange", kind=OpKind.ARANGE).targets(
         torch.ops.aten.arange.start_step,
     ).build()
@@ -26,6 +46,10 @@ def build_supported_ops() -> dict[str, _OpSpec]:
     ).build()
     registry.register_op("resize_", kind=OpKind.RESIZE).targets(
         torch.ops.aten.resize_.default,
+    ).build()
+    registry.register_op("select", kind=OpKind.VIEW).targets(
+        torch.ops.aten.select.int,
+        torch.ops.aten.select,
     ).build()
     registry.register_op("empty_strided", OpKind.EMPTY_STRIDED).targets(
         torch.empty_strided,
@@ -97,6 +121,20 @@ def build_supported_ops() -> dict[str, _OpSpec]:
     registry.register_op("select_scatter", kind=OpKind.SELECT_SCATTER).targets(
         torch.ops.aten.select_scatter.default,
         torch.ops.aten.select_scatter,
+    ).build()
+    registry.register_op("scatter_src", kind=OpKind.SCATTER).targets(
+        torch.ops.aten.scatter.src,
+        torch.ops.aten.scatter_.src,
+    ).inplace(
+        torch.ops.aten.scatter_.src,
+        arg_index=0,
+    ).build()
+    registry.register_op("scatter_value", kind=OpKind.SCATTER).targets(
+        torch.ops.aten.scatter.value,
+        torch.ops.aten.scatter_.value,
+    ).inplace(
+        torch.ops.aten.scatter_.value,
+        arg_index=0,
     ).build()
     registry.register_op("index_select", kind=OpKind.INDEX_SELECT).targets(
         torch.index_select,
@@ -233,6 +271,10 @@ def build_supported_ops() -> dict[str, _OpSpec]:
     registry.register_op("randn", kind=OpKind.RANDOM).targets(
         torch.ops.aten.randn,
         torch.ops.aten.randn.default,
+    ).build()
+    registry.register_op("randperm", kind=OpKind.RANDPERM).targets(
+        torch.ops.aten.randperm,
+        torch.ops.aten.randperm.default,
     ).build()
 
     return registry.build()
