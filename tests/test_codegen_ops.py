@@ -96,9 +96,6 @@ def _sample_matches_constraints(sample, dtype, constraints):
     if not tensors:
         if not constraints.get("allow_no_tensor_inputs", False):
             return False
-        sample_filter = constraints["sample_filter"]
-        if sample_filter is not None and not sample_filter(sample):
-            return False
         return True
     max_ndim = constraints["max_ndim"]
     if max_ndim is not None and any(tensor.ndim > max_ndim for tensor in tensors):
@@ -110,62 +107,6 @@ def _sample_matches_constraints(sample, dtype, constraints):
     if constraints["requires_contiguous"] and any(
         not tensor.is_contiguous() for tensor in tensors
     ):
-        return False
-    sample_filter = constraints["sample_filter"]
-    if sample_filter is not None and not sample_filter(sample):
-        return False
-    return True
-
-
-def _addmm_like_scalar_is_integer(value):
-    if value is None:
-        return True
-    if isinstance(value, torch.Tensor):
-        if value.numel() != 1:
-            return False
-        value = value.item()
-    try:
-        float_value = float(value)
-    except (TypeError, ValueError):
-        return False
-    return float_value.is_integer()
-
-
-def _addmm_like_sample_filter(sample):
-    tensors = _extract_tensors(sample)
-    if not tensors:
-        return True
-    dtype = tensors[0].dtype
-    if dtype not in (
-        torch.int8,
-        torch.uint8,
-        torch.int16,
-        torch.uint16,
-        torch.uint32,
-        torch.int32,
-        torch.int64,
-        torch.uint64,
-        torch.bool,
-    ):
-        return True
-    beta = sample.kwargs.get("beta")
-    alpha = sample.kwargs.get("alpha")
-    if beta is None and len(sample.args) > 2:
-        beta = sample.args[2]
-    if alpha is None and len(sample.args) > 3:
-        alpha = sample.args[3]
-    return _addmm_like_scalar_is_integer(alpha) and _addmm_like_scalar_is_integer(
-        beta
-    )
-
-
-def _reshape_sample_filter(sample):
-    shape = None
-    if len(sample.args) > 1:
-        shape = sample.args[1]
-    if shape is None:
-        shape = sample.kwargs.get("shape")
-    if isinstance(shape, torch.Tensor):
         return False
     return True
 
@@ -810,7 +751,6 @@ CODEGEN_OP_TEST_CONFIG = {
     },
     torch.ops.aten.reshape.default: {
         "requires_contiguous": True,
-        "sample_filter": _reshape_sample_filter,
     },
     torch.ops.aten.cat.default: {
         "expand_input_list": True,
@@ -820,20 +760,14 @@ CODEGEN_OP_TEST_CONFIG = {
         "requires_contiguous": True,
     },
     torch.ops.aten.resize_.default: {},
-    torch.ops.aten.addmm.default: {
-        "sample_filter": _addmm_like_sample_filter,
-    },
+    torch.ops.aten.addmm.default: {},
     torch.ops.aten.addbmm.default: {
         "rtol": 2e-4,
         "atol": 2e-5,
-        "sample_filter": _addmm_like_sample_filter,
     },
-    torch.ops.aten.addmv.default: {
-        "sample_filter": _addmm_like_sample_filter,
-    },
+    torch.ops.aten.addmv.default: {},
     torch.ops.aten.addr.default: {
         "equal_nan": True,
-        "sample_filter": _addmm_like_sample_filter,
     },
 }
 DEFAULT_CONSTRAINTS = {
@@ -846,7 +780,6 @@ DEFAULT_CONSTRAINTS = {
     "max_ndim": None,
     "requires_same_shape": False,
     "requires_contiguous": False,
-    "sample_filter": None,
     "rtol": None,
     "atol": None,
     "equal_nan": False,

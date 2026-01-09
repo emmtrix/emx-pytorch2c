@@ -55,9 +55,9 @@ def validate_addmm_like_scalars(
 ) -> None:
     if dtype in _INTEGER_CODEGEN_DTYPES or dtype is torch.bool:
         for name, value in (("alpha", alpha), ("beta", beta)):
-            if not float(value).is_integer():
+            if isinstance(value, float) and not math.isfinite(value):
                 raise CodegenBackendError(
-                    f"codegen {op_name} expects {name} to be an integer for integral tensors"
+                    f"codegen {op_name} expects {name} to be finite for integral tensors"
                 )
 
 
@@ -2228,12 +2228,20 @@ class TensorOpBuilder:
                     shape_values = list(shape_arg)
                 elif isinstance(shape_arg, (tuple, list)):
                     shape_values = list(shape_arg)
+                elif isinstance(shape_arg, (torch.Tensor, torch.fx.Node)):
+                    try:
+                        shape_values = list(
+                            normalize_as_strided_sequence(
+                                op_spec.name,
+                                shape_arg,
+                                "shape",
+                                scalar_values=self._scalar_values,
+                            )
+                        )
+                    except CodegenBackendError:
+                        shape_values = [shape_arg]
                 else:
                     shape_values = [shape_arg]
-            if any(isinstance(value, torch.fx.Node) for value in shape_values):
-                raise CodegenBackendError(
-                    f"codegen {op_spec.name} expects shape to be constant"
-                )
             from codegen_backend.emitters.base import _is_contiguous
 
             if not _is_contiguous(
