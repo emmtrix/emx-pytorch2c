@@ -1216,7 +1216,7 @@ def _float_from_ops(dtype_info: _ScalarTypeInfo, name: str) -> _GeneratedScalar:
     if name == "rad2deg":
         return _float_rad2deg(dtype_info)
     if name == "real":
-        return _float_positive(dtype_info)
+        return _simple_unary(dtype_info, "real", "a")
     if name == "sgn":
         return _float_sgn(dtype_info)
     if name == "sinc":
@@ -1651,7 +1651,7 @@ def _int_from_ops(dtype_info: _ScalarTypeInfo, name: str) -> _GeneratedScalar:
     if name == "positive":
         return _int_positive(dtype_info)
     if name == "real":
-        return _int_positive(dtype_info)
+        return _simple_unary(dtype_info, "real", "a")
     if name == "sgn":
         return _int_sgn(dtype_info)
     if name == "square":
