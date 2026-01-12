@@ -94,6 +94,10 @@ class SoftmaxEmitter(KindEmitterBase):
         dtype = req.dtype
         if op_spec is None or dtype is None:
             raise CodegenBackendError("softmax requires op spec and dtype")
+        if req.scalar_registry is not None:
+            req.scalar_registry.register(f"{dtype.scalar_prefix}exp")
+            if op_spec.name in {"log_softmax", "_log_softmax"}:
+                req.scalar_registry.register(f"{dtype.scalar_prefix}log")
         return _write_softmax_kernel(
             req.node_index,
             op_spec,

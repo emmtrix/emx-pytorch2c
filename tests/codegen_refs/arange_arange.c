@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
-#include "ops_scalar_i32.h"
+
 
 /*
 * op: arange (kind: arange)

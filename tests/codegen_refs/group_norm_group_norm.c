@@ -1,7 +1,19 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
-#include "ops_scalar_f32.h"
+#include <float.h>
+#include <math.h>
+
+#ifndef REF_PI_F
+#define REF_PI_F 3.14159265358979323846f
+#endif
+#ifndef REF_PI_D
+#define REF_PI_D 3.14159265358979323846
+#endif
+
+static inline float ref_scalar_f32_sqrt(float a) {
+    return sqrtf(a);
+}
 
 /*
 * op: native_group_norm (kind: group_norm)

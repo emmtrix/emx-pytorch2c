@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
-#include "ops_scalar_f32.h"
+
 
 /*
 * op: conv1d (kind: conv1d)

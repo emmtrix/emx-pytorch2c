@@ -42,6 +42,8 @@ class PdistEmitter(KindEmitterBase):
         dtype = req.dtype
         if op_spec is None or dtype is None:
             raise CodegenBackendError("pdist requires op spec and dtype")
+        if req.scalar_registry is not None:
+            req.scalar_registry.register(f"{dtype.scalar_prefix}sqrt")
         return _write_pdist_kernel(
             req.node_index,
             op_spec,

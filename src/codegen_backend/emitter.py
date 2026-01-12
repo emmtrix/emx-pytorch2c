@@ -13,6 +13,7 @@ from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.graph import _GenericGraph, _OpNode
 from codegen_backend.kinds import OpKind, OpKindHandler
+from codegen_backend.scalar_functions import ScalarFunctionRegistry
 
 
 def _format_c_indentation(source: str, *, indent: str = "    ") -> str:
@@ -95,11 +96,12 @@ class Emitter:
     def _write_generic_source(self, graph: _GenericGraph) -> str:
         placeholders = graph.tensor_placeholders
         op_nodes = graph.op_nodes
+        scalar_registry = ScalarFunctionRegistry()
+        graph.scalar_registry = scalar_registry
         headers = [
             "#include <stdint.h>",
             "#include <sys/types.h>",
             "#include <stdbool.h>",
-            f"#include \"{graph.dtype.scalar_header}\"",
         ]
         kernels: List[str] = []
         kind_handlers = self._kind_handlers()
@@ -226,10 +228,13 @@ class Emitter:
             )
         if needs_malloc:
             headers.append("#include <stdlib.h>")
+        scalar_functions = scalar_registry.render()
+        headers.extend(scalar_registry.include_lines())
         template = self._templates_env().get_template("generic_source.c.j2")
         return (
             template.render(
                 headers=headers,
+                scalar_functions=scalar_functions,
                 kernels=kernels,
                 signature=signature,
                 temp_decls=temp_decls,

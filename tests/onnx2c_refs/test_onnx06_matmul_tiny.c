@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
-#include "ops_scalar_f32.h"
+
 
 static const float weight_MatMul_my_weight[2][2] = {
     {

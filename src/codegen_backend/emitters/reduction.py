@@ -457,6 +457,32 @@ class ReductionEmitter(KindEmitterBase):
     def emit(self, req: KernelEmitRequest) -> List[str]:
         reduction_dims = req.reduction_dims or ()
         keepdim = bool(req.keepdim)
+        if req.scalar_registry is not None:
+            if req.op_spec.name == "std":
+                if (
+                    req.dtype.torch_dtype is torch.bool
+                    or req.dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES
+                ):
+                    req.scalar_registry.register("ref_scalar_f32_sqrt")
+                else:
+                    req.scalar_registry.register(
+                        f"{req.dtype.scalar_prefix}sqrt"
+                    )
+            elif req.op_spec.name == "norm":
+                if (
+                    req.dtype.torch_dtype is torch.bool
+                    or req.dtype.torch_dtype in _INTEGER_CODEGEN_DTYPES
+                ):
+                    req.scalar_registry.register("ref_scalar_f32_abs")
+                    req.scalar_registry.register("ref_scalar_f32_pow")
+                else:
+                    req.scalar_registry.register(f"{req.dtype.scalar_prefix}abs")
+                    req.scalar_registry.register(f"{req.dtype.scalar_prefix}pow")
+            elif req.op_spec.name in {"max", "min", "amax", "amin"}:
+                if req.dtype.torch_dtype in (torch.float32, torch.float64):
+                    req.scalar_registry.register(
+                        f"{req.dtype.scalar_prefix}isnan"
+                    )
         if req.op_spec.name == "std":
             return _write_std_kernel(
                 req.node_index,

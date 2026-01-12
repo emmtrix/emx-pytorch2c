@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
-#include "ops_scalar_f32.h"
+
 
 /*
 * op: native_group_norm_backward (kind: group_norm_backward)

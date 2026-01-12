@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
-#include "ops_scalar_f32.h"
+
 
 static const float weight_bias[3] = {
     -0x1.5b4f07p-1f, 0x1.0ce099p+0f, -0x1.091cabp+0f

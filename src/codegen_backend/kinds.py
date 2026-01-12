@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from codegen_backend.graph import _GenericGraph, _OpNode
     from codegen_backend.groups.builtin.elementwise.analysis import ElementwiseArgParser
     from codegen_backend.groups.builtin.reductions.parsing import ReductionsArgParser
+    from codegen_backend.scalar_functions import ScalarFunctionRegistry
     from codegen_backend.specs import _OpSpec
     from codegen_backend.services import GraphAnalysisService
 
@@ -45,6 +46,7 @@ class KernelEmitRequest:
     reduction_dims: Sequence[int] | None = None
     keepdim: bool | None = None
     params: Dict[str, object] = field(default_factory=dict)
+    scalar_registry: "ScalarFunctionRegistry | None" = None
 
 
 class HandlerContext(Protocol):
@@ -288,4 +290,5 @@ def _make_request(
         dim_order=dim_order,
         dtype=graph.dtype,
         params=dict(op_node.params),
+        scalar_registry=getattr(graph, "scalar_registry", None),
     )

@@ -142,6 +142,22 @@ class CdistEmitter(KindEmitterBase):
             raise CodegenBackendError("cdist requires op spec and dtype")
         p_value = float(req.params.get("p", 2.0))
         compute_mode = req.params.get("compute_mode")
+        if req.scalar_registry is not None:
+            p_zero = math.isclose(p_value, 0.0)
+            p_two = math.isclose(p_value, 2.0)
+            p_inf = math.isinf(p_value)
+            use_mm = p_two and compute_mode in (
+                "use_mm_for_euclid_dist",
+                "use_mm_for_euclid_dist_if_necessary",
+            )
+            if use_mm or p_two:
+                req.scalar_registry.register(f"{dtype.scalar_prefix}sqrt")
+            elif p_inf:
+                req.scalar_registry.register(f"{dtype.scalar_prefix}abs")
+                req.scalar_registry.register(f"{dtype.scalar_prefix}fmax")
+            elif not p_zero:
+                req.scalar_registry.register(f"{dtype.scalar_prefix}abs")
+                req.scalar_registry.register(f"{dtype.scalar_prefix}pow")
         output_strides = req.output_strides
         if output_strides is None:
             output_strides = _contiguous_strides(req.output_shape)

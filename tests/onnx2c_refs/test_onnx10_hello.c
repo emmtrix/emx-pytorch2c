@@ -10,7 +10,8 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
-#include "ops_scalar_f32.h"
+#include <float.h>
+#include <math.h>
 
 static const float weight_MatMul_biased_tensor_name1_weight[16][1] = {
     {
@@ -75,6 +76,17 @@ static const float weight_MatMul_dense_4_weight[1][16] = {
 static const float weight_MatMul_dense_4_bias[1] = {
     -0x1.712c2bp-2f
 };
+
+#ifndef REF_PI_F
+#define REF_PI_F 3.14159265358979323846f
+#endif
+#ifndef REF_PI_D
+#define REF_PI_D 3.14159265358979323846
+#endif
+
+static inline float ref_scalar_f32_relu(float a) {
+    return a > 0.0f ? a : 0.0f;
+}
 
 /*
 * op: linear (kind: linear)

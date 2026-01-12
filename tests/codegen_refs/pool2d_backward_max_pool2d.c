@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
-#include "ops_scalar_f32.h"
+
 
 /*
 * op: _adaptive_avg_pool2d_backward (kind: pool2d_backward)

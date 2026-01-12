@@ -1,7 +1,27 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
-#include "ops_scalar_f32.h"
+#include <float.h>
+#include <math.h>
+
+#ifndef REF_PI_F
+#define REF_PI_F 3.14159265358979323846f
+#endif
+#ifndef REF_PI_D
+#define REF_PI_D 3.14159265358979323846
+#endif
+
+static inline float ref_scalar_f32_mish(float a) {
+    if (a > 20.0f) {
+        return a;
+    }
+    if (a < -20.0f) {
+        float exp_a = expf(a);
+        return a * exp_a;
+    }
+    float softplus = log1pf(expf(a));
+    return a * tanhf(softplus);
+  }
 
 /*
 * op: mish (kind: unary)

@@ -72,6 +72,8 @@ class GroupNormEmitter(KindEmitterBase):
         dtype = req.dtype
         if op_spec is None or dtype is None:
             raise CodegenBackendError("group_norm requires op spec and dtype")
+        if req.scalar_registry is not None:
+            req.scalar_registry.register(f"{dtype.scalar_prefix}sqrt")
         has_weight = bool(req.params.get("has_weight", False))
         has_bias = bool(req.params.get("has_bias", False))
         weight_shape = req.input_shapes[1] if has_weight else None

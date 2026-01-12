@@ -37,6 +37,7 @@ class ElementwiseEmitter(KindEmitterBase):
         op_spec = req.op_spec
         if op_spec is None:
             raise CodegenBackendError("elementwise requires op spec")
+        registry = req.scalar_registry
         elementwise_kind = req.params.get("elementwise_kind")
         if elementwise_kind is None:
             raise CodegenBackendError("elementwise requires elementwise_kind")
@@ -288,6 +289,26 @@ class ElementwiseEmitter(KindEmitterBase):
                         ),
                     }
                 )
+            if registry is not None:
+                if op_spec.name == "gelu":
+                    if params.get("approximate", "none") == "tanh":
+                        registry.register(context["tanh_fn"])
+                    else:
+                        registry.register(context["erf_fn"])
+                elif op_spec.name == "elu":
+                    registry.register(context["exp_fn"])
+                elif op_spec.name == "softplus":
+                    registry.register(context["exp_fn"])
+                    registry.register(context["log1p_fn"])
+                elif op_spec.name in {"clamp", "hardtanh"}:
+                    registry.register(context["fmin_fn"])
+                    registry.register(context["fmax_fn"])
+            if registry is not None and op_spec.name not in _PARAMETRIC_UNARY_OPS:
+                if not context["is_alias"]:
+                    registry.register(scalar_fn)
+        if registry is not None and elementwise_kind == "binary":
+            if not context["is_copy"]:
+                registry.register(scalar_fn)
         rendered = elementwise_template.render(**context)
         return rendered.strip().splitlines()
 

@@ -10,8 +10,9 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
-#include "ops_scalar_f32.h"
 #include <stdlib.h>
+#include <float.h>
+#include <math.h>
 
 static const float weight_Conv_8_weight[20][1][5][5] = {
     {
@@ -69,6 +70,17 @@ static const float weight_Gemm_network_output_bias[10] = {
     -0x1.33b636p-2f, 0x1.5cf820p-4f, 0x1.4eb986p-4f, 0x1.404075p-7f, -0x1.639f6ap-4f, 0x1.5646ccp-2f, -0x1.1be03ep-3f, 0x1.0e9310p-7f,
     -0x1.553391p-4f, 0x1.1ae21ep-4f
 };
+
+#ifndef REF_PI_F
+#define REF_PI_F 3.14159265358979323846f
+#endif
+#ifndef REF_PI_D
+#define REF_PI_D 3.14159265358979323846
+#endif
+
+static inline float ref_scalar_f32_relu(float a) {
+    return a > 0.0f ? a : 0.0f;
+}
 
 /*
 * op: conv2d (kind: conv2d)

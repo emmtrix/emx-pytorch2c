@@ -1,7 +1,12 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
-#include "ops_scalar_i32.h"
+#include <limits.h>
+#include <stdint.h>
+
+static inline int32_t ref_scalar_i32_mul(int32_t a, int32_t b) {
+    return a * b;
+}
 
 /*
 * op: mul (kind: binary)

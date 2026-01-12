@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
-#include "ops_scalar_f32.h"
+
 
 /*
 * op: clone (kind: unary)

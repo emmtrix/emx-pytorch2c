@@ -10,11 +10,23 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
-#include "ops_scalar_f32.h"
+#include <float.h>
+#include <math.h>
 
 static const float weight_initializer_b[4] = {
     0x1.4ccccdp-4f, -0x1.4ccccdp-3f, 0x1.19999ap-2f, 0x0.0p+0f
 };
+
+#ifndef REF_PI_F
+#define REF_PI_F 3.14159265358979323846f
+#endif
+#ifndef REF_PI_D
+#define REF_PI_D 3.14159265358979323846
+#endif
+
+static inline float ref_scalar_f32_add(float a, float b) {
+    return a + b;
+}
 
 /*
 * op: add (kind: binary)
