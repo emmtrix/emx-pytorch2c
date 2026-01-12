@@ -10,8 +10,6 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
-
-
 static const float weight_bias[3] = {
     -0x1.5b4f07p-1f, 0x1.0ce099p+0f, -0x1.091cabp+0f
 };
@@ -30,6 +28,14 @@ static const float weight_weight[4][3] = {
         -0x1.4e830bp-2f, -0x1.18bd18p-1f, 0x1.3a67c6p-3f
     }
 };
+
+#ifndef REF_PI_F
+#define REF_PI_F 3.14159265358979323846f
+#endif
+#ifndef REF_PI_D
+#define REF_PI_D 3.14159265358979323846
+#endif
+
 
 /*
 * op: addmm (kind: addmm)

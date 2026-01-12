@@ -3,7 +3,6 @@
 #include <stdbool.h>
 #include <float.h>
 #include <math.h>
-
 #ifndef REF_PI_F
 #define REF_PI_F 3.14159265358979323846f
 #endif
@@ -21,7 +20,7 @@ static inline float ref_scalar_f32_mish(float a) {
     }
     float softplus = log1pf(expf(a));
     return a * tanhf(softplus);
-  }
+}
 
 /*
 * op: mish (kind: unary)

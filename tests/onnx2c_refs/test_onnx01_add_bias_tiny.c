@@ -12,7 +12,6 @@
 #include <stdbool.h>
 #include <float.h>
 #include <math.h>
-
 static const float weight_initializer_b[4] = {
     0x1.4ccccdp-4f, -0x1.4ccccdp-3f, 0x1.19999ap-2f, 0x0.0p+0f
 };

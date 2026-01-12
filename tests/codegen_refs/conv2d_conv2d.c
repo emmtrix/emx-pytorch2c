@@ -1,6 +1,12 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
+#ifndef REF_PI_F
+#define REF_PI_F 3.14159265358979323846f
+#endif
+#ifndef REF_PI_D
+#define REF_PI_D 3.14159265358979323846
+#endif
 
 
 /*

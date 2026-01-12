@@ -13,7 +13,6 @@
 #include <stdlib.h>
 #include <float.h>
 #include <math.h>
-
 static const float weight_Conv_8_weight[20][1][5][5] = {
     {
         {

@@ -10,8 +10,6 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
-
-
 static const float weight_MatMul_my_weight[2][2] = {
     {
         0x1.000000p+0f, 0x0.0p+0f
@@ -20,6 +18,14 @@ static const float weight_MatMul_my_weight[2][2] = {
         0x0.0p+0f, 0x1.000000p+0f
     }
 };
+
+#ifndef REF_PI_F
+#define REF_PI_F 3.14159265358979323846f
+#endif
+#ifndef REF_PI_D
+#define REF_PI_D 3.14159265358979323846
+#endif
+
 
 /*
 * op: linear (kind: linear)

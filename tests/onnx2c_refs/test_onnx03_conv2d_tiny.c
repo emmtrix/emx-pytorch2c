@@ -10,8 +10,6 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <stdbool.h>
-
-
 static const float weight_Conv_out_weight[1][1][3][3] = {
     {
         {
@@ -31,6 +29,14 @@ static const float weight_Conv_out_weight[1][1][3][3] = {
 static const float weight_Conv_out_bias[1] = {
     0x0.0p+0f
 };
+
+#ifndef REF_PI_F
+#define REF_PI_F 3.14159265358979323846f
+#endif
+#ifndef REF_PI_D
+#define REF_PI_D 3.14159265358979323846
+#endif
+
 
 /*
 * op: conv2d (kind: conv2d)

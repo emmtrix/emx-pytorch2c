@@ -3,6 +3,12 @@
 #include <stdbool.h>
 #include <limits.h>
 #include <stdint.h>
+#ifndef REF_PI_F
+#define REF_PI_F 3.14159265358979323846f
+#endif
+#ifndef REF_PI_D
+#define REF_PI_D 3.14159265358979323846
+#endif
 
 static inline int32_t ref_scalar_i32_mul(int32_t a, int32_t b) {
     return a * b;

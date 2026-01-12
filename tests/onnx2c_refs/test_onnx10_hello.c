@@ -12,7 +12,6 @@
 #include <stdbool.h>
 #include <float.h>
 #include <math.h>
-
 static const float weight_MatMul_biased_tensor_name1_weight[16][1] = {
     {
         0x1.669cb3p-3f
