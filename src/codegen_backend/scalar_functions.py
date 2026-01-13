@@ -214,7 +214,6 @@ class ScalarFunctionKey:
 
 _FLOAT_OPS = [
     "abs",
-    "absolute",
     "add",
     "sub",
     "mul",
@@ -261,14 +260,10 @@ _FLOAT_OPS = [
     "tanh",
     "log",
     "acos",
-    "arccos",
     "acosh",
     "asin",
-    "arcsin",
     "asinh",
-    "arcsinh",
     "atan",
-    "arctan",
     "atanh",
     "cosh",
     "sinh",
@@ -324,7 +319,6 @@ _FLOAT_OPS = [
 _SIGNED_INT_BASE_OPS = [
     "from_f32",
     "abs",
-    "absolute",
     "add",
     "sub",
     "mul",
@@ -376,7 +370,6 @@ _SIGNED_INT_BASE_OPS = [
 _UNSIGNED_INT_BASE_OPS = [
     "from_f32",
     "abs",
-    "absolute",
     "add",
     "sub",
     "mul",
@@ -418,15 +411,11 @@ _UNSIGNED_INT_BASE_OPS = [
 
 _INT_UNARY_FROM_F32_OPS = [
     "acos",
-    "arccos",
     "acosh",
     "angle",
     "asin",
-    "arcsin",
     "asinh",
-    "arcsinh",
     "atan",
-    "arctan",
     "atanh",
     "cbrt",
     "cos",
@@ -490,7 +479,6 @@ _INT_BINARY_FROM_F32_OPS = [
 
 _BOOL_UNARY_FROM_F32_OPS = [
     "abs",
-    "absolute",
     "neg",
     "reciprocal",
     "relu",
@@ -504,14 +492,10 @@ _BOOL_UNARY_FROM_F32_OPS = [
     "tanh",
     "log",
     "acos",
-    "arccos",
     "acosh",
     "asin",
-    "arcsin",
     "asinh",
-    "arcsinh",
     "atan",
-    "arctan",
     "atanh",
     "cosh",
     "sinh",
@@ -601,6 +585,22 @@ _FLOAT_ALIASES = {
 
 
 _NO_SUFFIX_MATH = {"isfinite", "isnan", "isinf", "signbit"}
+
+
+def _normalize_scalar_op_name(name: str) -> str:
+    return _FLOAT_ALIASES.get(name, name)
+
+
+def _alias_unary_wrapper(
+    dtype_info: _ScalarTypeInfo, name: str, target: str
+) -> _GeneratedScalar:
+    lines = [
+        f"static inline {dtype_info.c_type} {dtype_info.prefix}{name}({dtype_info.c_type} a) {{",
+        f"    return {dtype_info.prefix}{target}(a);",
+        "}",
+    ]
+    deps = {f"{dtype_info.prefix}{target}"}
+    return _GeneratedScalar(lines=lines, deps=deps, includes=set())
 
 
 def _float_literal(value: float, dtype_info: _ScalarTypeInfo) -> str:
@@ -1247,17 +1247,11 @@ def _float_clamp_max(dtype_info: _ScalarTypeInfo) -> _GeneratedScalar:
 
 
 def _float_from_ops(dtype_info: _ScalarTypeInfo, name: str) -> _GeneratedScalar:
+    canonical_name = _normalize_scalar_op_name(name)
+    if canonical_name != name:
+        return _alias_unary_wrapper(dtype_info, name, canonical_name)
     if name == "abs":
         return _float_unary_math(dtype_info, "abs", "fabs")
-    if name in _FLOAT_ALIASES:
-        target = _FLOAT_ALIASES[name]
-        lines = [
-            f"static inline {dtype_info.c_type} {dtype_info.prefix}{name}({dtype_info.c_type} a) {{",
-            f"    return {dtype_info.prefix}{target}(a);",
-            "}",
-        ]
-        deps = {f"{dtype_info.prefix}{target}"}
-        return _GeneratedScalar(lines=lines, deps=deps, includes=set())
     if name in {"add", "sub", "mul", "div"}:
         op = {"add": "+", "sub": "-", "mul": "*", "div": "/"}[name]
         return _simple_binary(dtype_info, name, f"a {op} b")
@@ -1534,16 +1528,6 @@ def _int_abs(dtype_info: _ScalarTypeInfo) -> _GeneratedScalar:
     return _GeneratedScalar(lines=lines, deps=set(), includes=includes)
 
 
-def _int_absolute(dtype_info: _ScalarTypeInfo) -> _GeneratedScalar:
-    lines = [
-        f"static inline {dtype_info.c_type} {dtype_info.prefix}absolute({dtype_info.c_type} a) {{",
-        f"    return {dtype_info.prefix}abs(a);",
-        "}",
-    ]
-    deps = {f"{dtype_info.prefix}abs"}
-    return _GeneratedScalar(lines=lines, deps=deps, includes=set())
-
-
 def _int_div(dtype_info: _ScalarTypeInfo) -> _GeneratedScalar:
     expr = _cast_value("a / b", dtype_info)
     lines = [
@@ -1746,14 +1730,15 @@ def _int_square(dtype_info: _ScalarTypeInfo) -> _GeneratedScalar:
 def _int_from_ops(dtype_info: _ScalarTypeInfo, name: str) -> _GeneratedScalar:
     if name == "from_f32":
         return _int_from_f32(dtype_info)
+    canonical_name = _normalize_scalar_op_name(name)
+    if canonical_name != name:
+        return _alias_unary_wrapper(dtype_info, name, canonical_name)
     if name in _INT_UNARY_FROM_F32_OPS:
         return _int_unary_from_f32(dtype_info, name)
     if name in _INT_BINARY_FROM_F32_OPS:
         return _int_binary_from_f32(dtype_info, name)
     if name == "abs":
         return _int_abs(dtype_info)
-    if name == "absolute":
-        return _int_absolute(dtype_info)
     if name in {"add", "sub", "mul"}:
         op = {"add": "+", "sub": "-", "mul": "*"}[name]
         return _int_binary_op(dtype_info, name, op)
@@ -1907,6 +1892,9 @@ def _bool_from_ops(name: str) -> _GeneratedScalar:
         return _bool_to_f32()
     if name == "from_f32":
         return _bool_from_f32()
+    canonical_name = _normalize_scalar_op_name(name)
+    if canonical_name != name:
+        return _alias_unary_wrapper(_SCALAR_TYPES[torch.bool], name, canonical_name)
     if name == "bitwise_and":
         return _simple_binary(_SCALAR_TYPES[torch.bool], name, "a & b")
     if name == "bitwise_or":
@@ -2097,33 +2085,44 @@ _CONVERSION_SOURCE_BY_FUNCTION: Mapping[ScalarFunction, ScalarType] = {
 
 def _supported_ops(dtype_info: _ScalarTypeInfo) -> Set[str]:
     if dtype_info.is_float:
-        return set(_FLOAT_OPS)
+        return {_normalize_scalar_op_name(op) for op in _FLOAT_OPS}
     if dtype_info.is_bool:
-        return {"to_f32", "from_f32"} | set(
-            [
-                "bitwise_and",
-                "bitwise_or",
-                "bitwise_xor",
-                "bitwise_not",
-                "logical_or",
-                "logical_and",
-                "logical_xor",
-                "logical_not",
-                "le",
-                "lt",
-                "ge",
-                "gt",
-                "eq",
-                "ne",
-            ]
-        ) | set(_BOOL_UNARY_FROM_F32_OPS) | set(_BOOL_BINARY_FROM_F32_OPS)
+        return {
+            _normalize_scalar_op_name(op)
+            for op in (
+                [
+                    "to_f32",
+                    "from_f32",
+                    "bitwise_and",
+                    "bitwise_or",
+                    "bitwise_xor",
+                    "bitwise_not",
+                    "logical_or",
+                    "logical_and",
+                    "logical_xor",
+                    "logical_not",
+                    "le",
+                    "lt",
+                    "ge",
+                    "gt",
+                    "eq",
+                    "ne",
+                ]
+                + _BOOL_UNARY_FROM_F32_OPS
+                + _BOOL_BINARY_FROM_F32_OPS
+            )
+        }
     if dtype_info.is_signed:
-        return set(_SIGNED_INT_BASE_OPS) | set(_INT_UNARY_FROM_F32_OPS) | set(
-            _INT_BINARY_FROM_F32_OPS
-        )
-    return set(_UNSIGNED_INT_BASE_OPS) | set(_INT_UNARY_FROM_F32_OPS) | set(
-        _INT_BINARY_FROM_F32_OPS
-    )
+        return {
+            _normalize_scalar_op_name(op)
+            for op in (
+                _SIGNED_INT_BASE_OPS + _INT_UNARY_FROM_F32_OPS + _INT_BINARY_FROM_F32_OPS
+            )
+        }
+    return {
+        _normalize_scalar_op_name(op)
+        for op in (_UNSIGNED_INT_BASE_OPS + _INT_UNARY_FROM_F32_OPS + _INT_BINARY_FROM_F32_OPS)
+    }
 
 
 def _parse_scalar_name(function_name: str) -> tuple[_ScalarTypeInfo, str]:
@@ -2135,7 +2134,8 @@ def _parse_scalar_name(function_name: str) -> tuple[_ScalarTypeInfo, str]:
 
 def _generate_scalar(function_name: str) -> _GeneratedScalar:
     dtype_info, op_name = _parse_scalar_name(function_name)
-    if op_name not in _supported_ops(dtype_info):
+    normalized_name = _normalize_scalar_op_name(op_name)
+    if normalized_name not in _supported_ops(dtype_info):
         raise CodegenBackendError(f"unsupported scalar op {op_name} for {dtype_info.suffix}")
     if dtype_info.is_float:
         generated = _float_from_ops(dtype_info, op_name)
@@ -2187,7 +2187,8 @@ def _function_name_for_key(key: ScalarFunctionKey) -> str:
         )
     op_name = key.function.value
     dtype_info = _SCALAR_TYPE_BY_ENUM[key.return_type]
-    if op_name not in _supported_ops(dtype_info):
+    normalized_name = _normalize_scalar_op_name(op_name)
+    if normalized_name not in _supported_ops(dtype_info):
         raise CodegenBackendError(
             f"unsupported scalar op {op_name} for {dtype_info.suffix}"
         )
