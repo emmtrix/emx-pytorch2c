@@ -66,129 +66,233 @@ class ScalarType(str, Enum):
             ) from exc
 
 
+def _scalar_function_spec(
+    value: str,
+    *,
+    supports_float: bool = True,
+    supports_signed_int: bool = True,
+    supports_unsigned_int: bool = True,
+    supports_bool: bool = True,
+    int_from_f32_arity: int | None = None,
+    bool_from_f32_arity: int | None = None,
+) -> tuple[
+    str,
+    bool,
+    bool,
+    bool,
+    bool,
+    int | None,
+    int | None,
+]:
+    return (
+        value,
+        supports_float,
+        supports_signed_int,
+        supports_unsigned_int,
+        supports_bool,
+        int_from_f32_arity,
+        bool_from_f32_arity,
+    )
+
+
+def _common_unary_from_f32_spec(value: str) -> tuple[
+    str, bool, bool, bool, bool, int | None, int | None
+]:
+    return _scalar_function_spec(value, int_from_f32_arity=1, bool_from_f32_arity=1)
+
+
+def _common_binary_from_f32_spec(value: str) -> tuple[
+    str, bool, bool, bool, bool, int | None, int | None
+]:
+    return _scalar_function_spec(value, int_from_f32_arity=2, bool_from_f32_arity=2)
+
+
+def _bool_unary_from_f32_spec(
+    value: str, *, supports_unsigned_int: bool = True
+) -> tuple[str, bool, bool, bool, bool, int | None, int | None]:
+    return _scalar_function_spec(
+        value,
+        supports_unsigned_int=supports_unsigned_int,
+        bool_from_f32_arity=1,
+    )
+
+
+def _bool_binary_from_f32_spec(value: str) -> tuple[
+    str, bool, bool, bool, bool, int | None, int | None
+]:
+    return _scalar_function_spec(value, bool_from_f32_arity=2)
+
+
+def _no_float_spec(value: str) -> tuple[str, bool, bool, bool, bool, int | None, int | None]:
+    return _scalar_function_spec(value, supports_float=False)
+
+
+def _int_only_spec(value: str) -> tuple[str, bool, bool, bool, bool, int | None, int | None]:
+    return _scalar_function_spec(value, supports_float=False, supports_bool=False)
+
+
+def _conversion_spec(value: str) -> tuple[str, bool, bool, bool, bool, int | None, int | None]:
+    return _scalar_function_spec(
+        value,
+        supports_float=False,
+        supports_signed_int=False,
+        supports_unsigned_int=False,
+        supports_bool=False,
+    )
+
+
 class ScalarFunction(str, Enum):
-    ABS = "abs"
-    ABSOLUTE = "absolute"
-    ACOS = "acos"
-    ACOSH = "acosh"
-    ADD = "add"
-    ANGLE = "angle"
-    ARCCOS = "arccos"
-    ARCSIN = "arcsin"
-    ARCSINH = "arcsinh"
-    ARCTAN = "arctan"
-    ASIN = "asin"
-    ASINH = "asinh"
-    ATAN = "atan"
-    ATAN2 = "atan2"
-    ATANH = "atanh"
-    BITWISE_AND = "bitwise_and"
-    BITWISE_LEFT_SHIFT = "bitwise_left_shift"
-    BITWISE_NOT = "bitwise_not"
-    BITWISE_OR = "bitwise_or"
-    BITWISE_RIGHT_SHIFT = "bitwise_right_shift"
-    BITWISE_XOR = "bitwise_xor"
-    CBRT = "cbrt"
-    CEIL = "ceil"
-    CLAMP_MAX = "clamp_max"
-    CLAMP_MIN = "clamp_min"
-    CONJ = "conj"
-    CONJ_PHYSICAL = "conj_physical"
-    COPYSIGN = "copysign"
-    COS = "cos"
-    COSH = "cosh"
-    DEG2RAD = "deg2rad"
-    DIGAMMA = "digamma"
-    DIV = "div"
-    ELU = "elu"
-    EQ = "eq"
-    ERF = "erf"
-    ERFC = "erfc"
-    ERFINV = "erfinv"
-    EXP = "exp"
-    EXP2 = "exp2"
-    EXPM1 = "expm1"
-    FLOOR = "floor"
-    FLOOR_DIVIDE = "floor_divide"
-    FMAX = "fmax"
-    FMIN = "fmin"
-    FMOD = "fmod"
-    FRAC = "frac"
-    GE = "ge"
-    GELU = "gelu"
-    GT = "gt"
-    HARDSIGMOID = "hardsigmoid"
-    HARDSWISH = "hardswish"
-    HEAVISIDE = "heaviside"
-    HYPOT = "hypot"
-    I0 = "i0"
-    ISFINITE = "isfinite"
-    ISINF = "isinf"
-    ISNAN = "isnan"
-    ISNEGINF = "isneginf"
-    ISPOSINF = "isposinf"
-    LDEXP = "ldexp"
-    LE = "le"
-    LEAKY_RELU = "leaky_relu"
-    LGAMMA = "lgamma"
-    LOG = "log"
-    LOG10 = "log10"
-    LOG1P = "log1p"
-    LOG2 = "log2"
-    LOG_SIGMOID = "log_sigmoid"
-    LOGADDEXP = "logaddexp"
-    LOGADDEXP2 = "logaddexp2"
-    LOGICAL_AND = "logical_and"
-    LOGICAL_NOT = "logical_not"
-    LOGICAL_OR = "logical_or"
-    LOGICAL_XOR = "logical_xor"
-    LOGIT = "logit"
-    LT = "lt"
-    MAXIMUM = "maximum"
-    MINIMUM = "minimum"
-    MISH = "mish"
-    MUL = "mul"
-    NAN_TO_NUM = "nan_to_num"
-    NE = "ne"
-    NEG = "neg"
-    NEXTAFTER = "nextafter"
-    POSITIVE = "positive"
-    POW = "pow"
-    RAD2DEG = "rad2deg"
-    REAL = "real"
-    RECIPROCAL = "reciprocal"
-    RELU = "relu"
-    RELU6 = "relu6"
-    REMAINDER = "remainder"
-    ROUND = "round"
-    RSQRT = "rsqrt"
-    SELU = "selu"
-    SGN = "sgn"
-    SIGMOID = "sigmoid"
-    SIGN = "sign"
-    SILU = "silu"
-    SIN = "sin"
-    SINC = "sinc"
-    SINH = "sinh"
-    SOFTPLUS = "softplus"
-    SQRT = "sqrt"
-    SQUARE = "square"
-    SUB = "sub"
-    TAN = "tan"
-    TANH = "tanh"
-    TRUNC = "trunc"
-    XLOGY = "xlogy"
-    CONVERT_FROM_F32 = "convert_from_f32"
-    CONVERT_FROM_F64 = "convert_from_f64"
-    CONVERT_FROM_I8 = "convert_from_i8"
-    CONVERT_FROM_I16 = "convert_from_i16"
-    CONVERT_FROM_I32 = "convert_from_i32"
-    CONVERT_FROM_I64 = "convert_from_i64"
-    CONVERT_FROM_U8 = "convert_from_u8"
-    CONVERT_FROM_U16 = "convert_from_u16"
-    CONVERT_FROM_U32 = "convert_from_u32"
-    CONVERT_FROM_U64 = "convert_from_u64"
-    CONVERT_FROM_BOOL = "convert_from_bool"
+    def __new__(
+        cls,
+        value: str,
+        supports_float: bool,
+        supports_signed_int: bool,
+        supports_unsigned_int: bool,
+        supports_bool: bool,
+        int_from_f32_arity: int | None = None,
+        bool_from_f32_arity: int | None = None,
+    ) -> "ScalarFunction":
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj.supports_float = supports_float
+        obj.supports_signed_int = supports_signed_int
+        obj.supports_unsigned_int = supports_unsigned_int
+        obj.supports_bool = supports_bool
+        obj.int_from_f32_arity = int_from_f32_arity
+        obj.bool_from_f32_arity = bool_from_f32_arity
+        return obj
+
+    ABS = _bool_unary_from_f32_spec("abs")
+    ABSOLUTE = _bool_unary_from_f32_spec("absolute")
+    ACOS = _common_unary_from_f32_spec("acos")
+    ACOSH = _common_unary_from_f32_spec("acosh")
+    ADD = _bool_binary_from_f32_spec("add")
+    ANGLE = _common_unary_from_f32_spec("angle")
+    ARCCOS = _common_unary_from_f32_spec("arccos")
+    ARCSIN = _common_unary_from_f32_spec("arcsin")
+    ARCSINH = _common_unary_from_f32_spec("arcsinh")
+    ARCTAN = _common_unary_from_f32_spec("arctan")
+    ASIN = _common_unary_from_f32_spec("asin")
+    ASINH = _common_unary_from_f32_spec("asinh")
+    ATAN = _common_unary_from_f32_spec("atan")
+    ATAN2 = _common_binary_from_f32_spec("atan2")
+    ATANH = _common_unary_from_f32_spec("atanh")
+    BITWISE_AND = _no_float_spec("bitwise_and")
+    BITWISE_LEFT_SHIFT = _int_only_spec("bitwise_left_shift")
+    BITWISE_NOT = _no_float_spec("bitwise_not")
+    BITWISE_OR = _no_float_spec("bitwise_or")
+    BITWISE_RIGHT_SHIFT = _int_only_spec("bitwise_right_shift")
+    BITWISE_XOR = _no_float_spec("bitwise_xor")
+    CBRT = _common_unary_from_f32_spec("cbrt")
+    CEIL = _bool_unary_from_f32_spec("ceil")
+    CLAMP_MAX = _bool_binary_from_f32_spec("clamp_max")
+    CLAMP_MIN = _bool_binary_from_f32_spec("clamp_min")
+    CONJ = _bool_unary_from_f32_spec("conj", supports_unsigned_int=False)
+    CONJ_PHYSICAL = _bool_unary_from_f32_spec("conj_physical", supports_unsigned_int=False)
+    COPYSIGN = _bool_binary_from_f32_spec("copysign")
+    COS = _common_unary_from_f32_spec("cos")
+    COSH = _common_unary_from_f32_spec("cosh")
+    DEG2RAD = _common_unary_from_f32_spec("deg2rad")
+    DIGAMMA = _common_unary_from_f32_spec("digamma")
+    DIV = _bool_binary_from_f32_spec("div")
+    ELU = _common_unary_from_f32_spec("elu")
+    EQ = _scalar_function_spec("eq")
+    ERF = _common_unary_from_f32_spec("erf")
+    ERFC = _common_unary_from_f32_spec("erfc")
+    ERFINV = _common_unary_from_f32_spec("erfinv")
+    EXP = _common_unary_from_f32_spec("exp")
+    EXP2 = _common_unary_from_f32_spec("exp2")
+    EXPM1 = _common_unary_from_f32_spec("expm1")
+    FLOOR = _bool_unary_from_f32_spec("floor")
+    FLOOR_DIVIDE = _bool_binary_from_f32_spec("floor_divide")
+    FMAX = _bool_binary_from_f32_spec("fmax")
+    FMIN = _bool_binary_from_f32_spec("fmin")
+    FMOD = _bool_binary_from_f32_spec("fmod")
+    FRAC = _bool_unary_from_f32_spec("frac", supports_unsigned_int=False)
+    GE = _scalar_function_spec("ge")
+    GELU = _common_unary_from_f32_spec("gelu")
+    GT = _scalar_function_spec("gt")
+    HARDSIGMOID = _common_unary_from_f32_spec("hardsigmoid")
+    HARDSWISH = _common_unary_from_f32_spec("hardswish")
+    HEAVISIDE = _common_binary_from_f32_spec("heaviside")
+    HYPOT = _common_binary_from_f32_spec("hypot")
+    I0 = _common_unary_from_f32_spec("i0")
+    ISFINITE = _common_unary_from_f32_spec("isfinite")
+    ISINF = _common_unary_from_f32_spec("isinf")
+    ISNAN = _common_unary_from_f32_spec("isnan")
+    ISNEGINF = _common_unary_from_f32_spec("isneginf")
+    ISPOSINF = _common_unary_from_f32_spec("isposinf")
+    LDEXP = _common_binary_from_f32_spec("ldexp")
+    LE = _scalar_function_spec("le")
+    LEAKY_RELU = _common_unary_from_f32_spec("leaky_relu")
+    LGAMMA = _common_unary_from_f32_spec("lgamma")
+    LOG = _common_unary_from_f32_spec("log")
+    LOG10 = _common_unary_from_f32_spec("log10")
+    LOG1P = _common_unary_from_f32_spec("log1p")
+    LOG2 = _common_unary_from_f32_spec("log2")
+    LOG_SIGMOID = _common_unary_from_f32_spec("log_sigmoid")
+    LOGADDEXP = _common_binary_from_f32_spec("logaddexp")
+    LOGADDEXP2 = _common_binary_from_f32_spec("logaddexp2")
+    LOGICAL_AND = _scalar_function_spec("logical_and")
+    LOGICAL_NOT = _scalar_function_spec("logical_not")
+    LOGICAL_OR = _scalar_function_spec("logical_or")
+    LOGICAL_XOR = _scalar_function_spec("logical_xor")
+    LOGIT = _common_unary_from_f32_spec("logit")
+    LT = _scalar_function_spec("lt")
+    MAXIMUM = _bool_binary_from_f32_spec("maximum")
+    MINIMUM = _bool_binary_from_f32_spec("minimum")
+    MISH = _common_unary_from_f32_spec("mish")
+    MUL = _bool_binary_from_f32_spec("mul")
+    NAN_TO_NUM = _common_unary_from_f32_spec("nan_to_num")
+    NE = _scalar_function_spec("ne")
+    NEG = _bool_unary_from_f32_spec("neg")
+    NEXTAFTER = _common_binary_from_f32_spec("nextafter")
+    POSITIVE = _bool_unary_from_f32_spec("positive", supports_unsigned_int=False)
+    POW = _common_binary_from_f32_spec("pow")
+    RAD2DEG = _common_unary_from_f32_spec("rad2deg")
+    REAL = _bool_unary_from_f32_spec("real", supports_unsigned_int=False)
+    RECIPROCAL = _bool_unary_from_f32_spec("reciprocal")
+    RELU = _bool_unary_from_f32_spec("relu")
+    RELU6 = _common_unary_from_f32_spec("relu6")
+    REMAINDER = _bool_binary_from_f32_spec("remainder")
+    ROUND = _bool_unary_from_f32_spec("round")
+    RSQRT = _common_unary_from_f32_spec("rsqrt")
+    SELU = _common_unary_from_f32_spec("selu")
+    SGN = _bool_unary_from_f32_spec("sgn", supports_unsigned_int=False)
+    SIGMOID = _common_unary_from_f32_spec("sigmoid")
+    SIGN = _bool_unary_from_f32_spec("sign", supports_unsigned_int=False)
+    SILU = _common_unary_from_f32_spec("silu")
+    SIN = _common_unary_from_f32_spec("sin")
+    SINC = _common_unary_from_f32_spec("sinc")
+    SINH = _common_unary_from_f32_spec("sinh")
+    SOFTPLUS = _common_unary_from_f32_spec("softplus")
+    SQRT = _common_unary_from_f32_spec("sqrt")
+    SQUARE = _bool_unary_from_f32_spec("square", supports_unsigned_int=False)
+    SUB = _bool_binary_from_f32_spec("sub")
+    TAN = _common_unary_from_f32_spec("tan")
+    TANH = _common_unary_from_f32_spec("tanh")
+    TRUNC = _bool_unary_from_f32_spec("trunc", supports_unsigned_int=False)
+    XLOGY = _common_binary_from_f32_spec("xlogy")
+    CONVERT_FROM_F32 = _conversion_spec("convert_from_f32")
+    CONVERT_FROM_F64 = _conversion_spec("convert_from_f64")
+    CONVERT_FROM_I8 = _conversion_spec("convert_from_i8")
+    CONVERT_FROM_I16 = _conversion_spec("convert_from_i16")
+    CONVERT_FROM_I32 = _conversion_spec("convert_from_i32")
+    CONVERT_FROM_I64 = _conversion_spec("convert_from_i64")
+    CONVERT_FROM_U8 = _conversion_spec("convert_from_u8")
+    CONVERT_FROM_U16 = _conversion_spec("convert_from_u16")
+    CONVERT_FROM_U32 = _conversion_spec("convert_from_u32")
+    CONVERT_FROM_U64 = _conversion_spec("convert_from_u64")
+    CONVERT_FROM_BOOL = _conversion_spec("convert_from_bool")
+
+    def supports_dtype(self, dtype_info: _ScalarTypeInfo) -> bool:
+        if dtype_info.is_float:
+            return self.supports_float
+        if dtype_info.is_bool:
+            return self.supports_bool
+        if dtype_info.is_signed:
+            return self.supports_signed_int
+        return self.supports_unsigned_int
 
     @classmethod
     def from_op_name(cls, op_name: str) -> "ScalarFunction":
@@ -210,318 +314,6 @@ class ScalarFunctionKey:
         cls, function: ScalarFunction, dtype: torch.dtype
     ) -> "ScalarFunctionKey":
         return cls(function=function, return_type=ScalarType.from_torch_dtype(dtype))
-
-
-FLOAT_ONLY_OPS = frozenset(
-    [
-        "abs",
-        "add",
-        "sub",
-        "mul",
-        "div",
-        "maximum",
-        "minimum",
-        "le",
-        "lt",
-        "ge",
-        "gt",
-        "eq",
-        "ne",
-        "logical_or",
-        "logical_and",
-        "logical_xor",
-        "logical_not",
-        "fmax",
-        "fmin",
-        "copysign",
-        "hypot",
-        "atan2",
-        "pow",
-        "fmod",
-        "remainder",
-        "floor_divide",
-        "logaddexp",
-        "logaddexp2",
-        "nextafter",
-        "xlogy",
-        "heaviside",
-        "ldexp",
-        "clamp_min",
-        "clamp_max",
-        "neg",
-        "reciprocal",
-        "relu",
-        "ceil",
-        "floor",
-        "sin",
-        "cos",
-        "sqrt",
-        "cbrt",
-        "exp",
-        "tanh",
-        "log",
-        "acos",
-        "acosh",
-        "asin",
-        "asinh",
-        "atan",
-        "atanh",
-        "cosh",
-        "sinh",
-        "tan",
-        "erf",
-        "erfc",
-        "expm1",
-        "log1p",
-        "log2",
-        "log10",
-        "isfinite",
-        "rsqrt",
-        "sigmoid",
-        "log_sigmoid",
-        "gelu",
-        "elu",
-        "leaky_relu",
-        "softplus",
-        "silu",
-        "mish",
-        "selu",
-        "relu6",
-        "hardsigmoid",
-        "hardswish",
-        "sign",
-        "round",
-        "trunc",
-        "angle",
-        "conj",
-        "conj_physical",
-        "deg2rad",
-        "digamma",
-        "erfinv",
-        "exp2",
-        "frac",
-        "i0",
-        "lgamma",
-        "logit",
-        "isnan",
-        "isinf",
-        "isneginf",
-        "isposinf",
-        "nan_to_num",
-        "positive",
-        "rad2deg",
-        "real",
-        "sgn",
-        "sinc",
-        "square",
-    ]
-)
-
-
-COMMON_BASE_OPS = frozenset(
-    [
-        "from_f32",
-        "abs",
-        "add",
-        "sub",
-        "mul",
-        "bitwise_and",
-        "bitwise_or",
-        "bitwise_xor",
-        "bitwise_not",
-        "div",
-        "maximum",
-        "minimum",
-        "le",
-        "lt",
-        "ge",
-        "gt",
-        "eq",
-        "ne",
-        "logical_or",
-        "logical_and",
-        "logical_xor",
-        "logical_not",
-        "fmax",
-        "fmin",
-        "copysign",
-        "fmod",
-        "remainder",
-        "floor_divide",
-        "clamp_min",
-        "clamp_max",
-        "neg",
-        "reciprocal",
-        "relu",
-        "ceil",
-        "floor",
-        "round",
-    ]
-)
-
-
-INT_ONLY_OPS = frozenset(
-    [
-        "bitwise_left_shift",
-        "bitwise_right_shift",
-    ]
-)
-
-
-SIGNED_ONLY_OPS = frozenset(
-    [
-        "trunc",
-        "frac",
-        "sign",
-        "conj",
-        "conj_physical",
-        "positive",
-        "real",
-        "sgn",
-        "square",
-    ]
-)
-
-
-UNSIGNED_ONLY_OPS = frozenset()
-
-
-BOOL_ONLY_OPS = frozenset(["to_f32"])
-
-
-SIGNED_INT_BASE_OPS = COMMON_BASE_OPS | INT_ONLY_OPS | SIGNED_ONLY_OPS
-
-
-UNSIGNED_INT_BASE_OPS = COMMON_BASE_OPS | INT_ONLY_OPS | UNSIGNED_ONLY_OPS
-
-
-BOOL_BASE_OPS = COMMON_BASE_OPS | BOOL_ONLY_OPS
-
-
-COMMON_UNARY_FROM_F32_OPS = frozenset(
-    [
-        "acos",
-        "acosh",
-        "angle",
-        "asin",
-        "asinh",
-        "atan",
-        "atanh",
-        "cbrt",
-        "cos",
-        "cosh",
-        "deg2rad",
-        "digamma",
-        "erf",
-        "erfc",
-        "erfinv",
-        "exp",
-        "exp2",
-        "expm1",
-        "i0",
-        "lgamma",
-        "log",
-        "log10",
-        "log1p",
-        "log2",
-        "isfinite",
-        "isnan",
-        "logit",
-        "log_sigmoid",
-        "gelu",
-        "elu",
-        "leaky_relu",
-        "softplus",
-        "isinf",
-        "isneginf",
-        "isposinf",
-        "nan_to_num",
-        "rad2deg",
-        "rsqrt",
-        "sigmoid",
-        "selu",
-        "relu6",
-        "hardsigmoid",
-        "silu",
-        "mish",
-        "hardswish",
-        "sin",
-        "sinc",
-        "sinh",
-        "sqrt",
-        "tan",
-        "tanh",
-    ]
-)
-
-
-BOOL_ONLY_UNARY_FROM_F32_OPS = frozenset(
-    [
-        "abs",
-        "neg",
-        "reciprocal",
-        "relu",
-        "ceil",
-        "floor",
-        "sign",
-        "round",
-        "trunc",
-        "conj",
-        "conj_physical",
-        "frac",
-        "positive",
-        "real",
-        "sgn",
-        "square",
-    ]
-)
-
-
-INT_UNARY_FROM_F32_OPS = COMMON_UNARY_FROM_F32_OPS
-
-
-BOOL_UNARY_FROM_F32_OPS = COMMON_UNARY_FROM_F32_OPS | BOOL_ONLY_UNARY_FROM_F32_OPS
-
-
-COMMON_BINARY_FROM_F32_OPS = frozenset(
-    [
-        "atan2",
-        "heaviside",
-        "hypot",
-        "ldexp",
-        "logaddexp",
-        "logaddexp2",
-        "nextafter",
-        "pow",
-        "xlogy",
-    ]
-)
-
-
-BOOL_ONLY_BINARY_FROM_F32_OPS = frozenset(
-    [
-        "add",
-        "sub",
-        "mul",
-        "div",
-        "maximum",
-        "minimum",
-        "fmax",
-        "fmin",
-        "copysign",
-        "fmod",
-        "remainder",
-        "floor_divide",
-        "clamp_min",
-        "clamp_max",
-    ]
-)
-
-
-INT_BINARY_FROM_F32_OPS = COMMON_BINARY_FROM_F32_OPS
-
-
-BOOL_BINARY_FROM_F32_OPS = COMMON_BINARY_FROM_F32_OPS | BOOL_ONLY_BINARY_FROM_F32_OPS
 
 
 _OP_ALIASES = {
@@ -1682,11 +1474,22 @@ def _int_square(dtype_info: _ScalarTypeInfo) -> _GeneratedScalar:
 
 
 def _int_from_ops(dtype_info: _ScalarTypeInfo, name: str) -> _GeneratedScalar:
+    canonical_name = _normalize_op_name(name)
+    if canonical_name != name:
+        lines = [
+            f"static inline {dtype_info.c_type} {dtype_info.prefix}{name}({dtype_info.c_type} a) {{",
+            f"    return {dtype_info.prefix}{canonical_name}(a);",
+            "}",
+        ]
+        deps = {f"{dtype_info.prefix}{canonical_name}"}
+        return _GeneratedScalar(lines=lines, deps=deps, includes=set())
+    name = canonical_name
     if name == "from_f32":
         return _int_from_f32(dtype_info)
-    if name in INT_UNARY_FROM_F32_OPS:
+    function = ScalarFunction.from_op_name(name)
+    if function.int_from_f32_arity == 1:
         return _int_unary_from_f32(dtype_info, name)
-    if name in INT_BINARY_FROM_F32_OPS:
+    if function.int_from_f32_arity == 2:
         return _int_binary_from_f32(dtype_info, name)
     if name == "abs":
         return _int_abs(dtype_info)
@@ -1841,6 +1644,17 @@ def _bool_binary_from_f32(name: str) -> _GeneratedScalar:
 
 
 def _bool_from_ops(name: str) -> _GeneratedScalar:
+    canonical_name = _normalize_op_name(name)
+    if canonical_name != name:
+        dtype_info = _SCALAR_TYPES[torch.bool]
+        lines = [
+            f"static inline {dtype_info.c_type} {dtype_info.prefix}{name}({dtype_info.c_type} a) {{",
+            f"    return {dtype_info.prefix}{canonical_name}(a);",
+            "}",
+        ]
+        deps = {f"{dtype_info.prefix}{canonical_name}"}
+        return _GeneratedScalar(lines=lines, deps=deps, includes=set())
+    name = canonical_name
     if name == "to_f32":
         return _bool_to_f32()
     if name == "from_f32":
@@ -1871,9 +1685,10 @@ def _bool_from_ops(name: str) -> _GeneratedScalar:
             "ne": "!=",
         }[name]
         return _bool_comparison(_SCALAR_TYPES[torch.bool], name, op)
-    if name in BOOL_UNARY_FROM_F32_OPS:
+    function = ScalarFunction.from_op_name(name)
+    if function.bool_from_f32_arity == 1:
         return _bool_unary_from_f32(name)
-    if name in BOOL_BINARY_FROM_F32_OPS:
+    if function.bool_from_f32_arity == 2:
         return _bool_binary_from_f32(name)
     raise CodegenBackendError(f"unsupported bool scalar op: {name}")
 
@@ -2034,13 +1849,17 @@ _CONVERSION_SOURCE_BY_FUNCTION: Mapping[ScalarFunction, ScalarType] = {
 
 
 def _supported_ops(dtype_info: _ScalarTypeInfo) -> Set[str]:
-    if dtype_info.is_float:
-        return set(FLOAT_ONLY_OPS)
+    supported = {
+        _normalize_op_name(function.value)
+        for function in ScalarFunction
+        if not function.value.startswith("convert_from_")
+        and function.supports_dtype(dtype_info)
+    }
+    if not dtype_info.is_float:
+        supported.add("from_f32")
     if dtype_info.is_bool:
-        return set(BOOL_BASE_OPS | BOOL_UNARY_FROM_F32_OPS | BOOL_BINARY_FROM_F32_OPS)
-    if dtype_info.is_signed:
-        return set(SIGNED_INT_BASE_OPS | INT_UNARY_FROM_F32_OPS | INT_BINARY_FROM_F32_OPS)
-    return set(UNSIGNED_INT_BASE_OPS | INT_UNARY_FROM_F32_OPS | INT_BINARY_FROM_F32_OPS)
+        supported.add("to_f32")
+    return supported
 
 
 def validate_scalar_function_supported_ops() -> None:
@@ -2137,7 +1956,7 @@ def _function_name_for_key(key: ScalarFunctionKey) -> str:
         )
     op_name = key.function.value
     dtype_info = _SCALAR_TYPE_BY_ENUM[key.return_type]
-    if op_name not in _supported_ops(dtype_info):
+    if _normalize_op_name(op_name) not in _supported_ops(dtype_info):
         raise CodegenBackendError(
             f"unsupported scalar op {op_name} for {dtype_info.suffix}"
         )
