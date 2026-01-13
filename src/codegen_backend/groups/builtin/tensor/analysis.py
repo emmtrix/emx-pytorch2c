@@ -2302,6 +2302,113 @@ class TensorOpBuilder:
             return self._finalize_node(
                 node, op_node, dtype_info, [self._shapes[input_arg]]
             )
+        if op_spec.name == "slice":
+            if len(node.args) > 5:
+                raise CodegenBackendError(
+                    "codegen slice expects input, dim, start, end, and step arguments"
+                )
+            dim = node.args[1] if len(node.args) > 1 else None
+            start = node.args[2] if len(node.args) > 2 else None
+            end = node.args[3] if len(node.args) > 3 else None
+            step = node.args[4] if len(node.args) > 4 else None
+            if node.kwargs:
+                if "dim" in node.kwargs:
+                    if dim is not None:
+                        raise error_kwarg_specified_once(op_spec.name, "dim")
+                    dim = node.kwargs["dim"]
+                if "start" in node.kwargs:
+                    if start is not None:
+                        raise error_kwarg_specified_once(op_spec.name, "start")
+                    start = node.kwargs["start"]
+                if "end" in node.kwargs:
+                    if end is not None:
+                        raise error_kwarg_specified_once(op_spec.name, "end")
+                    end = node.kwargs["end"]
+                if "step" in node.kwargs:
+                    if step is not None:
+                        raise error_kwarg_specified_once(op_spec.name, "step")
+                    step = node.kwargs["step"]
+                extra = set(node.kwargs) - {"dim", "start", "end", "step"}
+                if extra:
+                    raise CodegenBackendError(
+                        f"codegen {op_spec.name} got unexpected kwargs: {sorted(extra)}"
+                    )
+            if dim is None:
+                raise CodegenBackendError(
+                    "codegen slice expects a dim argument"
+                )
+            input_shape = self._shapes[input_arg]
+            if not input_shape:
+                raise CodegenBackendError(
+                    "codegen slice expects input to have at least 1 dimension"
+                )
+            dim_value = parse_constant_int(op_spec.name, "dim", dim)
+            if dim_value < 0:
+                dim_value += len(input_shape)
+            if dim_value < 0 or dim_value >= len(input_shape):
+                raise CodegenBackendError("codegen slice dim is out of range")
+            dim_size = input_shape[dim_value]
+            if dim_size < 0:
+                raise CodegenBackendError(
+                    "codegen slice expects a non-negative dimension size"
+                )
+            start_value = (
+                0
+                if start is None
+                else parse_constant_int(op_spec.name, "start", start)
+            )
+            end_value = (
+                dim_size
+                if end is None
+                else parse_constant_int(op_spec.name, "end", end)
+            )
+            step_value = (
+                1
+                if step is None
+                else parse_constant_int(op_spec.name, "step", step)
+            )
+            if step_value <= 0:
+                raise CodegenBackendError(
+                    "codegen slice expects step to be a positive integer"
+                )
+            if start_value < 0:
+                start_value += dim_size
+            if start_value < 0:
+                start_value = 0
+            if start_value > dim_size:
+                start_value = dim_size
+            if end_value < 0:
+                end_value += dim_size
+            if end_value < 0:
+                end_value = 0
+            if end_value > dim_size:
+                end_value = dim_size
+            if end_value <= start_value:
+                dim_length = 0
+            else:
+                dim_length = (
+                    (end_value - start_value + step_value - 1) // step_value
+                )
+            output_shape = list(input_shape)
+            output_shape[dim_value] = dim_length
+            input_strides = self._strides[input_arg]
+            view_strides = list(input_strides)
+            view_strides[dim_value] = input_strides[dim_value] * step_value
+            storage_offset = start_value * input_strides[dim_value]
+            op_node = _OpNode(
+                node=node,
+                spec=op_spec,
+                inputs=[input_arg],
+                output_shape=(),
+                params={
+                    "size": tuple(output_shape),
+                    "view_strides": tuple(view_strides),
+                    "storage_offset": storage_offset,
+                },
+            )
+            return self._finalize_node(
+                node, op_node, dtype_info, [self._shapes[input_arg]]
+            )
         if op_spec.name == "select":
             if len(node.args) > 3:
                 raise CodegenBackendError(

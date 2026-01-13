@@ -51,6 +51,10 @@ def build_supported_ops() -> dict[str, _OpSpec]:
         torch.ops.aten.select.int,
         torch.ops.aten.select,
     ).build()
+    registry.register_op("slice", kind=OpKind.VIEW).targets(
+        torch.ops.aten.slice.Tensor,
+        torch.ops.aten.slice,
+    ).build()
     registry.register_op("empty_strided", OpKind.EMPTY_STRIDED).targets(
         torch.empty_strided,
         torch.ops.aten.empty_strided.default,
