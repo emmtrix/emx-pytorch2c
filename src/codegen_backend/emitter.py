@@ -13,7 +13,7 @@ from codegen_backend.emitters.registry import KindHandlerRegistration
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.graph import _GenericGraph, _OpNode
 from codegen_backend.kinds import OpKind, OpKindHandler
-from codegen_backend.scalar_functions import ScalarFunctionRegistry
+from shared.scalar_functions import ScalarFunctionRegistry
 
 
 def _format_c_indentation(source: str, *, indent: str = "    ") -> str:

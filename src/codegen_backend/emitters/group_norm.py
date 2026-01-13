@@ -7,7 +7,7 @@ from codegen_backend.dtypes import _CodegenDType
 from codegen_backend.emitters.base import KindEmitterBase, _format_array_suffix
 from codegen_backend.errors import CodegenBackendError
 from codegen_backend.kinds import KernelEmitRequest
-from codegen_backend.scalar_functions import (
+from shared.scalar_functions import (
     ScalarFunction,
     ScalarFunctionKey,
     ScalarType,

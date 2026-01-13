@@ -8,7 +8,7 @@ import torch
 from codegen_backend import codegen_generic_backend
 from codegen_backend.dtypes import _CODEGEN_DTYPES, _INTEGER_CODEGEN_DTYPES
 from codegen_backend.param_normalize import normalize_int_or_pair, normalize_int_or_tuple
-from codegen_backend.scalar_functions import validate_scalar_function_supported_ops
+from shared.scalar_functions import validate_scalar_function_supported_ops
 from torch.testing._internal.common_device_type import instantiate_device_type_tests, ops
 from torch.testing._internal.common_methods_invocations import SampleInput, op_db
 from torch.testing._internal.common_utils import TestCase

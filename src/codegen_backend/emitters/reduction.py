@@ -14,7 +14,7 @@ from codegen_backend.emitters.base import (
 )
 from codegen_backend.indexing import _emit_strided_access
 from codegen_backend.kinds import KernelEmitRequest
-from codegen_backend.scalar_functions import (
+from shared.scalar_functions import (
     ScalarFunction,
     ScalarFunctionKey,
     ScalarType,
