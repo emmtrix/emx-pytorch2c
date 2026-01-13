@@ -13,12 +13,8 @@ from codegen_backend.emitters.base import (
     emit_signature,
 )
 from codegen_backend.kinds import KernelEmitRequest
-from shared.scalar_functions import (
-    ScalarFunction,
-    ScalarFunctionError,
-    ScalarFunctionKey,
-    ScalarType,
-)
+from shared.scalar_functions import ScalarFunction, ScalarFunctionKey
+from shared.scalar_types import ScalarFunctionError, ScalarType
 from codegen_backend.templates import get_template_env
 
 _PARAMETRIC_UNARY_OPS = {

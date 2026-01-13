@@ -374,6 +374,7 @@ def build_supported_ops() -> dict[str, _OpSpec]:
     ).build()
     registry.register_binary("ldexp").targets(
         torch.ldexp,
+        torch.ops.aten.ldexp.Tensor,
         torch.ops.aten.ldexp.default,
         torch.ops.aten.ldexp,
         torch.ops.aten.ldexp_.default,
