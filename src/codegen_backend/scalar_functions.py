@@ -2126,6 +2126,39 @@ def _supported_ops(dtype_info: _ScalarTypeInfo) -> Set[str]:
     )
 
 
+def validate_scalar_function_supported_ops() -> None:
+    scalar_ops = {
+        function.value
+        for function in ScalarFunction
+        if not function.value.startswith("convert_from_")
+    }
+    conversion_aliases = {"from_f32", "to_f32"}
+    categories = {
+        "float": _supported_ops(_SCALAR_TYPES[torch.float32]),
+        "bool": _supported_ops(_SCALAR_TYPES[torch.bool]),
+        "signed_int": _supported_ops(_SCALAR_TYPES[torch.int8]),
+        "unsigned_int": _supported_ops(_SCALAR_TYPES[torch.uint8]),
+    }
+    errors: List[str] = []
+    for category, supported in categories.items():
+        missing = sorted(supported - scalar_ops - conversion_aliases)
+        if missing:
+            errors.append(
+                f"{category} missing ScalarFunction ops (defined in _supported_ops): {missing}"
+            )
+    supported_union = set().union(*categories.values()) - conversion_aliases
+    unexpected_extras = sorted(scalar_ops - supported_union)
+    if unexpected_extras:
+        errors.append(
+            "ScalarFunction ops not supported by any dtype category: "
+            f"{unexpected_extras}"
+        )
+    if errors:
+        raise AssertionError(
+            "ScalarFunction/_supported_ops drift detected:\n" + "\n".join(errors)
+        )
+
+
 def _parse_scalar_name(function_name: str) -> tuple[_ScalarTypeInfo, str]:
     for info in _SCALAR_TYPES.values():
         if function_name.startswith(info.prefix):

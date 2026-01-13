@@ -8,6 +8,7 @@ import torch
 from codegen_backend import codegen_generic_backend
 from codegen_backend.dtypes import _CODEGEN_DTYPES, _INTEGER_CODEGEN_DTYPES
 from codegen_backend.param_normalize import normalize_int_or_pair, normalize_int_or_tuple
+from codegen_backend.scalar_functions import validate_scalar_function_supported_ops
 from torch.testing._internal.common_device_type import instantiate_device_type_tests, ops
 from torch.testing._internal.common_methods_invocations import SampleInput, op_db
 from torch.testing._internal.common_utils import TestCase
@@ -743,6 +744,18 @@ CODEGEN_OP_TEST_CONFIG = {
         "rtol": 3e-5,
         "atol": 0.0,
     },
+    torch.ops.aten.i0.default: {
+        "allowed_dtypes": (
+            torch.float32,
+            torch.float64,
+        ),
+    },
+    torch.ops.aten.i0_.default: {
+        "allowed_dtypes": (
+            torch.float32,
+            torch.float64,
+        ),
+    },
     torch.ops.aten.view.default: {
         "requires_contiguous": True,
     },
@@ -811,6 +824,9 @@ class TestCodegenOpLists(TestCase):
         missing_names = _aten_overload_names(CODEGEN_OPS_WITHOUT_OPINFO)
         expected_names = _aten_overload_names(CODEGEN_SPECIAL_TEST_OPS)
         assert missing_names == expected_names
+
+    def test_scalar_functions_match_supported_ops(self):
+        validate_scalar_function_supported_ops()
 
 
 def _constraints_for_codegen(aten_overload):
