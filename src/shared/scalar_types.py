@@ -8,17 +8,26 @@ class ScalarFunctionError(RuntimeError):
 
 
 class ScalarType(str, Enum):
-    F32 = "f32"
-    F64 = "f64"
-    I8 = "i8"
-    I16 = "i16"
-    I32 = "i32"
-    I64 = "i64"
-    U8 = "u8"
-    U16 = "u16"
-    U32 = "u32"
-    U64 = "u64"
-    BOOL = "bool"
+    def __new__(cls, suffix: str, c_type: str, is_float: bool) -> "ScalarType":
+        obj = str.__new__(cls, suffix)
+        obj._value_ = suffix
+        obj.suffix = suffix
+        obj.c_type = c_type
+        obj.isfloat = is_float
+        obj.is_float = is_float
+        return obj
+
+    F32 = ("f32", "float", True)
+    F64 = ("f64", "double", True)
+    I8 = ("i8", "int8_t", False)
+    I16 = ("i16", "int16_t", False)
+    I32 = ("i32", "int32_t", False)
+    I64 = ("i64", "int64_t", False)
+    U8 = ("u8", "uint8_t", False)
+    U16 = ("u16", "uint16_t", False)
+    U32 = ("u32", "uint32_t", False)
+    U64 = ("u64", "uint64_t", False)
+    BOOL = ("bool", "bool", False)
 
     @classmethod
     def from_torch_dtype(cls, dtype: object) -> "ScalarType":
