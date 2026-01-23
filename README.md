@@ -1,4 +1,4 @@
-# emmtrix PyTorch to C Compiler
+# emmtrix PyTorch-to-C Compiler
 
 emx-pytorch2c generates simple, correct, generic, and easily analyzable C code from PyTorch workloads. Performance optimization of the generated C code is explicitly **not** a goal.
 
