@@ -1,0 +1,3 @@
+[submodule "emx-onnx-cgen-org"]
+	path = emx-onnx-cgen-org
+	url = https://github.com/emmtrix/emx-onnx-cgen.git
